@@ -1,0 +1,188 @@
+/* 液态镜片 —— 全站共用的玻璃质感层。配套 shared/liquid-lens.js。
+   2026-08-09 定稿的一组值写在 :root 里，四个页面共用，改一处全站生效。 */
+
+:root {
+  --glass-a: .10;   /* 中间高透区的底色浓度。浅底上这是「透不透」的主开关：白底越薄，折射越透得出来 */
+  --sh: 1.53;       /* 阴影总强度，所有阴影层都乘它 */
+  --rim: 1.45;      /* 镜边反光强度 */
+  /* 棱镜色散扇默认关。它模拟「一束光射进透镜」，扇形的张角是按接近方形的元素设计的：
+     压在 1386×48 这种长条上，整把扇子被挤成一个点，再被 6px 的环一裁就成了一团彩色污渍；
+     重复出现在十几张卡上时又会被读成色差 bug。要用只能用在大而接近方形的单个面上，
+     调用时显式传 prism:true。真正的色散在滤镜里（R/G/B 三通路），那个一直开着。 */
+  --prism: 0;
+  --band: 8px;      /* 弧面宽度，由 LiquidLens 按元素实际尺寸写回 */
+
+  /* 工作面的底色浓度。浏览页（首页、列表页）的卡片可以做通透，看的是内容缩略；
+     编辑器的面板是工作面，字要长时间读、还要对着导轨比位置，底下透出网格会晃眼。
+     所以工作面几乎不透，只保留边缘那一圈弧面反光和色散当质感。 */
+  --glass-work: .88;
+}
+
+/* ── 工作台定位线 ────────────────────────────────────────────
+   玻璃折射的是边缘，不是颜色。平铺的浅灰底下面没有任何边，玻璃盖上去等于隐形。
+   这一层全是 1px 硬边：方格纸、粗格交点的十字对位标、顶边和左边的尺规刻度、
+   带箭头的尺寸标注线、圆规弧线、四角定位角标。工匠在工作台上放样定位用的就是
+   这套线，和「天工」是一回事。
+   浏览页（首页、列表页）用默认浓度 .16；编辑器传 mountBackdrop({ink:.06}) 压到一半，
+   在那里它只负责给玻璃边缘提供可折射的东西，不是让人去读那些线。 */
+/* z-index:-1 —— 定位元素会盖在「未定位」的普通内容之上，用 0 的话编辑器那种
+   没写 position 的面板会被这层盖住、被暖色晕染。负层级压到全部内容之下，
+   页面的底色由 body 传递给画布、画在更下面，不会被这层遮掉。 */
+.ll-bgfx { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; --ink: .26; }
+.ll-tint { position: absolute; border-radius: 50%; filter: blur(70px); }
+.ll-tint.t1 { width: 560px; height: 560px; left: -120px; top: -190px; background: #fbdcc0; opacity: .9; }
+.ll-tint.t2 { width: 480px; height: 480px; right: -100px; bottom: -200px; background: #dde7f4; opacity: .85; }
+/* 这一层必须是静止的。backdrop-filter 的背景只要在动，每个玻璃元素的滤镜就得逐帧重跑；
+   一个页面十几块玻璃、每块滤镜里三次位移加三次通道提取，GPU 直接吃满。
+   之前挂过一个 48 秒的漂移动画，实测把 Chrome 的 GPU 进程顶到 109%、WindowServer 77%。
+   定位线本来也不该动——它是工作台上的基准线，动的基准线没有意义。 */
+.ll-draft { position: absolute; inset: -60px; color: rgba(67,48,29,var(--ink)); }
+/* 纸：网格 + 交点标。开了漂移时整块横向走一个粗格(120px)就复位。
+   左右各多铺 140px——位移期间边缘不能露白，.ll-draft 自己只有 60px 出血不够。 */
+.ll-paper { position: absolute; top: 0; bottom: 0; left: -140px; right: -140px; }
+.ll-draft .g-minor, .ll-draft .g-major { position: absolute; inset: 0; }
+.ll-draft .g-minor { background-image: linear-gradient(currentColor 1px, transparent 1px),
+                                       linear-gradient(90deg, currentColor 1px, transparent 1px);
+  background-size: 24px 24px; opacity: .42; }
+.ll-draft .g-major { background-image: linear-gradient(currentColor 1px, transparent 1px),
+                                       linear-gradient(90deg, currentColor 1px, transparent 1px);
+  background-size: 120px 120px; opacity: .95; }
+.ll-draft .cross { position: absolute; width: 15px; height: 15px; }
+.ll-draft .cross::before, .ll-draft .cross::after { content: ''; position: absolute; background: currentColor; }
+.ll-draft .cross::before { left: 0; right: 0; top: 7px; height: 1px; }
+.ll-draft .cross::after { top: 0; bottom: 0; left: 7px; width: 1px; }
+.ll-draft .ruler { position: absolute; left: 0; right: 0; height: 26px;
+  border-bottom: 1px solid currentColor; opacity: .9; top: 60px; }
+.ll-draft .ruler .tk { position: absolute; bottom: 0; width: 1px; background: currentColor; height: 5px; }
+.ll-draft .ruler .tk.lg { height: 11px; }
+.ll-draft .ruler .num { position: absolute; bottom: 12px; font-size: 9px;
+  font-family: ui-monospace, Menlo, monospace; transform: translateX(-50%); letter-spacing: .4px; opacity: .85; }
+.ll-draft .vruler { position: absolute; top: 0; bottom: 0; width: 26px;
+  border-right: 1px solid currentColor; opacity: .75; }
+.ll-draft .vruler .tk { position: absolute; right: 0; height: 1px; background: currentColor; width: 5px; }
+.ll-draft .vruler .tk.lg { width: 11px; }
+.ll-draft .dim { position: absolute; height: 1px; background: currentColor; }
+.ll-draft .dim::before, .ll-draft .dim::after { content: ''; position: absolute;
+  top: -3px; width: 1px; height: 7px; background: currentColor; }
+.ll-draft .dim::before { left: 0; } .ll-draft .dim::after { right: 0; }
+.ll-draft .dim .lb { position: absolute; left: 50%; top: -15px; transform: translateX(-50%);
+  font-size: 9px; font-family: ui-monospace, Menlo, monospace; letter-spacing: .4px;
+  background: var(--bg, #f4f5f7); padding: 0 5px; }
+.ll-draft .arc { position: absolute; border-radius: 50%; border: 1px solid currentColor; opacity: .8; }
+.ll-draft .corner { position: absolute; width: 22px; height: 22px; }
+.ll-draft .corner::before, .ll-draft .corner::after { content: ''; position: absolute; background: currentColor; }
+.ll-draft .corner::before { width: 22px; height: 1px; } .ll-draft .corner::after { width: 1px; height: 22px; }
+.ll-draft .corner.tl::before, .ll-draft .corner.tl::after { top: 0; left: 0; }
+.ll-draft .corner.tr::before, .ll-draft .corner.tr::after { top: 0; right: 0; }
+.ll-draft .corner.bl::before, .ll-draft .corner.bl::after { bottom: 0; left: 0; }
+.ll-draft .corner.br::before, .ll-draft .corner.br::after { bottom: 0; right: 0; }
+.ll-draft .diag { position: absolute; height: 1px; background: currentColor;
+  opacity: .55; transform-origin: left center; }
+
+/* ── 6D 镜边 ─────────────────────────────────────────────────
+   一块 6D 钢化膜的边是一圈窄弧面：光斜穿过去被压缩、被反射，所以亮的是「一段」
+   不是整圈，而且顺着光的方向一头强一头弱；中间是平的高透区，不做模糊。
+   ::before 是弧面反光，::after 是弧面内侧那道暗线（玻璃切面会吃光，少了它环会飘），
+   .prism 是棱镜色散扇。三层都用 mask 掏空中心，只留 --band 那一圈。
+   给谁加 .g6d，就必须保证它的直接子元素里有一个 <i class="prism">，
+   LiquidLens.glass() 会自动补。 */
+.g6d { position: relative; isolation: isolate; }
+
+/* 凸面镜边 —— 用四条内嵌阴影，不用遮罩掏环。
+   曾经用「padding/border + mask-composite」掏出一圈环，结果角上总有一块灰楔：
+   **遮罩的区域框永远是矩形，不受 border-radius 影响**，所以环是外圆内方，
+   圆角处多出来的那块被暗面填上了。内嵌阴影则是跟着 border-radius 走的，天然没有角问题。
+
+   **暗的部分一律在外面，不能在里面。** 一块凸起的板子，上缘受光、下缘吃反射光，
+   两条边都是亮的；暗的是它投在背景上的影子。反过来——上缘亮、下缘在内部压一道暗线——
+   画的是凹槽：槽的上沿会在内部投影。之前就是写反了，所以怎么调角都还是凹的。 */
+.g6d::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; z-index: 2;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255,255,255,calc(.98 * var(--rim))),
+    inset 1.4px 0 0 rgba(255,255,255,calc(.62 * var(--rim))),
+    inset -1.4px 0 0 rgba(255,255,255,calc(.46 * var(--rim))),
+    inset 0 -1.3px 0 rgba(255,255,255,calc(.72 * var(--rim))); }
+
+/* 棱镜色散扇，默认关（--prism: 0）。注意它仍然用遮罩掏环，所以同样有「外圆内方」的
+   角问题——要重新启用得先换成别的画法。 */
+.g6d > .prism {
+  position: absolute; inset: 0; border-radius: inherit; box-sizing: border-box;
+  pointer-events: none; z-index: 2; opacity: var(--prism); filter: blur(1.6px);
+  border: var(--band) solid transparent;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  background:
+    conic-gradient(from 168deg at 14% 8%,
+      transparent 0deg,
+      rgba(255,64,64,.62)   16deg, rgba(255,150,40,.58)  25deg,
+      rgba(250,220,60,.52)  33deg, rgba(90,225,130,.50)  41deg,
+      rgba(60,190,255,.56)  49deg, rgba(150,100,255,.58) 57deg,
+      transparent 72deg, transparent 360deg),
+    conic-gradient(from 348deg at 88% 94%,
+      transparent 0deg,
+      rgba(255,80,80,.34)   14deg, rgba(255,190,60,.30)  24deg,
+      rgba(80,210,255,.32)  38deg, rgba(160,110,255,.34) 48deg,
+      transparent 62deg, transparent 360deg); }
+
+/* ── 阴影梯队 ────────────────────────────────────────────────
+   五层缺一层图层关系就散：外缘一根暗线把玻璃和背景切开，贴边接触阴影读出「浮起来」，
+   中程和环境负责重量与高度。只有一层大散阴影时读到的是重量，不是高度。 */
+.ll-raise {
+  box-shadow:
+    0 0 0 1px rgba(24,28,36,calc(.055 * var(--sh))),
+    0 1px 1px rgba(24,28,36,calc(.10 * var(--sh))),
+    0 3px 5px rgba(24,28,36,calc(.10 * var(--sh))),
+    0 9px 18px rgba(24,28,36,calc(.11 * var(--sh))),
+    0 22px 46px rgba(24,28,36,calc(.10 * var(--sh))); }
+/* 顶栏这类贴着窗口边缘的横条：只要贴边那两层，大散阴影会在下面拖一条脏影 */
+.ll-raise-bar {
+  box-shadow:
+    0 1px 2px rgba(24,28,36,calc(.07 * var(--sh))),
+    0 6px 16px rgba(24,28,36,calc(.06 * var(--sh))); }
+
+/* ── 漂移层 ──────────────────────────────────────────────────
+   一组制图母版横向平铺、匀速右移，只给首页这种过路页面开（mountBackdrop({drift:true})）。
+   位移正好走满一个母版宽度就回到起点，接缝两侧内容一样，看不出跳。
+   动的背景会让每一块玻璃的 backdrop-filter 逐帧重跑：实测停在首页 19.9% GPU、
+   切到别的页 0.9%、窗口最小化 0%。编辑器那种一屏十几块玻璃的页面不能开这个。 */
+.ll-bgfx .ll-drift {
+  position: absolute; top: 0; bottom: 0; left: -960px;
+  color: rgba(67,48,29,calc(var(--ink) * .85));
+  animation: ll-drift 72s linear infinite;
+}
+@keyframes ll-drift { from { transform: translateX(0); } to { transform: translateX(960px); } }
+/* 纸的速度跟母版对齐：母版 960px / 72s = 13.3px/s，纸走 120px 就是 9s。
+   两层同速才读成「一整块背景在动」，速度不同会散成两层各走各的。 */
+.ll-bgfx.drift .ll-paper { animation: ll-paper 9s linear infinite; }
+@keyframes ll-paper { from { transform: translateX(-120px); } to { transform: translateX(0); } }
+.ll-bgfx.paused .ll-paper { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .ll-bgfx .ll-paper { animation: none; } }
+/* 窗口被切走、最小化、或只是失焦被别的应用盖住时暂停——那些情况下动画看不见，
+   但滤镜不一定停，转着就是白烧电 */
+.ll-bgfx.paused .ll-drift { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .ll-bgfx .ll-drift { animation: none; } }
+
+.ll-drift .arc { position: absolute; border-radius: 50%; border: 1px solid currentColor; opacity: .8; }
+.ll-drift .cross { position: absolute; width: 15px; height: 15px; }
+.ll-drift .cross::before, .ll-drift .cross::after { content: ''; position: absolute; background: currentColor; }
+.ll-drift .cross::before { left: 0; right: 0; top: 7px; height: 1px; }
+.ll-drift .cross::after { top: 0; bottom: 0; left: 7px; width: 1px; }
+.ll-drift .dim { position: absolute; height: 1px; background: currentColor; }
+.ll-drift .dim::before, .ll-drift .dim::after { content: ''; position: absolute;
+  top: -3px; width: 1px; height: 7px; background: currentColor; }
+.ll-drift .dim::before { left: 0; } .ll-drift .dim::after { right: 0; }
+.ll-drift .dim .lb { position: absolute; left: 50%; top: -15px; transform: translateX(-50%);
+  font-size: 9px; font-family: ui-monospace, Menlo, monospace; letter-spacing: .4px;
+  background: var(--bg, #f4f5f7); padding: 0 5px; }
+.ll-drift .corner { position: absolute; width: 22px; height: 22px; }
+.ll-drift .corner::before, .ll-drift .corner::after { content: ''; position: absolute; background: currentColor; }
+.ll-drift .corner::before { width: 22px; height: 1px; } .ll-drift .corner::after { width: 1px; height: 22px; }
+.ll-drift .corner.tr::before, .ll-drift .corner.tr::after { top: 0; right: 0; }
+.ll-drift .corner.bl::before, .ll-drift .corner.bl::after { bottom: 0; left: 0; }
+/* 剖面线：制图里表示"这一块是实体"的斜线填充 */
+.ll-drift .hatch { position: absolute; width: 132px; height: 84px;
+  border: 1px solid currentColor; opacity: .75;
+  background-image: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 9px); }

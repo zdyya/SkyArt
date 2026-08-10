@@ -1,0 +1,7 @@
+
+# 打包用的 ffmpeg/ffprobe 二进制（构建时由 @ffmpeg-installer/@ffprobe-installer 提供后复制）
+bin/
+
+# 打包时由后端 PyInstaller 产物组装而来的二进制目录（构建产物，不入库）
+backend-bin-arm64/
+backend-bin-x64/

@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>成片模板 · 编辑</title>
+<link rel="stylesheet" href="../../shared/liquid-lens.css">
+<style>
+:root{
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#eef0f1; --bg4:#e5e7e9;
+  --border:#e0e2e5; --accent:#f97316; --accent2:#ea580c;
+  --btn:#1f2328; --btn-h:#000000;
+  --text:#191b1f; --text2:#565b63; --text3:#9298a1;
+  /* 选中态动效统一：颜色 .18s，位移 .12s，滑块 .28s，都用同一条缓动 */
+  --e:cubic-bezier(.22,1,.36,1); --t-color:.18s ease; --t-move:.12s cubic-bezier(.22,1,.36,1);
+  --green:#059669; --red:#dc2626; --blue:#2563eb; --yellow:#d97706;
+  /* 阴影总强度压到 1.0（liquid-lens.css 里的默认是 1.53）。那个默认值是给首页调的，
+     一屏三四张大卡片，阴影重才有质感；工作页面板多，同样的重量叠起来读到的
+     不是层次，是「元素很多」。只压工作页，浏览页保持默认。 */
+  --sh:1.00;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+.hidden{display:none!important;}
+.ic{flex-shrink:0;vertical-align:-2px;}
+
+/* ── Topbar（78px 红绿灯留白 + drag/no-drag，遵守 AdMake 约定）── */
+/* 顶栏玻璃：与列表页、编辑页同一套。这一页底下没有滚动内容穿过，看不到折射，只为长得一样。
+   backdrop-filter 这条是兜底，liquid-glass.js 会用带 url() 的行内样式盖掉它。 */
+/* position + z-index 不能省：顶栏带了 backdrop-filter 就自成层叠上下文，
+   不抬高层级的话，DOM 里排在后面的 .body 会盖住顶栏里弹出的下拉菜单 */
+.topbar{background:rgba(255,255,255,.42);backdrop-filter:blur(3px) saturate(135%) brightness(108%);border-bottom:1px solid rgba(224,226,229,.7);box-shadow:inset 0 1.4px 0 rgba(255,255,255,.9);height:52px;display:flex;align-items:center;padding:0 16px 0 78px;gap:12px;flex-shrink:0;position:relative;z-index:100;-webkit-app-region:drag;}
+.logo{font-size:16px;font-weight:700;color:var(--text);-webkit-app-region:no-drag;}
+.logo span{color:var(--text2);font-size:12px;font-weight:400;margin-left:5px;}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);-webkit-app-region:no-drag;}
+.breadcrumb a{color:var(--text2);cursor:pointer;text-decoration:none;}
+.breadcrumb a:hover{color:var(--accent);}
+.breadcrumb .sep{color:var(--text3);}
+.breadcrumb .cur{font-weight:600;color:var(--text);}
+.tb-name{background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;font-weight:600;width:240px;outline:none;-webkit-app-region:no-drag;}
+/* 宽度跟着触发它的按钮组走：写死 150px 的话，菜单比按钮宽出一大截，
+   看着像从一个小按钮里掉出个大盒子 */
+.save-menu{position:absolute;right:0;top:calc(100% + 4px);background:var(--bg2);border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;min-width:100%;white-space:nowrap;overflow:hidden;}
+.save-menu.hidden{display:none;}
+.save-menu a{display:block;padding:8px 14px;font-size:12px;cursor:pointer;color:var(--text);white-space:nowrap;}
+.save-menu a:hover{background:var(--bg3);}
+.tb-name:focus{border-color:var(--accent);}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;}
+
+.btn{padding:6px 14px;border-radius:6px;border:1px solid transparent;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.btn-primary{background:var(--btn);color:#fff;}.btn-primary:hover{background:var(--btn-h);}
+.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border);}.btn-secondary:hover{background:var(--bg4);}
+.btn-ghost{background:transparent;color:var(--text2);}.btn-ghost:hover{background:var(--bg3);}
+.btn-sm{padding:4px 10px;font-size:11px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+/* 开关按钮（选中态规范 C 类，跟编辑页的打点按钮同一套）：关着是凹的，开了浮起来变橙。
+   翻转是个开关，原来靠把文字从「水平翻转」改成「取消翻转」来表示已经开了——
+   状态藏在文案里，得先读完字才知道现在是什么样。 */
+.btn-toggle{box-shadow:inset 0 2px 4px rgba(16,24,40,.12),inset 0 -1px 0 rgba(255,255,255,.7);
+  transition:background var(--t-color),border-color var(--t-color),color var(--t-color),
+             transform var(--t-move),box-shadow var(--t-move);}
+.btn-toggle:not(.on):active{transform:translateY(1px);
+  box-shadow:inset 0 3px 6px rgba(16,24,40,.18),inset 0 -1px 0 rgba(255,255,255,.5);}
+.btn-toggle.on{background:var(--accent);color:#fff;border-color:var(--accent2);
+  box-shadow:0 0 0 3px rgba(249,115,22,.22),0 6px 14px -4px rgba(234,88,12,.5);
+  transform:translateY(-1px);}
+.btn-toggle.on:hover{background:var(--accent2);}
+/* 撤销/重做：跟左右两边的下拉用同一套描边控件，并成一组。
+   原来是没有边框的透明图标，夹在两个描边下拉中间像两个漏画的图标。 */
+.ic-pair{display:inline-flex;}
+.ic-pair .btn{padding:0;width:24px;height:24px;justify-content:center;border-radius:0;
+  background:var(--bg3);color:var(--text2);border:1px solid var(--border);}
+.ic-pair .btn:hover:not(:disabled){background:var(--bg4);color:var(--text);}
+.ic-pair .btn:first-child{border-radius:6px 0 0 6px;}
+.ic-pair .btn:last-child{border-radius:0 6px 6px 0;margin-left:-1px;}
+
+/* 三栏都是卡片，跟编辑页同一套：12px 外边距、10px 圆角、1px 边框，浮在灰底上。
+   贴边直角的通栏面板和卡片混在一屏里，看着像有一半没做完。 */
+.body{flex:1;min-height:0;display:flex;overflow:hidden;padding:12px;gap:12px;background:var(--bg);}
+.col{display:flex;flex-direction:column;overflow:hidden;border-radius:14px;
+       /* 工作面不写 backdrop-filter：底色 88% 不透明，滤镜本来就看不见，白开一层合成层 */
+  background:rgba(255,255,255,var(--glass-work));
+     box-shadow:0 0 0 1px rgba(24,28,36,calc(.055*var(--sh))),
+                0 1px 1px rgba(24,28,36,calc(.10*var(--sh))),
+                0 3px 5px rgba(24,28,36,calc(.09*var(--sh))),
+                0 9px 18px rgba(24,28,36,calc(.10*var(--sh)));}
+.col > *:not(.prism){position:relative;z-index:1;}
+.col-config{width:300px;flex-shrink:0;}
+.col-preview{flex:1;min-width:0;}
+.col-prop{width:290px;flex-shrink:0;}
+/* 列头挪进滚动容器里做 sticky：内容从它底下滚过去，边缘会把行掰弯。
+   留在滚动容器外面是看不到这个效果的——两者不重叠就没有可折射的内容。
+   内边距因此从 .col-scroll 挪到 .col-pad，列头才能通栏。 */
+/* 列头自己要带圆角：它挂了 backdrop-filter 成了合成层，Chrome 不保证用祖先的
+   border-radius 去裁合成层，不写这一条圆角面板里会露出一个方角 */
+.col-head{border-radius:14px 14px 0 0;position:sticky;top:0;z-index:5;padding:11px 14px;font-size:12px;font-weight:700;
+  color:var(--text2);border-bottom:1px solid rgba(224,226,229,.85);
+/* 列头的底色必须比它所在的面板更实，不能更透。之前是 50% 白压在 88% 白的面板上，
+   里外反过来，中间就显出一条灰带。这里给 .96，读起来是「一条页眉」而不是「一扇窗」。
+   工作面上的列头不上镜片：折射被面板底色盖住看不见，只剩圆角处那个畸变的结。 */
+  background:rgba(252,253,254,.96);
+  box-shadow:inset 0 1.2px 0 rgba(255,255,255,.95);}
+.col-scroll{flex:1;overflow-y:auto;}
+.col-pad{padding:12px 14px;}
+
+.sec{margin-bottom:15px;}
+.sec-h{font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;}
+.sec-h .cnt{color:var(--text3);font-weight:400;margin-left:4px;}
+.sec-h .add{margin-left:auto;font-size:11px;color:var(--accent);cursor:pointer;font-weight:600;}
+.sec-h .add:hover{text-decoration:underline;}
+.info-ic{cursor:help;color:var(--text3);margin-left:4px;display:inline-flex;align-items:center;position:relative;}
+.info-ic:hover{color:var(--text2);}
+/* 气泡 fixed 挂在视口上：左栏 overflow:hidden 会把挂在图标上的气泡沿栏边裁断 */
+/* 素材导入进度：就地长在槽位/列表里，不遮挡别的操作。
+   橙条灰底跟 AI 分析那套一致；服务端处理阶段没有百分比，改成一小段来回滑，
+   表示在动但不谎报进度。 */
+.slot.loading,.chip.loading{cursor:default;padding:9px 11px;display:block;}
+.up-row .up-name{font-size:11px;font-weight:600;color:var(--text);margin-bottom:6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.up-bar{height:4px;background:var(--bg4);border-radius:999px;overflow:hidden;margin-bottom:5px;}
+.up-bar i{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .2s ease;}
+.up-bar.indet i{width:40%!important;animation:upSlide 1.1s ease-in-out infinite;}
+@keyframes upSlide{0%{margin-left:-40%}100%{margin-left:100%}}
+.up-stage{font-size:10px;color:var(--text2);font-variant-numeric:tabular-nums;}
+#tip-pop{position:fixed;z-index:9500;display:none;background:rgba(25,27,31,.94);color:#fff;
+  padding:7px 10px;border-radius:6px;font-size:11px;font-weight:400;line-height:1.65;
+  width:max-content;max-width:230px;white-space:pre-line;pointer-events:none;
+  box-shadow:0 4px 14px rgba(0,0,0,.22);}
+#tip-pop::before{content:"";position:absolute;left:-4px;top:50%;transform:translateY(-50%) rotate(45deg);
+  width:8px;height:8px;background:rgba(25,27,31,.94);}
+/* 片头/片尾模式：叠加内容区（文字/贴纸）整套只读，前后贴片与转场保持可用 */
+/* 片头/片尾模式下三个叠加区置灰。pointer-events 只关掉子元素，区块本身还要接得住点击——
+   整块关掉的话点上去毫无反应，addText 里那句「切回中段再编辑」永远触发不到，
+   用户只看到一片点不动的东西，不知道是坏了还是被禁了。 */
+.clips-mode .sec:has(#text-chips),.clips-mode .sec:has(#png-chips),.clips-mode .sec:has(#dyn-chips){
+  opacity:.45;cursor:not-allowed;}
+.clips-mode .sec:has(#text-chips) > *,.clips-mode .sec:has(#png-chips) > *,.clips-mode .sec:has(#dyn-chips) > *{
+  pointer-events:none;}
+
+.slot{border:1.5px dashed var(--border);border-radius:6px;padding:10px;text-align:center;cursor:pointer;background:var(--bg3);margin-bottom:7px;transition:all .15s;}
+.slot:hover{border-color:var(--accent);background:rgba(249,115,22,.04);}
+.slot.filled{border-style:solid;border-color:var(--green);background:rgba(5,150,105,.05);text-align:left;display:flex;align-items:center;gap:8px;}
+.slot .s-ic{font-size:16px;}.slot .s-main{font-size:11px;font-weight:600;word-break:break-all;}.slot .s-sub{font-size:9px;color:var(--text3);margin-top:2px;}
+.slot.filled .s-body{flex:1;min-width:0;}
+.slot .s-x{color:var(--text3);cursor:pointer;font-size:13px;padding:1px 5px;border-radius:4px;flex-shrink:0;}
+.slot .s-x:hover{background:rgba(220,38,38,.1);color:var(--red);}
+
+/* B 类块形态：左侧橙条从左边滑出来，跟编辑页的 Part 列表、导出多选同一套语言 */
+.chip{position:relative;display:flex;align-items:center;gap:8px;padding:8px 10px 8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg3);margin-bottom:6px;cursor:pointer;overflow:hidden;transition:background var(--t-color),border-color var(--t-color);}
+.chip:not(.sel):hover{border-color:var(--text3);background:var(--bg4);}
+.chip::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.chip.sel{border-color:var(--accent);background:rgba(249,115,22,.07);}
+.chip.sel::before{transform:scaleX(1);}
+/* 共用额度只说一次，放两栏下面。原来两栏各写一个 n/3，看着像各有各的三层。 */
+#bind-btn.on{background:rgba(249,115,22,.12);border-color:var(--accent);color:var(--accent2);}
+.bind-note{font-size:10px;color:var(--text3);white-space:nowrap;}
+#bind-btn{white-space:nowrap;}
+.chip-ic{width:26px;height:26px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;overflow:hidden;}
+.chip-ic img,.chip-ic video{width:100%;height:100%;object-fit:contain;}
+.chip-body{flex:1;min-width:0;}
+.chip-name{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.chip-val{font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.chip-x{color:var(--text3);cursor:pointer;font-size:12px;}.chip-x:hover{color:var(--red);}
+
+.input{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 9px;font-size:12px;width:100%;outline:none;transition:border-color .15s;}
+.input:focus{border-color:var(--accent);}
+select.input{cursor:pointer;}
+.field{margin-bottom:11px;}
+.field-label{font-size:10px;color:var(--text3);margin-bottom:4px;font-weight:600;}
+
+/* A 类分段控件（衔接转场）：凹槽实色，滑块浮起，滑块本体样式在 ui-kit.js */
+.seg{position:relative;display:flex;padding:3px;border-radius:10px;
+     background:rgba(20,24,30,.055);box-shadow:inset 0 1px 2px rgba(20,24,30,.1);}
+.seg label{position:relative;z-index:1;flex:1;border-radius:6px;padding:6px 3px;text-align:center;
+     font-size:11px;font-weight:500;cursor:pointer;color:var(--text2);
+     transition:color var(--t-color);}
+.seg input{display:none;}
+.seg label:not(.on):hover{color:var(--text);}
+.seg label.on{color:var(--text);font-weight:600;}
+.seg .t-sub{display:block;font-size:8px;color:var(--text3);font-weight:400;margin-top:1px;}
+
+.var-bar{display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap;}
+.var-chip{font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:rgba(37,99,235,.1);color:var(--blue);border:1px solid rgba(37,99,235,.25);cursor:pointer;}
+.var-chip:hover{background:rgba(37,99,235,.2);}
+.mini-btns{display:flex;gap:6px;}.mini-btns .btn{flex:1;justify-content:center;}
+.prop-empty{color:var(--text3);font-size:12px;text-align:center;padding:40px 10px;line-height:1.7;}
+
+.prev-head{padding:11px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg2);flex-wrap:wrap;}
+.prev-head .lbl{font-size:11px;color:var(--text3);}
+.prev-head select{font-size:11px;padding:4px 8px;}
+.prev-stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;overflow:auto;padding:20px;background:var(--bg3);position:relative;}
+/* 返回：折角+来处文字，常驻大热区（返回是高频操作，不藏图标里） */
+.bk{border:none;background:transparent;cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text2);font-size:13px;font-weight:500;padding:6px 12px 6px 6px;border-radius:6px;transition:color .15s,background .15s;}
+.bk:hover{color:var(--text);background:var(--bg3);}
+/* 保存双保险：改动时保存钮亮橙点 + 画布下浮出保存条，保存后自动收走 */
+#save-btn{position:relative;}
+#save-dot{position:absolute;top:-3px;right:-3px;width:9px;height:9px;border-radius:50%;background:var(--accent);border:2px solid var(--bg2);display:none;}
+body.dirty #save-dot{display:block;}
+#savebar{position:absolute;left:50%;bottom:12px;transform:translateX(-50%) translateY(70px);z-index:20;display:flex;align-items:center;gap:12px;background:var(--btn);color:#fff;padding:8px 9px 8px 16px;border-radius:14px;box-shadow:0 10px 26px rgba(0,0,0,.3);font-size:12.5px;opacity:0;transition:transform .3s cubic-bezier(.22,1,.36,1),opacity .25s;pointer-events:none;white-space:nowrap;}
+body.dirty #savebar{transform:translateX(-50%) translateY(0);opacity:1;pointer-events:auto;}
+#savebar .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);}
+#savebar .b-save{background:var(--accent);color:#1a0d02;border:none;padding:6px 15px;border-radius:14px;font-weight:700;font-size:12px;cursor:pointer;}
+#savebar .kbd{font-family:ui-monospace,Menlo,monospace;font-size:10px;background:rgba(0,0,0,.14);border-radius:4px;padding:1px 5px;margin-left:5px;}
+.hint{font-size:11px;color:var(--text2);background:var(--bg2);border:1px solid var(--border);border-radius:999px;padding:5px 14px;}
+.hint b{color:var(--accent);}
+.canvas-fit{position:relative;flex-shrink:0;}
+/* 画布内部坐标恒为 300×533——贴纸尺寸、文字安全宽度都按这个基准算，与导出的 720 宽等比。
+   放大靠外层 transform，内部一个数都不用改；拖拽和缩放走的是 getBoundingClientRect
+   归一化的百分比与比值，跟画布实际像素无关，所以缩放不影响交互。 */
+.canvas{width:300px;height:533px;border-radius:14px;position:absolute;top:0;left:0;transform-origin:top left;overflow:hidden;box-shadow:0 14px 44px rgba(0,0,0,.18);background-size:cover;user-select:none;}
+.strip{position:absolute;left:0;right:0;height:26px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:rgba(255,255,255,.92);background:rgba(0,0,0,.45);z-index:6;pointer-events:none;}
+.strip.pre{top:0;}.strip.post{bottom:0;}
+.film{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.28);font-size:12px;pointer-events:none;}
+.flash{position:absolute;inset:0;background:#fff;z-index:9;pointer-events:none;opacity:0;}
+.layer{position:absolute;z-index:4;cursor:grab;}
+.layer.dragging{cursor:grabbing;}
+.layer .inner{position:relative;}
+.lyr-name{font-family:Georgia,"Songti SC",serif;font-weight:800;color:#ffd700;font-size:21px;text-shadow:0 2px 4px rgba(0,0,0,.7),0 0 2px #7a4b00;white-space:nowrap;}
+.lyr-sell{font-size:13px;font-weight:800;color:#fff;background:var(--red);padding:3px 11px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,.4);white-space:nowrap;}
+.lyr-plain{font-size:14px;font-weight:700;color:#fff;text-shadow:0 2px 4px rgba(0,0,0,.7);white-space:nowrap;}
+/* 宽度由 JS 按「原图像素 ÷ 720 成片宽」等比设置（所见即所得），不设固定上限 */
+.lyr-png img{display:block;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));pointer-events:none;}
+.lyr-dyn{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;background:rgba(37,99,235,.35);border:1.5px dashed rgba(255,255,255,.8);border-radius:6px;pointer-events:none;}
+.lyr-media{display:block;object-fit:contain;pointer-events:none;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4));}
+.layer.sel .inner{outline:1.5px solid var(--accent);outline-offset:4px;}
+.handle{position:absolute;width:18px;height:18px;background:#fff;border:2px solid var(--accent);z-index:5;display:flex;align-items:center;justify-content:center;font-size:11px;line-height:1;color:var(--accent);user-select:none;}
+/* 缩放：右下角方块（角落方块=改大小，同剪映） */
+.h-scale{right:-13px;bottom:-13px;border-radius:4px;cursor:nwse-resize;}
+/* 旋转：元素上方圆形 + rotate-cw 图标，带连接杆 */
+.h-rot{left:50%;top:-34px;transform:translateX(-50%);border-radius:50%;cursor:grab;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="%23f97316" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>');background-repeat:no-repeat;background-position:center;background-size:10px 10px;}
+.h-rot:after{content:"";position:absolute;left:50%;top:16px;width:1px;height:16px;background:var(--accent);transform:translateX(-50%);}
+/* 元素靠画布顶部时手柄翻到下方（否则伸出画布被裁掉、够不着） */
+.h-rot.below{top:auto;bottom:-34px;}
+.h-rot.below:after{top:auto;bottom:16px;}
+.layer.full{inset:0;cursor:pointer;display:flex;align-items:flex-start;justify-content:center;}
+.layer.full.sel{outline:1.5px dashed var(--blue);outline-offset:-2px;}
+.dyn-badge{margin-top:130px;font-size:11px;color:#fff;background:rgba(37,99,235,.85);padding:4px 10px;border-radius:999px;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.4);}
+.guide{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;transition:opacity .2s;}
+.guide.on{opacity:1;}
+.guide::before{content:"";position:absolute;left:33.33%;right:33.33%;top:0;bottom:0;border-left:1px dashed rgba(249,115,22,.5);border-right:1px dashed rgba(249,115,22,.5);}
+.guide::after{content:"";position:absolute;top:33.33%;bottom:33.33%;left:0;right:0;border-top:1px dashed rgba(249,115,22,.5);border-bottom:1px dashed rgba(249,115,22,.5);}
+.prev-foot{font-size:11px;color:var(--text3);text-align:center;}.prev-foot b{color:var(--blue);}
+.note{font-size:9.5px;color:var(--text3);line-height:1.55;margin-top:6px;background:var(--bg3);border-radius:6px;padding:7px 9px;}
+.note b{color:var(--text2);}
+.ok{color:var(--green);font-weight:700;}
+.p1{font-size:8px;font-weight:600;padding:1px 4px;border-radius:6px;background:rgba(37,99,235,.12);color:var(--blue);margin-left:3px;}
+
+/* 通知在顶栏正中（栏中间是空位,不遮控件） */
+#toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
+/* 返回确认弹窗：主按钮=保存并返回（引导保存），丢弃是次要样式 */
+#leave-modal{position:fixed;inset:0;z-index:9000;background:rgba(15,17,20,.45);display:flex;align-items:center;justify-content:center;}
+/* 弹窗＝实色卡片 + 一圈玻璃边。中间实心，正文对比度不受影响；只有外圈那一环折射被遮罩压暗的页面。
+   通体做玻璃行不通：白玻璃叠在 45% 黑遮罩上混成一片灰浆，字跟着糊。 */
+.leave-glass{padding:4px;border-radius:14px;display:flex;
+  background:rgba(255,255,255,.2);
+  backdrop-filter:blur(4px) saturate(150%) brightness(112%);
+  box-shadow:inset 0 1.2px 0 rgba(255,255,255,.85),
+             inset 0 -1px 0 rgba(255,255,255,.25),
+             0 20px 56px rgba(10,13,18,.34),0 4px 12px rgba(10,13,18,.18);
+  /* 玻璃边不吃点击：点这一圈仍然穿透到遮罩，保持"点空白处关闭"的原行为 */
+  pointer-events:none;}
+.leave-glass > *{pointer-events:auto;}
+.leave-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:20px 22px;width:340px;}
+.leave-card h3{font-size:14.5px;margin:0 0 6px;color:var(--text);}
+.leave-card p{font-size:12.5px;color:var(--text2);margin:0 0 16px;line-height:1.7;}
+.leave-card .row{display:flex;gap:8px;justify-content:flex-end;}
+.leave-card .btn-discard{background:transparent;color:var(--red,#dc2626);border:1px solid var(--border);}
+.leave-card .btn-discard:hover{background:rgba(220,38,38,.08);border-color:rgba(220,38,38,.4);}
+.toast{background:#1f2328;color:#fff;border-radius:999px;padding:9px 18px 9px 12px;font-size:12.5px;font-weight:500;max-width:min(46vw,480px);animation:dropIn .25s ease;display:flex;align-items:center;gap:9px;box-shadow:0 10px 30px rgba(15,18,22,.28),0 2px 6px rgba(15,18,22,.16);}
+.toast-dot{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;}
+.toast-dot svg{width:10px;height:10px;stroke:#1f2328;stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.toast-success .toast-dot{background:#34d399;}
+.toast-error .toast-dot{background:#fb7185;}
+.toast-info .toast-dot{background:#60a5fa;}
+@keyframes dropIn{from{transform:translateY(-12px);opacity:0}to{transform:translateY(0);opacity:1}}
+::-webkit-scrollbar{width:6px;height:6px;}::-webkit-scrollbar-thumb{background:#c6c9cd;border-radius:3px;}
+</style>
+<script src="../../shared/liquid-lens.js"></script>
+<script src="ui-kit.js"></script>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div id="leave-modal" class="hidden" onclick="if(event.target===this)hideLeaveModal()">
+  <div class="leave-glass">
+    <div class="leave-card">
+      <h3>有未保存的改动</h3>
+      <p>返回后这些改动会丢失。</p>
+      <div class="row">
+        <button class="btn btn-ghost btn-sm" onclick="hideLeaveModal()">取消</button>
+        <button class="btn btn-discard btn-sm" onclick="_gotoList()">不保存返回</button>
+        <button class="btn btn-primary btn-sm" id="leave-save-btn" onclick="leaveWithSave()">保存并返回</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="topbar">
+  <button class="bk" onclick="goList()" title="返回成片模板" style="-webkit-app-region:no-drag;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="m14.5 17-5-5 5-5"/></svg>成片模板</button>
+  <input class="tb-name" id="tpl-name" placeholder="模板名称" maxlength="100">
+  <div class="topbar-right">
+    <button class="btn btn-secondary" id="btn-export-share" onclick="exportShare()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>导出分享</button>
+    <!-- 保存拆分按钮：主键=保存；右侧箭头展开「保存并创建副本」 -->
+    <div style="position:relative;display:inline-flex;">
+      <button class="btn btn-primary" id="save-btn" onclick="saveTemplate()" style="border-radius:6px 0 0 6px;">保存模板<span id="save-dot"></span></button>
+      <button class="btn btn-primary" onclick="toggleSaveMenu(event)" style="border-radius:0 6px 6px 0;padding:6px 9px;border-left:1px solid rgba(255,255,255,.35);"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="12" height="12"><path d="m6 9 6 6 6-6"/></svg></button>
+      <div id="save-menu" class="save-menu hidden">
+        <a onclick="saveAndDuplicate()">保存并创建副本</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="body">
+  <!-- 左：模板内容 -->
+  <div class="col col-config">
+    <div class="col-scroll">
+      <div class="col-head">模板内容</div>
+      <div class="col-pad">
+      <div class="sec">
+        <div class="sec-h">前后贴片<span class="info-ic" data-tip="MP4／MOV 视频，单个 ≤300MB&#10;上传后自动统一为 720×1280"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span></div>
+        <div id="slot-intro"></div>
+        <div id="slot-outro"></div>
+      </div>
+      <div class="sec">
+        <div class="sec-h">文字层 <span class="add" onclick="addText()">＋ 添加</span></div>
+        <div id="text-chips"></div>
+      </div>
+      <div class="sec">
+        <div class="sec-h">静态贴纸(PNG)<span class="info-ic" data-tip="带透明通道的 PNG，单个 ≤20MB，不透明的会被拒收&#10;超过 1080×1920 自动压缩"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span> <span class="cnt" id="png-cnt"></span> <span class="add" onclick="pickAsset('png')">＋ 导入PNG</span></div>
+        <div id="png-chips"></div>
+      </div>
+      <div class="sec">
+        <div class="sec-h">动态贴纸<span class="info-ic" data-tip="剪映导出：格式选 MOV、编码选 RLE&#10;单个 ≤100MB，超 10 秒只取前 10 秒"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span> <span class="cnt" id="dyn-cnt"></span> <span class="add" onclick="pickAsset('mov')">＋ 导入剪映素材</span></div>
+        <div id="dyn-chips"></div>
+      </div>
+      <div class="sec">
+        <div class="sec-h">衔接转场</div>
+        <div class="seg" id="seg-trans" data-seg>
+          <span class="seg-thumb"></span>
+          <!-- 不要在这里放 <input type="radio">。label 会把点击转发给它关联的控件，那个合成
+               点击又冒泡回 label，一次真实点击就把 onclick 跑两遍：setTrans 连调两次、
+               _pushHist 压两条，撤销要按两下才退一步。选中态走 .on 类，radio 没人读，删掉即可。 -->
+          <label id="tr-white" onclick="setTrans('white')">快闪白<span class="t-sub">0.3s</span></label>
+          <label id="tr-black" onclick="setTrans('black')">渐黑<span class="t-sub">0.6s</span></label>
+          <label id="tr-none" onclick="setTrans('none')">无<span class="t-sub">直接拼</span></label>
+        </div>
+      </div>
+      </div><!-- /col-pad -->
+    </div><!-- /col-scroll -->
+  </div><!-- /col-config -->
+
+  <!-- 中：预览画布 -->
+  <div class="col col-preview">
+    <div class="prev-head">
+      <span class="lbl" id="sample-lbl">样例项目</span>
+      <select class="input" style="width:auto;" id="sample-sel" onchange="renderPreview();renderBindBtn()"></select>
+      <button class="btn btn-secondary btn-sm" id="bind-btn" onclick="bindTemplateToProject()"></button>
+      <span class="bind-note" id="bind-note"></span>
+      <span class="lbl" style="margin-left:auto;">画面</span>
+      <select class="input" style="width:auto;" id="frame-sel" onchange="changeFrame()">
+        <option>片头</option><option selected>中段</option><option>片尾</option>
+      </select>
+      <label class="lbl" style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="guide-cb" onchange="toggleGuide()"> 辅助线</label>
+      <span class="ic-pair">
+        <button class="btn" id="undo-btn" onclick="undoEdit()" title="撤销 (⌘Z)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg></button>
+        <button class="btn" id="redo-btn" onclick="redoEdit()" title="重做 (⇧⌘Z)"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg></button>
+      </span>
+    </div>
+    <div class="prev-stage">
+      <div class="hint">拖动元素移动，右下角方块缩放，上方圆点旋转</div>
+      <div class="canvas-fit" id="canvas-fit">
+        <div class="canvas" id="canvas">
+          <div class="film">成片画面（AI 剪辑输出）</div>
+          <div class="guide" id="guide"></div>
+          <div class="flash" id="flash"></div>
+        </div>
+      </div>
+      <div class="prev-foot">切样例项目：剧名自动取项目名 <b id="foot-name"></b>（变量 {剧名}）</div>
+      <div id="savebar"><span class="dot"></span>改动未保存
+        <button class="b-save" onclick="saveTemplate()">保存<span class="kbd">⌘S</span></button></div>
+    </div>
+  </div>
+
+  <!-- 右：属性 -->
+  <div class="col col-prop">
+    <div class="col-scroll">
+      <div class="col-head" id="prop-head">元素属性</div>
+      <div class="col-pad" id="prop-body"></div>
+    </div>
+  </div>
+</div>
+
+<input type="file" id="asset-input" style="display:none">
+
+<script>
+const _PORT = (window.electronAPI && window.electronAPI.backendPort) || 8764;
+const API = `http://127.0.0.1:${_PORT}/api/v1`;
+const ORIGIN = `http://127.0.0.1:${_PORT}`;
+let authToken = localStorage.getItem('skyart_token') || '';
+const TID = Number(new URLSearchParams(location.search).get('templateId'));
+
+// 模板配置（前端权威状态，保存时 PUT 整个 config）
+// 静态贴纸和动态贴纸各自的张数上限，两边独立不共用。贴多了画面就乱了
+const STICKER_MAX = 3;
+let cfg = { intro: null, outro: null, texts: [], pngs: [], dyns: [], transition: 'white' };
+let selected = null;      // 选中元素 id
+let sampleProjects = [];  // 样例项目（供 {剧名} 预览）
+let frameIdx = 1;  // 默认预览中段（正片）——贴纸/文字只在正片生效
+const FRAMES = ['linear-gradient(160deg,#1a1c3a,#3a2145)','linear-gradient(160deg,#2a1e3a,#463050)','linear-gradient(160deg,#0f2233,#233a45)'];
+// 预览用的字体/颜色近似（真字体在导出时由 Pillow 用系统字体渲染）
+const FONT_CSS = {
+  '宋体':"'Songti SC',serif", '黑体':"'Heiti SC','PingFang SC',sans-serif", '圆润体':"'Hiragino Sans GB','PingFang SC',sans-serif",
+  'Anton':"'Anton','Arial Black',sans-serif", 'Bebas':"'Bebas Neue','Oswald',sans-serif",
+  'Poppins':"'Poppins','Helvetica Neue',sans-serif", 'Alfa Slab':"'Alfa Slab One','Rockwell',serif",
+  'Bangers':"'Bangers','Comic Sans MS',cursive", 'Lobster':"'Lobster','Snell Roundhand',cursive",
+  'Pacifico':"'Pacifico','Snell Roundhand',cursive", 'Playfair':"'Playfair Display',Georgia,serif",
+};
+const CN_FONTS = ['宋体','黑体','圆润体'];
+const EN_FONTS = ['Anton','Bebas','Poppins','Alfa Slab','Bangers','Lobster','Pacifico','Playfair'];
+// 立体金属特效的预览近似（导出由后端 Pillow 精渲，这里 CSS 近似做 WYSIWYG）
+function mixHex(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [ar, ag, ab] = p(a), [br, bg, bb] = p(b);
+  const c = v => ('0' + Math.round(v).toString(16)).slice(-2);
+  return '#' + c(ar + (br - ar) * t) + c(ag + (bg - ag) * t) + c(ab + (bb - ab) * t);
+}
+function bevelCss(hex) {
+  // 参数对齐后端 _ramp/_render_bevel 新配方：高光带压到上 35%、细描边、短挤出+轻投影
+  const light = mixHex(hex, '#ffffff', 0.75), deep = mixHex(hex, '#000000', 0.58),
+        extr = mixHex(hex, '#000000', 0.5), out = mixHex(hex, '#000000', 0.8);
+  return `background:linear-gradient(180deg,${light},${hex} 35%,${deep});-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;-webkit-text-stroke:0.8px ${out};text-shadow:1px 1px ${extr},1.6px 1.6px ${extr},0 2.5px 2px rgba(0,0,0,.35);`;
+}
+// @font-face 加载海外字体(后端 /fonts 提供),让预览所见即所得
+const _FONT_FILES = { 'Anton':['Anton','Anton.ttf'], 'Bebas':['Bebas Neue','BebasNeue.ttf'], 'Poppins':['Poppins','Poppins.ttf'],
+  'Alfa Slab':['Alfa Slab One','AlfaSlab.ttf'], 'Bangers':['Bangers','Bangers.ttf'], 'Lobster':['Lobster','Lobster.ttf'],
+  'Pacifico':['Pacifico','Pacifico.ttf'], 'Playfair':['Playfair Display','PlayfairDisplay.ttf'] };
+function loadFonts() {
+  const css = EN_FONTS.map(k => { const [fam, file] = _FONT_FILES[k];
+    return `@font-face{font-family:'${fam}';src:url('${ORIGIN}/fonts/${file}');font-display:swap;}`; }).join('');
+  const s = document.createElement('style'); s.textContent = css; document.head.appendChild(s);
+}
+const COLOR_CSS = { '金':'#ffd700', '白':'#ffffff', '红':'#e11d2a', '粉':'#ff78aa', '蓝':'#3c8cff', '黑':'#141414' };
+
+// ── API ──
+async function apiFetch(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(API + path, { ...opts, headers });
+  if (res.status === 401) { localStorage.removeItem('skyart_token'); location.href = '../../home.html'; throw new Error('未授权'); }
+  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  return res.status === 204 ? null : res.json();
+}
+// 用 XHR 不用 fetch：fetch 没法report上传进度。贴片动辄几十上百 MB，
+// 传的时候没有任何动静，用户不知道是在传还是卡住了。
+// 上传完还有服务端那段（校验、透明通道检测、贴片归一化转码），那一段拿不到百分比，
+// 只能如实说"正在处理"，不编一个假的进度条。
+function apiUploadAsset(kind, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append('kind', kind);
+    fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API}/admake/templates/${TID}/assets`);
+    if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+    xhr.upload.onprogress = e => {
+      if (!onProgress) return;
+      if (e.lengthComputable) onProgress('uploading', Math.round(e.loaded / e.total * 100));
+    };
+    // 上传完到响应回来之间是服务端在干活，切成不确定态
+    xhr.upload.onload = () => onProgress && onProgress('processing', 100);
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { reject(new Error('返回内容无法解析')); }
+        return;
+      }
+      let msg = xhr.statusText;
+      try { msg = JSON.parse(xhr.responseText).detail || msg; } catch {}
+      reject(new Error(msg));
+    };
+    xhr.onerror = () => reject(new Error('网络中断'));
+    xhr.ontimeout = () => reject(new Error('上传超时'));
+    xhr.send(fd);
+  });
+}
+function assetUrl(asset) { return `${ORIGIN}/uploads/AdMake/Templates/template_${TID}/${asset}`; }
+
+// ── 载入 ──
+let _loadFailed = false;  // 载入失败必须锁死保存——否则空画布一保存就把线上模板洗成空的
+async function init() {
+  if (!authToken || !TID) { location.href = 'index.html'; return; }
+  loadFonts();
+  try {
+    const t = await apiFetch(`/admake/templates/${TID}`);
+    document.getElementById('tpl-name').value = t.name || '';
+    cfg = Object.assign({ intro: null, outro: null, texts: [], pngs: [], dyns: [], transition: 'white' }, t.config || {});
+    cfg.texts = cfg.texts || []; cfg.pngs = cfg.pngs || []; cfg.dyns = cfg.dyns || [];
+    // 老模板存的时候还没有「衔接转场」这个字段，值是空的。Object.assign 会拿这个空值
+    // 盖掉上面的默认档，结果打开就落在「无」上。空值一律回到快闪白；用户主动选的「无」
+    // 存下来是 'none' 这个字符串，不会被这行改掉。
+    if (!cfg.transition) cfg.transition = 'white';
+  } catch (e) {
+    _loadFailed = true;
+    document.getElementById('save-btn').disabled = true;
+    toast('载入模板失败：' + e.message + '。已禁用保存，请返回后重进', 'error', 8000);
+  }
+  try {
+    sampleProjects = await apiFetch('/admake/projects');
+  } catch (e) { sampleProjects = []; }
+  try { sampleTemplates = await apiFetch('/admake/templates'); } catch { sampleTemplates = []; }
+  const sel = document.getElementById('sample-sel');
+  sel.innerHTML = sampleProjects.length
+    ? sampleProjects.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('')
+    : '<option value="">（无样例项目）</option>';
+  renderBindBtn();
+  renderAll();
+  // 载入完成后建立历史基线：撤销到不了比初始更早，未保存判断以此为准
+  _hist = [_snap()]; _histPos = 0; _savedSnap = _hist[0];
+  _updateUndoBtns();
+  _updateDirtyUI();
+  // 名称改动不进历史（撤销不回滚名字），但要点亮未保存提示
+  document.getElementById('tpl-name').addEventListener('input', _updateDirtyUI);
+  // 海外字体是异步 @font-face 加载的，首次渲染用退底字体测宽会算错缩放/换行；
+  // 字体就绪后重渲一次，让 fitText 用真实字形宽度（与导出对齐）
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => renderPreview());
+}
+
+// ── 撤销/重做 + 未保存检测 ──
+let _hist = [], _histPos = -1, _restoring = false, _histTimer = null;
+let _savedSnap = '';  // 上次保存（或初始载入）时的快照
+function _snap() { return JSON.stringify({ cfg, name: document.getElementById('tpl-name').value }); }
+function _commitHist() {
+  const s = _snap();
+  if (_hist[_histPos] === s) return;
+  _hist = _hist.slice(0, _histPos + 1);
+  _hist.push(s);
+  if (_hist.length > 50) _hist.shift();
+  _histPos = _hist.length - 1;
+  _updateUndoBtns();
+  _updateDirtyUI();
+}
+// 未保存状态可视化：保存钮亮橙点 + 画布下浮出保存条（保存/撤回到基线后自动收走）
+function _updateDirtyUI() {
+  document.body.classList.toggle('dirty', !!_savedSnap && _snap() !== _savedSnap);
+}
+function _pushHist() {
+  if (_restoring || _histPos < 0) return;
+  clearTimeout(_histTimer);
+  // 300ms 合并：连续拖动/连续敲字算一步，撤销不至于一次退一像素
+  _histTimer = setTimeout(_commitHist, 300);
+}
+function _restore(s) {
+  _restoring = true;
+  const d = JSON.parse(s);
+  cfg = d.cfg;
+  // 名称不随撤销回滚：改名没有独立的历史步，回滚会让"撤销一次拖动"顺带吞掉改名。
+  // 名称仍在快照里，供未保存检测用。
+  selected = null;
+  renderAll();
+  _restoring = false;
+  _updateUndoBtns();
+  _updateDirtyUI();  // 撤回到保存基线时收走未保存提示
+}
+function undoEdit() {
+  // 先把 300ms 窗口内还没落账的改动提交成一步，再撤——否则那笔改动被丢弃且多退一步
+  clearTimeout(_histTimer);
+  _commitHist();
+  if (_histPos > 0) { _histPos--; _restore(_hist[_histPos]); }
+}
+function redoEdit() { if (_histPos < _hist.length - 1) { _histPos++; _restore(_hist[_histPos]); } }
+function _updateUndoBtns() {
+  const u = document.getElementById('undo-btn'), r = document.getElementById('redo-btn');
+  if (u) u.disabled = _histPos <= 0;
+  if (r) r.disabled = _histPos >= _hist.length - 1;
+}
+document.addEventListener('keydown', e => {
+  // ⌘S 保存（输入框内也生效——保存不区分焦点位置）
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    saveTemplate();
+    return;
+  }
+  if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return;
+  const t = e.target.tagName;
+  if (t === 'INPUT' || t === 'TEXTAREA') return;  // 输入框走系统自带撤销
+  e.preventDefault();
+  if (e.shiftKey) redoEdit(); else undoEdit();
+});
+
+// 把当前模板绑给下拉里选中的那个项目。
+//
+// 绑定必须是一次明确的点击，不能让下拉本身承担——那个下拉的唯一职责是"换个剧名
+// 看看 {剧名} 替换出来长什么样"，有人切着切着只是想看长标题的排版，
+// 切一下就改了项目配置属于误伤。
+//
+// 按钮旁边写清楚这个项目当前绑的是哪个模板：不写的话，点下去会覆盖掉什么是不知道的。
+function _curSampleProject() {
+  const sel = document.getElementById('sample-sel');
+  if (!sel || !sel.value) return null;
+  return sampleProjects.find(x => String(x.id) === sel.value) || null;
+}
+
+function renderBindBtn() {
+  const btn = document.getElementById('bind-btn');
+  const note = document.getElementById('bind-note');
+  if (!btn) return;
+  const p = _curSampleProject();
+  if (!p) { btn.style.display = 'none'; note.textContent = ''; return; }
+  btn.style.display = '';
+  const boundHere = p.default_template_id === TID;
+  const boundElse = p.default_template_id && p.default_template_id !== TID;
+  btn.textContent = boundHere ? '取消用于该项目' : '用于该项目';
+  // 一直保留 btn-secondary：摘掉只剩 .btn，边框是透明的，看着像没渲染完。
+  // 已绑定用 on 类点亮，跟别处的开关按钮同一套。
+  btn.classList.toggle('on', boundHere);
+  btn.title = boundHere
+    ? `《${p.title}》导出时会自动选中这个模板，点一下取消`
+    : `把这个模板设成《${p.title}》导出时的默认选择`;
+  if (boundElse) {
+    const other = sampleTemplates.find(t => t.id === p.default_template_id);
+    note.textContent = `当前是「${other ? other.name : '另一个模板'}」，点击会替换`;
+  } else {
+    note.textContent = '';
+  }
+}
+
+let sampleTemplates = [];   // 只为把项目绑的模板 id 显示成名字
+
+async function bindTemplateToProject() {
+  const p = _curSampleProject();
+  if (!p) return;
+  const on = p.default_template_id !== TID;
+  const btn = document.getElementById('bind-btn');
+  btn.disabled = true;
+  try {
+    await apiFetch(`/admake/projects/${p.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ default_template_id: on ? TID : 0 }),
+    });
+    // 后端把 0 当成"清空"（见 update_project），这里跟着把本地也置空
+    p.default_template_id = on ? TID : null;
+    renderBindBtn();
+    toast(on ? `已设为《${p.title}》的模板，导出时自动选中` : `已取消《${p.title}》的模板绑定`,
+          'success', 3500);
+  } catch (e) {
+    toast('设置失败：' + e.message, 'error', 6000);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function projVars() {
+  const sel = document.getElementById('sample-sel');
+  const p = sampleProjects.find(x => String(x.id) === sel.value) || sampleProjects[0];
+  return p
+    ? { 剧名: p.title || '剧名', 署名: p.editor_alias || '署名', 平台: p.target_platform || '平台' }
+    : { 剧名: '示例剧名', 署名: '署名', 平台: '平台' };
+}
+function resolveVars(s) {
+  const v = projVars();
+  return String(s || '').replace(/\{剧名\}/g, v.剧名).replace(/\{署名\}/g, v.署名).replace(/\{平台\}/g, v.平台);
+}
+
+// ── 渲染：左栏 ──
+function renderAll() { renderConfig(); renderProp(); renderPreview(); _pushHist(); }
+
+// 素材导入进度：就地显示在对应的槽位/区块上，不弹遮罩——导入的同时还要能摆别的元素。
+// 一次只能选一个文件（input 是单选），所以一个变量就够。
+// 上传阶段有真实百分比（XHR 给的）；服务端那段（校验、透明通道检测、贴片转码）
+// 拿不到百分比，条改成来回滑的不确定态，如实说"正在处理"，不编一个假数字。
+let _uploading = null;   // {kind:'intro'|'outro'|'png'|'mov', name, phase, pct}
+
+function uploadBarHtml() {
+  if (!_uploading) return '';
+  const indet = _uploading.phase !== 'uploading';
+  const pct = indet ? 100 : _uploading.pct;
+  const text = indet ? '正在处理素材…' : `上传中 ${_uploading.pct}%`;
+  return `<div class="up-row">
+    <div class="up-name">${esc(_uploading.name)}</div>
+    <div class="up-bar ${indet ? 'indet' : ''}"><i style="width:${pct}%"></i></div>
+    <div class="up-stage">${text}</div></div>`;
+}
+function showUploadProgress(kind, fileName) {
+  _uploading = { kind, name: fileName, phase: 'uploading', pct: 0 };
+  renderConfig();
+}
+function updateUploadProgress(phase, pct) {
+  if (!_uploading) return;
+  _uploading.phase = phase;
+  if (phase === 'uploading') _uploading.pct = pct;
+  // 只重画进度那一块，不整栏重建——重建会打断输入焦点，也会让动画从头开始
+  const row = document.querySelector('.up-row');
+  if (!row) { renderConfig(); return; }
+  const indet = phase !== 'uploading';
+  const bar = row.querySelector('.up-bar');
+  bar.classList.toggle('indet', indet);
+  bar.querySelector('i').style.width = (indet ? 100 : pct) + '%';
+  row.querySelector('.up-stage').textContent = indet ? '正在处理素材…' : `上传中 ${pct}%`;
+}
+function hideUploadProgress() {
+  _uploading = null;
+  renderConfig();
+}
+
+function slotHtml(kind, label) {
+  if (_uploading && _uploading.kind === kind) {
+    return `<div class="slot loading">${uploadBarHtml()}</div>`;
+  }
+  const a = cfg[kind];
+  if (a && a.asset) {
+    return `<div class="slot filled">
+      <div class="s-body"><div class="s-main">${label} · ${esc(a.name || a.asset)}</div>
+      <div class="s-sub"><span class="ok">✓</span> ${a.duration ? a.duration + 's' : '已导入'}</div></div>
+      <span class="s-x" onclick="removeClip('${kind}')">✕</span></div>`;
+  }
+  return `<div class="slot" onclick="pickAsset('${kind}')"><div class="s-ic">＋</div><div class="s-main">${label}（上传 mp4）</div></div>`;
+}
+
+function renderConfig() {
+  document.getElementById('slot-intro').innerHTML = slotHtml('intro', '片头');
+  document.getElementById('slot-outro').innerHTML = slotHtml('outro', '片尾');
+
+  document.getElementById('text-chips').innerHTML = cfg.texts.map(t => `
+    <div class="chip ${selected === t.id ? 'sel' : ''}" onclick="sel('${t.id}')">
+      <div class="chip-body"><div class="chip-name">${esc(t.label || '文字')}</div><div class="chip-val">${esc(t.content)}</div></div>
+      <span class="chip-x" onclick="event.stopPropagation();del('${t.id}')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></div>`).join('');
+
+  // 静态和动态各自最多 3 张，两边额度不共用。之前是合计 3 张的共用额度，
+  // 两栏都显示合计数，只传一张静态贴纸时动态那栏也跟着变成 1/3。
+  document.getElementById('png-cnt').textContent = `(${cfg.pngs.length}/${STICKER_MAX})`;
+  document.getElementById('dyn-cnt').textContent = `(${cfg.dyns.length}/${STICKER_MAX})`;
+  document.getElementById('png-chips').innerHTML = cfg.pngs.map(p => `
+    <div class="chip ${selected === p.id ? 'sel' : ''}" onclick="sel('${p.id}')">
+      <div class="chip-ic"><img src="${assetUrl(p.asset)}" alt=""></div>
+      <div class="chip-body"><div class="chip-name">${esc(p.name || p.asset)}</div><div class="chip-val"><span class="ok">✓ 透明底</span>${p.flip ? ' · 已翻转' : ''}${p.rot ? ' · 旋转 ' + Math.round(p.rot) + '°' : ''}</div></div>
+      <span class="chip-x" onclick="event.stopPropagation();del('${p.id}')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></div>`).join('');
+  document.getElementById('dyn-chips').innerHTML = cfg.dyns.map(d => `
+    <div class="chip ${selected === d.id ? 'sel' : ''}" onclick="sel('${d.id}')">
+      <div class="chip-ic">${
+        d.preview && d.preview_kind === 'video'
+          ? `<video src="${assetUrl(d.preview)}" autoplay loop muted playsinline></video>`
+          : d.preview ? `<img src="${assetUrl(d.preview)}" alt="">` : ''
+      }</div><div class="chip-body"><div class="chip-name">${esc(d.name || d.asset)}</div><div class="chip-val"><span class="ok">✓ 透明底</span>${d.flip ? ' · 已翻转' : ''}${d.rot ? ' · 旋转 ' + Math.round(d.rot) + '°' : ''}</div></div>
+      <span class="chip-x" onclick="event.stopPropagation();del('${d.id}')"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></div>`).join('');
+  // 贴纸/动效是列表不是槽位，正在导入的那条挂在对应列表末尾
+  if (_uploading && _uploading.kind === 'png')
+    document.getElementById('png-chips').insertAdjacentHTML('beforeend', `<div class="chip loading">${uploadBarHtml()}</div>`);
+  if (_uploading && _uploading.kind === 'mov')
+    document.getElementById('dyn-chips').insertAdjacentHTML('beforeend', `<div class="chip loading">${uploadBarHtml()}</div>`);
+
+
+  document.getElementById('tr-white').classList.toggle('on', cfg.transition === 'white');
+  document.getElementById('tr-black').classList.toggle('on', cfg.transition === 'black');
+  document.getElementById('tr-none').classList.toggle('on', !cfg.transition || cfg.transition === 'none');
+}
+
+// ── 渲染：右栏属性 ──
+function findEl(id) { return cfg.texts.find(x => x.id === id) || cfg.pngs.find(x => x.id === id) || cfg.dyns.find(x => x.id === id); }
+function kindOf(id) { if (cfg.texts.some(x => x.id === id)) return 't'; if (cfg.pngs.some(x => x.id === id)) return 'p'; if (cfg.dyns.some(x => x.id === id)) return 'd'; return null; }
+
+const IC_FLIP = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M8 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-3"/><path d="M12 2v2"/><path d="M12 8v2"/><path d="M12 14v2"/><path d="M12 20v2"/></svg>';
+// 刷新图标（双箭头绕圈），不用撤销那个单箭头——复位是回到默认值，不是回到上一步
+const IC_RESET = '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>';
+// 翻转是开关（当前状态由按钮亮不亮表示），复位是一次性动作，两者不是同一种按钮
+function transformBtns(o) {
+  return `<div class="mini-btns">
+    <button class="btn btn-secondary btn-toggle${o.flip ? ' on' : ''}" onclick="setF('flip',${!o.flip})">${IC_FLIP}水平翻转</button>
+    <button class="btn btn-secondary" onclick="resetTransform()">${IC_RESET}复位</button></div>`;
+}
+
+function renderProp() {
+  const head = document.getElementById('prop-head'), body = document.getElementById('prop-body');
+  if (frameIdx !== 1) {
+    head.textContent = frameIdx === 0 ? '片头贴片' : '片尾贴片';
+    body.innerHTML = `<div class="prop-empty">正在预览${frameIdx === 0 ? '片头' : '片尾'}贴片。<br>贴纸、文字只在正片显示，<br>切回「中段」编辑。</div>`;
+    return;
+  }
+  const k = kindOf(selected), o = findEl(selected);
+  if (k === 't') {
+    head.textContent = `文字属性 · ${o.label || '文字'}`;
+    body.innerHTML = `
+      <div class="field"><div class="field-label">文字内容</div>
+        <input class="input" id="p-content" value="${esc(o.content)}" oninput="updateContent(this.value)">
+        <div class="var-bar"><span style="font-size:9px;color:var(--text3)">插入变量：</span>
+          <span class="var-chip" onclick="insVar('{剧名}')">剧名</span></div></div>
+      <div class="field"><div class="field-label">字体 <span style="color:var(--text3);font-weight:400">（海外字体仅英文/数字）</span></div>
+        <select class="input" onchange="setF('style',this.value)">
+          <optgroup label="中文">${CN_FONTS.map(x => `<option ${x === o.style ? 'selected' : ''}>${x}</option>`).join('')}</optgroup>
+          <optgroup label="海外">${EN_FONTS.map(x => `<option ${x === o.style ? 'selected' : ''}>${x}</option>`).join('')}</optgroup>
+        </select></div>
+      <div class="field"><div class="field-label">颜色</div>
+        <select class="input" onchange="setF('color',this.value)">${['金','白','红','粉','蓝','黑'].map(x => `<option ${x === (o.color || '白') ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><div class="field-label">特效</div>
+        <select class="input" onchange="setF('effect',this.value)">${['平面','立体'].map(x => `<option ${x === (o.effect || '平面') ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><div class="field-label">显示时段</div>
+        ${periodUI(o, '全程')}</div>
+      `;
+  } else if (k === 'p') {
+    head.textContent = '静态贴纸属性';
+    body.innerHTML = `
+      <div class="field"><div class="field-label">素材（透明 PNG）</div>
+        <div class="slot filled"><span class="chip-ic"><img src="${assetUrl(o.asset)}" alt=""></span><div class="s-body"><div class="s-main">${esc(o.name || o.asset)}</div><div class="s-sub"><span class="ok">✓</span> 透明通道校验通过</div></div></div></div>
+      <div class="field"><div class="field-label">操作</div>
+        ${transformBtns(o)}</div>
+      <div class="field"><div class="field-label">显示时段</div>
+        ${periodUI(o, '全程')}</div>
+      `;
+  } else if (k === 'd') {
+    head.textContent = '动态贴纸属性';
+    body.innerHTML = `
+      <div class="field"><div class="field-label">素材（剪映透明 MOV）</div>
+        <div class="slot filled"><div class="s-body"><div class="s-main">${esc(o.name || o.asset)}</div><div class="s-sub"><span class="ok">✓</span> 透明通道校验通过</div></div></div></div>
+      <div class="field"><div class="field-label">操作</div>
+        ${transformBtns(o)}</div>
+      <div class="field"><div class="field-label">显示时段</div>
+        ${periodUI(o, '循环整段')}</div>
+      `;
+  } else {
+    head.textContent = '元素属性';
+    body.innerHTML = `<div class="prop-empty">点选一个元素编辑</div>`;
+  }
+}
+
+// ── 渲染：预览画布 ──
+// 后端导出字号（px，720 宽成片上）——与 postprocess.py::_FONT_SIZES 保持一致
+const FONT_SIZE_720 = {"宋体":66,"黑体":58,"圆润体":58,"Anton":68,"Bebas":74,"Poppins":56,
+                       "Alfa Slab":56,"Bangers":66,"Lobster":70,"Pacifico":62,"Playfair":62};
+const PREVIEW_RATIO = 300 / 720;  // 画布 300px 宽 : 成片 720px 宽
+const MAX_TEXT_W = 300 * 0.9;     // 文字安全宽度（画布 90%）——与后端 _MAX_TEXT_W(648/720) 同比例
+
+// 文字超宽处理，与后端 postprocess._fit_text 同一套规则：先缩字号(到 70%)，
+// 再折两行(到 50%)，仍超宽截断加省略号。返回 {lines:[...], fs}
+const _measureCtx = document.createElement('canvas').getContext('2d');
+function _lineW(s, fs, fam) { _measureCtx.font = `800 ${fs}px ${fam}`; return _measureCtx.measureText(s).width; }
+function _splitTwo(t) {
+  t = t.trim();
+  const sp = [...t].map((c, i) => c === ' ' ? i : -1).filter(i => i >= 0);
+  if (sp.length) {
+    const mid = sp.reduce((a, b) => Math.abs(b - t.length / 2) < Math.abs(a - t.length / 2) ? b : a);
+    return [t.slice(0, mid).trimEnd(), t.slice(mid + 1).trimStart()];
+  }
+  const half = Math.ceil(t.length / 2);
+  return [t.slice(0, half), t.slice(half)];
+}
+function fitText(raw, baseFs, fam) {
+  const w = _lineW(raw, baseFs, fam);
+  if (w <= MAX_TEXT_W) return { lines: [raw], fs: baseFs };
+  const k = MAX_TEXT_W / w;
+  if (k >= 0.7) return { lines: [raw], fs: Math.max(6, baseFs * k) };
+  let [l1, l2] = _splitTwo(raw);
+  let fs = baseFs * 0.7;
+  const floor = baseFs * 0.5;
+  for (let i = 0; i < 4; i++) {
+    const lw = Math.max(_lineW(l1, fs, fam), _lineW(l2, fs, fam));
+    if (lw <= MAX_TEXT_W) return { lines: [l1, l2], fs };
+    fs = Math.max(floor, fs * MAX_TEXT_W / lw);
+    if (fs === floor) break;
+  }
+  // 逐字截断更宽的那一行（长单词可能落在第一行）——与后端 _fit_text 同规则
+  while (Math.max(_lineW(l1, fs, fam), _lineW(l2, fs, fam)) > MAX_TEXT_W && (l1.length > 2 || l2.length > 2)) {
+    if (_lineW(l1, fs, fam) >= _lineW(l2, fs, fam) && l1.length > 2) l1 = l1.slice(0, -2) + '…';
+    else if (l2.length > 2) l2 = l2.slice(0, -2) + '…';
+    else break;
+  }
+  return { lines: [l1, l2], fs };
+}
+
+function elInner(o, k) {
+  if (k === 't') {
+    const raw = resolveVars(o.content);
+    // 拉丁字体遇中文自动换中文字体，和后端一致，不出方框
+    const useCJK = EN_FONTS.includes(o.style) && /[一-鿿]/.test(raw);
+    const famKey = useCJK ? '黑体' : (FONT_CSS[o.style] ? o.style : '黑体');
+    const fam = FONT_CSS[famKey];
+    // 字号按后端导出字号等比换算 + 超宽先缩后换行（所见即所得）
+    const baseFs = (FONT_SIZE_720[famKey] || 58) * PREVIEW_RATIO;
+    const fit = fitText(raw, baseFs, fam);
+    const fs = fit.fs.toFixed(1);
+    const content = fit.lines.map(esc).join('<br>');
+    const col = COLOR_CSS[o.color] || '#ffffff';
+    // white-space:pre——保留连续空格（nowrap 会把多个空格折叠成一个，跟导出不一致）
+    if (o.effect === '立体')
+      return `<div style="font-family:${fam};font-weight:800;font-size:${fs}px;line-height:1.2;white-space:pre;text-align:center;${bevelCss(col)}">${content}</div>`;
+    const shadow = o.color === '黑' ? '0 1px 2px rgba(255,255,255,.9)' : '0 2px 4px rgba(0,0,0,.75)';
+    return `<div style="font-family:${fam};color:${col};font-weight:800;font-size:${fs}px;white-space:pre;text-align:center;line-height:1.35;text-shadow:${shadow}">${content}</div>`;
+  }
+  // 静态贴纸：按「原图像素 ÷ 720」等比显示，和导出时的实际占比一致
+  if (k === 'p') return `<div class="lyr-png"><img src="${assetUrl(o.asset)}" alt="" onload="this.style.width=(this.naturalWidth*${PREVIEW_RATIO.toFixed(4)})+'px'"></div>`;
+  if (k === 'd') {
+    // 后端把 qtrle 转成了透明 webm 预览，浏览器能直接放；转不成退静图；都没有才占位框
+    const w = Math.max(30, Math.round((o.w || 360) / 720 * 300));
+    const h = Math.max(30, Math.round((o.h || 640) / 1280 * 533));
+    const st = `width:${w}px;height:${h}px`;
+    if (o.preview && o.preview_kind === 'video')
+      return `<video class="lyr-media" style="${st}" src="${assetUrl(o.preview)}" autoplay loop muted playsinline></video>`;
+    if (o.preview)
+      return `<img class="lyr-media" style="${st}" src="${assetUrl(o.preview)}" alt="">`;
+    return `<div class="lyr-dyn" style="${st}">动态贴纸</div>`;
+  }
+  return '';
+}
+// ── 中段预览底：播样例项目的真实 Part 视频（字幕位置所见即所得，不再盲摆）──
+let _samplePartCache = {};  // pid -> 首个有视频的 Part URL；null=确认没有
+async function _fetchSamplePart(pid) {
+  _samplePartCache[pid] = null;
+  try {
+    const parts = await apiFetch(`/admake/projects/${pid}/parts`);
+    const pt = (parts || []).find(x => x.file_path);
+    if (pt) _samplePartCache[pid] = `${ORIGIN}/uploads/${pt.file_path}`;
+  } catch { /* 拉不到就保持灰底 */ }
+  renderPreview();
+}
+function _ensureSampleBg(c) {
+  const sel = document.getElementById('sample-sel');
+  const pid = sel && sel.value;
+  const url = pid && _samplePartCache[pid];
+  const cur = c.querySelector('.sample-bg');
+  if (!url) {
+    if (cur) cur.remove();
+    if (pid && !(pid in _samplePartCache)) _fetchSamplePart(pid);
+    return;
+  }
+  if (cur && cur.dataset.url === url) return;  // 同一底视频复用，逐字输入等重渲不重启播放
+  if (cur) cur.remove();
+  c.insertAdjacentHTML('afterbegin',
+    `<video class="clip-preview sample-bg" data-url="${url}" src="${url}" autoplay muted loop playsinline
+       style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;"></video>`);
+}
+// 样例下拉只在有用时出现：文字层用了变量，或当前样例有视频可当预览底
+function updateSampleVisibility() {
+  const lbl = document.getElementById('sample-lbl'), sel = document.getElementById('sample-sel');
+  if (!lbl || !sel) return;
+  const hasVars = (cfg.texts || []).some(t => /\{(剧名|署名|平台)\}/.test(t.content || ''));
+  const pid = sel.value;
+  const show = hasVars || !!(pid && _samplePartCache[pid]) || !(pid in _samplePartCache);
+  lbl.style.display = show ? '' : 'none';
+  sel.style.display = show ? '' : 'none';
+  // 绑定按钮跟着一起显隐：下拉都藏了，按钮就没有"绑给谁"这个对象了
+  const bb = document.getElementById('bind-btn'), bn = document.getElementById('bind-note');
+  if (bb) bb.style.display = show ? '' : 'none';
+  if (bn) bn.style.display = show ? '' : 'none';
+  if (show) renderBindBtn();
+}
+function renderPreview() {
+  const c = document.getElementById('canvas');
+  c.style.background = FRAMES[frameIdx];
+  c.querySelectorAll('.layer, .strip, .clip-preview:not(.sample-bg)').forEach(e => e.remove());
+  const v = projVars();
+  document.getElementById('foot-name').textContent = `《${v.剧名}》`;
+  updateSampleVisibility();
+  // 片头/片尾画面：直接播上传的贴片视频（看传对了没有）。贴纸/文字只叠在正片上，
+  // 不会出现在贴片里，所以这两个画面不渲染叠加层。
+  if (frameIdx !== 1) {
+    const bg = c.querySelector('.sample-bg'); if (bg) bg.remove();
+    const slot = frameIdx === 0 ? cfg.intro : cfg.outro;
+    if (slot && slot.asset) {
+      c.insertAdjacentHTML('afterbegin',
+        `<video class="clip-preview" src="${assetUrl(slot.asset)}" autoplay muted loop playsinline
+           style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;"></video>`);
+    } else {
+      c.insertAdjacentHTML('afterbegin',
+        `<div class="strip pre">${frameIdx === 0 ? '未设置片头贴片' : '未设置片尾贴片'}</div>`);
+    }
+    return;
+  }
+  _ensureSampleBg(c);
+  // 叠放顺序（从底到顶）：动效 < 静态贴纸 < 文字——文字永远在最上、不被效果盖住
+  [['d', cfg.dyns], ['p', cfg.pngs], ['t', cfg.texts]].forEach(([k, arr]) => arr.forEach(o => {
+    const el = document.createElement('div');
+    el.className = `layer ${selected === o.id ? 'sel' : ''}`;
+    el.style.left = o.x + '%'; el.style.top = o.y + '%';
+    el.style.transform = _layerCss(o);
+    // 元素靠画布顶时旋转手柄会伸出画布外被裁掉够不着——翻到元素下方
+    const rotPos = o.y < 18 ? 'h-rot below' : 'h-rot';
+    el.innerHTML = `<div class="inner">${elInner(o, k)}${selected === o.id ? `<div class="handle ${rotPos}" data-h="rot"></div><div class="handle h-scale" data-h="scale"></div>` : ''}</div>`;
+    el.dataset.id = o.id;
+    el.addEventListener('pointerdown', e => startDrag(e, o.id));
+    _syncHandles(el, o);
+    c.appendChild(el);
+  }));
+}
+
+// 选中切换就地更新：只动选中框和手柄，不重建图层 DOM——重建会让动效 APNG 重播、
+// 图片重解码（表现为整屏闪一下），还会把指针捕获丢在已销毁的旧元素上
+function _applySelection() {
+  document.querySelectorAll('#canvas .layer').forEach(l => {
+    const isSel = l.dataset.id === selected;
+    l.classList.toggle('sel', isSel);
+    const inner = l.querySelector('.inner');
+    if (!inner) return;
+    inner.querySelectorAll('.handle').forEach(h => h.remove());
+    if (isSel) {
+      const o = findEl(selected);
+      const rotPos = (o && o.y < 18) ? 'h-rot below' : 'h-rot';
+      inner.insertAdjacentHTML('beforeend',
+        `<div class="handle ${rotPos}" data-h="rot"></div><div class="handle h-scale" data-h="scale"></div>`);
+      _syncHandles(l, o);
+    }
+  });
+}
+
+// ── 画布自适应 ──
+// 舞台有 850px 宽却只放一个 300px 的画布，两侧各空 275px。画布不像播放器那样被高度锁死，
+// 可以放大。内部坐标保持 300×533 不动，只在外层套一个 transform，所有既有的尺寸计算
+// （贴纸按原图像素÷720、文字安全宽度 300×0.9）全部不受影响。
+const CANVAS_W = 300, CANVAS_H = 533, CANVAS_MAX_K = 1.6;
+
+function fitCanvas() {
+  const stage = document.querySelector('.prev-stage');
+  const box = document.getElementById('canvas-fit');
+  const cv = document.getElementById('canvas');
+  if (!stage || !box || !cv) return;
+  const cs = getComputedStyle(stage);
+  // 舞台里除了画布还有上方提示和下方说明各一行，留出它们的高度再算
+  const availH = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - 72;
+  const availW = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  const k = Math.max(1, Math.min(CANVAS_MAX_K, availH / CANVAS_H, availW / CANVAS_W));
+  cv.style.transform = `scale(${k})`;
+  box.style.width = Math.round(CANVAS_W * k) + 'px';
+  box.style.height = Math.round(CANVAS_H * k) + 'px';
+}
+if (typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(fitCanvas).observe(document.querySelector('.prev-stage'));
+} else {
+  window.addEventListener('resize', fitCanvas);
+}
+fitCanvas();
+
+// ── 拖动 / 缩放 / 旋转 ──
+let drag = null;
+function startDrag(e, id) {
+  e.preventDefault();
+  if (selected !== id) { selected = id; _applySelection(); renderConfig(); renderProp(); }
+  const o = findEl(id); if (!o) return;
+  const r = document.getElementById('canvas').getBoundingClientRect();
+  const cx = r.left + r.width * o.x / 100, cy = r.top + r.height * o.y / 100;
+  const mode = e.target.dataset.h || 'move';
+  drag = { id, mode, r, cx, cy, startScale: o.scale || 1, startRot: o.rot || 0,
+    startDist: Math.hypot(e.clientX - cx, e.clientY - cy),
+    startAng: Math.atan2(e.clientY - cy, e.clientX - cx),
+    offX: e.clientX - cx, offY: e.clientY - cy };
+  const layer = document.querySelector(`.layer[data-id="${id}"]`); if (layer) layer.classList.add('dragging');
+  // 捕获指针：窗口外松手也能收到 pointerup，不会拖拽粘住
+  try { e.target.setPointerCapture(e.pointerId); } catch {}
+  window.addEventListener('pointermove', onDrag);
+  window.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', endDrag);
+}
+function onDrag(e) {
+  if (!drag) return;
+  const o = findEl(drag.id); if (!o) return;
+  if (drag.mode === 'move') {
+    o.x = Math.max(0, Math.min(100, (e.clientX - drag.offX - drag.r.left) / drag.r.width * 100));
+    o.y = Math.max(0, Math.min(100, (e.clientY - drag.offY - drag.r.top) / drag.r.height * 100));
+  } else if (drag.mode === 'scale') {
+    const dist = Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy);
+    o.scale = Math.max(0.3, Math.min(3, drag.startScale * (dist / (drag.startDist || 1))));
+  } else if (drag.mode === 'rot') {
+    o.rot = drag.startRot + (Math.atan2(e.clientY - drag.cy, e.clientX - drag.cx) - drag.startAng) * 180 / Math.PI;
+  }
+  const layer = document.querySelector(`.layer[data-id="${drag.id}"]`);
+  if (layer) { layer.style.left = o.x + '%'; layer.style.top = o.y + '%'; layer.style.transform = _layerCss(o); _syncHandles(layer, o); }
+}
+function endDrag() {
+  if (drag) { const l = document.querySelector(`.layer[data-id="${drag.id}"]`); if (l) l.classList.remove('dragging'); }
+  drag = null;
+  window.removeEventListener('pointermove', onDrag);
+  window.removeEventListener('pointerup', endDrag);
+  window.removeEventListener('pointercancel', endDrag);
+  // 拖完不重建画布（重建会闪）：位置已由 onDrag 实时写到 DOM，
+  // 只刷新左右面板 + 手柄位置（靠顶翻转阈值）+ 记一步历史
+  renderConfig(); renderProp(); _applySelection(); _pushHist();
+}
+
+// ── 编辑操作 ──
+// 左栏点选图层：同样就地更新选中态，不重建画布（防闪）
+function sel(id) { if (frameIdx !== 1) return; selected = id; _applySelection(); renderConfig(); renderProp(); }
+function _layerCss(o) { return `translate(-50%,-50%) rotate(${o.rot || 0}deg) scale(${o.scale || 1}) scaleX(${o.flip ? -1 : 1})`; }
+// 手柄反向缩放：元素缩得再小，旋转/缩放手柄始终保持原始大小；scaleX 抵消翻转防图标镜像
+function _syncHandles(layerEl, o) {
+  const inv = (1 / (o.scale || 1)).toFixed(3);
+  layerEl.querySelectorAll('.handle').forEach(h =>
+    h.style.transform = `scale(${inv}) scaleX(${o.flip ? -1 : 1})`);
+}
+// 变换类操作就地更新：整画布重建会让动图重播、图片重解码（连点翻转/复位表现为抽动）
+function _applyTransform(o) {
+  const l = document.querySelector(`#canvas .layer[data-id="${o.id}"]`);
+  if (!l) return;
+  l.style.left = o.x + '%'; l.style.top = o.y + '%';
+  l.style.transform = _layerCss(o); _syncHandles(l, o);
+}
+function setF(key, val) {
+  const o = findEl(selected); if (!o) return;
+  o[key] = val;
+  if (key === 'flip' || key === 'rot' || key === 'scale') _applyTransform(o);      // 只动变换
+  else if (key !== 'period') renderPreview();                                      // 字体/颜色/特效等影响内容
+  renderConfig(); renderProp(); _pushHist();
+}
+// 文字内容连续输入：只更新画布和左栏，别重建属性面板的输入框（否则每敲一字丢焦点）
+function updateContent(v) { const o = findEl(selected); if (!o) return; o.content = v; renderConfig(); renderPreview(); _pushHist(); }
+function resetTransform() { const o = findEl(selected); if (!o) return; o.rot = 0; o.scale = 1; o.flip = false; _applyTransform(o); renderConfig(); renderProp(); _pushHist(); }
+function insVar(v) { const o = findEl(selected); if (!o) return; o.content += v; const box = document.getElementById('p-content'); if (box) box.value = o.content; renderConfig(); renderPreview(); _pushHist(); }
+let _seq = 0;
+function nid(p) { return p + Date.now() + '_' + (_seq++); }
+// 置灰的三个叠加区各自接一次点击提示。绑在区块上而不是每颗按钮上：
+// 子元素的 pointer-events 已经关掉了，点哪儿事件都冒到区块这一层。
+let _clipsHintBound = false;
+function _bindClipsModeHint() {
+  if (_clipsHintBound) return;
+  _clipsHintBound = true;
+  ['text-chips', 'png-chips', 'dyn-chips'].forEach(id => {
+    const sec = document.getElementById(id)?.closest('.sec');
+    if (!sec) return;
+    sec.addEventListener('click', () => {
+      if (frameIdx === 1) return;
+      toast('文字和贴纸只在中段生效，把上方「画面」切回中段再编辑', 'info', 3500);
+    });
+  });
+}
+
+function addText() {
+  if (frameIdx !== 1) { toast('切回「中段」再编辑文字', 'error'); return; }
+  const id = nid('t');
+  // 每加一条往下错开，避免叠在同一处；第一条默认放剧名，后续放普通文字
+  const n = cfg.texts.length;
+  const y = Math.min(18 + n * 16, 88);
+  const first = n === 0;
+  // 第一条默认是剧名。样例项目的剧名是英文时给英文字体——宋体渲染拉丁字母很难看，
+  // 而且后端遇到拉丁字体配中文才会自动换字体，反过来（中文字体配英文）不会换，
+  // 只能靠这里选对。判据用「有没有汉字」，中英混排按中文算。
+  const titleIsCJK = /[一-鿿]/.test(projVars().剧名);
+  const firstStyle = titleIsCJK ? '宋体' : 'Playfair';
+  cfg.texts.push({
+    id, label: first ? '剧名' : '文字',
+    content: first ? '《{剧名}》' : '新文字',
+    style: first ? firstStyle : (titleIsCJK ? '黑体' : 'Poppins'),
+    color: first ? '金' : '白',
+    effect: first ? '立体' : '平面',
+    x: 50, y, scale: 1, rot: 0, flip: false, period: '全程',
+  });
+  selected = id; renderAll();
+}
+function del(id) {
+  cfg.texts = cfg.texts.filter(x => x.id !== id);
+  cfg.pngs = cfg.pngs.filter(x => x.id !== id);
+  cfg.dyns = cfg.dyns.filter(x => x.id !== id);
+  if (selected === id) selected = null;
+  renderAll();
+}
+function removeClip(kind) { cfg[kind] = null; renderConfig(); renderPreview(); _pushHist(); }
+
+// 显示时段：全程（或循环整段）/前 N 秒——N 可自定义；存储仍是「前 N 秒」字符串，老模板天然兼容
+function periodUI(o, fullLabel) {
+  const m = /^前\s*(\d+)\s*秒$/.exec(o.period || '');
+  const n = m ? +m[1] : 5;
+  return `<div style="display:flex;gap:6px;align-items:center">
+    <select class="input" style="flex:1" onchange="setPeriodMode(this.value)">
+      <option ${m ? '' : 'selected'}>${fullLabel}</option>
+      <option ${m ? 'selected' : ''}>前 N 秒</option>
+    </select>
+    ${m ? `<input class="input" type="number" min="1" max="600" step="1" value="${n}" style="width:64px"
+      onchange="setPeriodN(this.value)"><span style="font-size:11px;color:var(--text2)">秒</span>` : ''}
+  </div>`;
+}
+function setPeriodMode(v) { setF('period', v === '前 N 秒' ? '前 5 秒' : v); }
+function setPeriodN(v) {
+  const n = Math.max(1, Math.min(600, Math.round(+v) || 5));
+  setF('period', `前 ${n} 秒`);
+}
+function setTrans(v) { cfg.transition = v; renderConfig(); _pushHist(); }
+function changeFrame() {
+  frameIdx = document.getElementById('frame-sel').selectedIndex;
+  // 片头/片尾 = 贴片画面，叠加内容整套只读：清选中、左栏叠加区置灰（.clips-mode）
+  if (frameIdx !== 1) selected = null;
+  document.querySelector('.col-config').classList.toggle('clips-mode', frameIdx !== 1);
+  _bindClipsModeHint();
+  // 切过去的当下就说清楚左栏为什么灰了。不说的话用户只看到一片点不动的区域，
+  // 得自己猜是坏了还是被禁了。
+  if (frameIdx !== 1) toast('片头和片尾是整段贴片画面，文字和贴纸只在中段生效', 'info', 3500);
+  renderPreview(); renderConfig(); renderProp();
+}
+function toggleGuide() { document.getElementById('guide').classList.toggle('on', document.getElementById('guide-cb').checked); }
+
+// ── 素材上传 ──
+function pickAsset(kind) {
+  if ((kind === 'png' || kind === 'mov') && frameIdx !== 1) { toast('切回「中段」再编辑贴纸', 'error'); return; }
+  if (kind === 'png' && cfg.pngs.length >= STICKER_MAX) { toast(`静态贴纸最多 ${STICKER_MAX} 张`, 'error'); return; }
+  if (kind === 'mov' && cfg.dyns.length >= STICKER_MAX) { toast(`动态贴纸最多 ${STICKER_MAX} 张`, 'error'); return; }
+  const inp = document.getElementById('asset-input');
+  inp.accept = kind === 'png' ? 'image/png' : (kind === 'mov' ? 'video/quicktime,.mov' : 'video/mp4,video/quicktime');
+  // intro/outro 是槽位，素材类型都属 clip（视频、不要求透明）；png/mov 类型即槽位
+  const uploadKind = (kind === 'intro' || kind === 'outro') ? 'clip' : kind;
+  inp.onchange = async () => {
+    const file = inp.files[0]; inp.value = '';
+    if (!file) return;
+    showUploadProgress(kind, file.name);
+    try {
+      const meta = await apiUploadAsset(uploadKind, file, updateUploadProgress);
+      if (kind === 'intro' || kind === 'outro') {
+        cfg[kind] = { asset: meta.asset, name: meta.orig_name || meta.asset, duration: meta.duration };
+      } else if (kind === 'png') {
+        // 初始缩放自适应：大贴纸先缩进画布 90% 内（720×1280 的 648×1152），要多大再手动拉
+        const fitScale = Math.min(1, 648 / (meta.width || 1), 1152 / (meta.height || 1));
+        const id = nid('p'); cfg.pngs.push({ id, asset: meta.asset, name: meta.orig_name || meta.asset, x: 80, y: 12, scale: +fitScale.toFixed(2), rot: 0, flip: false, period: '全程' }); selected = id;
+      } else if (kind === 'mov') {
+        const id = nid('d');
+        cfg.dyns.push({ id, asset: meta.asset, name: meta.orig_name || meta.asset,
+          preview: meta.preview, preview_kind: meta.preview_kind,
+          x: 50, y: 50, scale: 1, rot: 0, flip: false, period: '循环整段', w: meta.width, h: meta.height });
+        selected = id;
+      }
+      hideUploadProgress();
+      toast('素材已导入', 'success');
+      renderAll();
+    } catch (e) {
+      hideUploadProgress();
+      toast('导入失败：' + e.message, 'error', 6000);
+    }
+  };
+  inp.click();
+}
+
+// ── 保存 ──
+async function saveTemplate() {
+  if (_loadFailed) { toast('模板载入失败，保存已禁用（防止把线上模板覆盖成空的），请返回重进', 'error', 6000); return false; }
+  const name = document.getElementById('tpl-name').value.trim();
+  if (!name) { toast('请填写模板名称', 'error'); return false; }
+  const btn = document.getElementById('save-btn');
+  btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    await apiFetch(`/admake/templates/${TID}`, { method: 'PUT', body: JSON.stringify({ name, config: cfg }) });
+    _savedSnap = _snap();  // 保存成功后更新基线，返回不再拦
+    _updateDirtyUI();
+    toast('模板已保存', 'success');
+    return true;
+  } catch (e) { toast('保存失败：' + e.message, 'error'); return false; }
+  finally { btn.disabled = false; btn.textContent = '保存模板'; }
+}
+function toggleSaveMenu(e) {
+  e.stopPropagation();
+  document.getElementById('save-menu').classList.toggle('hidden');
+}
+document.addEventListener('click', () => document.getElementById('save-menu')?.classList.add('hidden'));
+let _shipBusy = false;  // 分享/副本共用的飞行锁：双击会打出两份不一致的包/多余副本
+async function saveAndDuplicate() {
+  document.getElementById('save-menu').classList.add('hidden');
+  if (_shipBusy) return;
+  _shipBusy = true;
+  try {
+    if (!await saveTemplate()) return;  // 先落盘，副本才是屏幕上这版
+    const copy = await apiFetch(`/admake/templates/${TID}/duplicate`, { method: 'POST' });
+    toast(`已创建副本「${copy.name}」，在模板库里可打开`, 'success');
+  } catch (e) { toast('创建副本失败：' + e.message, 'error'); }
+  finally { _shipBusy = false; }
+}
+async function exportShare() {
+  if (_shipBusy) return;
+  _shipBusy = true;
+  // 模板包动辄两三百兆（一段片头就一百多兆），后端打包加传输落盘要一两秒，
+  // 按钮不给状态的话这段时间就是「点了没动静」，人会以为没点上又点一次。
+  const btn = document.getElementById('btn-export-share');
+  const label = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.textContent = '打包中…'; }
+  try { await _exportShareInner(); }
+  finally {
+    _shipBusy = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = label; }
+  }
+}
+async function _exportShareInner() {
+  // 先保存再打包：分享出去的必须是屏幕上这版，而不是上次保存的旧版
+  if (!await saveTemplate()) return;
+  try {
+    const res = await fetch(`${API}/admake/templates/${TID}/package`, {
+      headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+    });
+    if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+    const blob = await res.blob();
+    const name = document.getElementById('tpl-name').value.trim() || 'template';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name}.skytpl`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast('已导出模板包', 'success');
+  } catch (e) { toast('导出失败：' + e.message, 'error'); }
+}
+function goList() {
+  // 有未保存改动先弹自绘确认框，主按钮引导「保存并返回」——
+  // 原生 confirm 的高亮键是"确定丢弃"，等于把丢版式做成默认动作，被用户否掉
+  if (_savedSnap && _snap() !== _savedSnap) { showLeaveModal(); return; }
+  location.href = 'index.html?view=templates';  // 回到成片模板 tab，不落到我的项目
+}
+function _gotoList() { location.href = 'index.html?view=templates'; }
+function showLeaveModal() {
+  document.getElementById('leave-modal').classList.remove('hidden');
+  document.getElementById('leave-save-btn').focus();
+}
+function hideLeaveModal() { document.getElementById('leave-modal').classList.add('hidden'); }
+async function leaveWithSave() {
+  const b = document.getElementById('leave-save-btn');
+  b.disabled = true;
+  const ok = await saveTemplate();   // 失败时 toast 已说明原因，留在页内
+  b.disabled = false;
+  if (ok) _gotoList(); else hideLeaveModal();
+}
+
+// ── Utils ──
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+// 深色胶囊＋图标圆点：浅色界面上一眼能认出是临时浮层，不会被当成顶栏的一部分
+const TOAST_ICON = {
+  success: '<path d="M4 12l6 6L20 6"/>',
+  error:   '<path d="M6 6l12 12M18 6L6 18"/>',
+  info:    '<path d="M12 8v5M12 16.5v.5"/>',
+};
+
+function toast(msg, type = 'info', ms = 3200) {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  const dot = document.createElement('span');
+  dot.className = 'toast-dot';
+  dot.innerHTML = `<svg viewBox="0 0 24 24">${TOAST_ICON[type] || TOAST_ICON.info}</svg>`;
+  const text = document.createElement('span');
+  text.textContent = msg;          // 文本走 textContent，消息里含 < > 也不会被当标签解析
+  el.append(dot, text);
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), ms + 400);
+}
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const lm = document.getElementById('leave-modal');
+  if (!lm.classList.contains('hidden')) { hideLeaveModal(); return; }  // 弹窗开着时 Esc 只关弹窗
+  selected = null; renderAll();
+});
+
+// 提示气泡：fixed 定位跟随图标（垂直居中、右侧 10px），上下钳在视口内
+const _tipPop = document.createElement('div');
+_tipPop.id = 'tip-pop';
+document.body.appendChild(_tipPop);
+document.addEventListener('mouseover', (e) => {
+  const ic = e.target.closest('.info-ic');
+  if (!ic || !ic.dataset.tip) { _tipPop.style.display = 'none'; return; }
+  _tipPop.textContent = ic.dataset.tip;
+  _tipPop.style.display = 'block';
+  const r = ic.getBoundingClientRect();
+  _tipPop.style.left = `${r.right + 10}px`;
+  const h = _tipPop.offsetHeight;
+  const top = Math.max(8, Math.min(r.top + r.height / 2 - h / 2, window.innerHeight - h - 8));
+  _tipPop.style.top = `${top}px`;
+});
+document.addEventListener('scroll', () => { _tipPop.style.display = 'none'; }, true);
+
+// ── 液态玻璃 ────────────────────────────────────────────────────────────────
+// 顶栏是为了跟另外两页长得一样；两个列头才是真有内容从底下滚过去的地方。
+function initGlass() {
+  if (window.SkyUI) SkyUI.layoutSegs();
+  if (!window.LiquidLens) return;
+  LiquidLens.setJellyGain(2);
+  // 定位线浓度只给一半，理由同编辑器：让玻璃有边可折，不是让人去读线
+  LiquidLens.mountBackdrop({ ink: .06, tint: false });
+  LiquidLens.glass('.topbar', { band: 5, sat: 140 });
+  // 工作面只给一点点，理由同编辑器
+  LiquidLens.glass('.col', { band: 5, lens: false });
+  document.querySelectorAll('.btn').forEach(b =>
+    LiquidLens.bindJelly(b, { amp: 1.2, freq: 3.6, dur: 520 }));
+  // 衔接转场的三个选项：它们是 <label> 不是 .btn，上面那行按类名绑的时候漏掉了，
+  // 点「快闪白」没有 Q 弹。参数跟按钮完全一致——同样是点一下就生效的东西，手感不该有两套。
+  // 弹的是 label 不是滑块：滑块靠 transform:translate 定位，jelly 会把 transform 整个覆写掉。
+  document.querySelectorAll('#seg-trans label').forEach(l =>
+    LiquidLens.bindJelly(l, { amp: 1.2, freq: 3.6, dur: 520 }));
+  const leave = document.getElementById('leave-modal');
+  if (leave) {
+    LiquidLens.glass(leave.querySelector('.leave-glass'),
+      { band: 6, sat: 150, bright: 106, rim: false });
+    new MutationObserver(() => {
+      if (!leave.classList.contains('hidden')) LiquidLens.refresh();
+    }).observe(leave, { attributeFilter: ['class'] });
+  }
+
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(initGlass);
+else window.addEventListener('load', initGlass);
+
+init();
+</script>
+<script src="task-float.js"></script>
+</body>
+</html>

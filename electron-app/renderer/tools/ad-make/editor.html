@@ -1,0 +1,2972 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkyArt — 素材编辑器</title>
+<link rel="stylesheet" href="../../shared/liquid-lens.css">
+<link rel="stylesheet" href="../../vendor/vis-timeline/vis-timeline.min.css">
+<script src="../../vendor/vis-timeline/vis-timeline.min.js"></script>
+<script src="../../shared/liquid-lens.js"></script>
+<script src="ui-kit.js"></script>
+<style>
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#eef0f1; --bg4:#e5e7e9;
+  --border:#e0e2e5; --accent:#f97316; --accent2:#ea580c;
+  --btn:#1f2328; --btn-h:#000000;
+  --text:#191b1f; --text2:#565b63; --text3:#9298a1;
+  /* 选中态动效统一：颜色 .18s，位移 .12s，滑块 .28s，都用同一条缓动 */
+  --e:cubic-bezier(.22,1,.36,1); --t-color:.18s ease; --t-move:.12s cubic-bezier(.22,1,.36,1);
+  --green:#059669; --red:#dc2626; --blue:#2563eb; --yellow:#d97706;
+  --hl-color:#f97316; --hook-color:#2563eb; --white-color:#94a3b8;
+  /* 阴影总强度压到 1.0（liquid-lens.css 里的默认是 1.53）。那个默认值是给首页调的，
+     一屏三四张大卡片，阴影重才有质感；这一页一屏五块面板，同样的重量叠起来读到的
+     不是层次，是「元素很多」。只压工作页，浏览页保持默认。 */
+  --sh:1.00;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+.hidden{display:none!important;}
+
+/* ── Topbar ── */
+/* 顶栏玻璃：这一页是固定布局，底下没有滚动内容穿过，所以看不到折射——
+   做成玻璃只为跟列表页的顶栏长得一样。backdrop-filter 这条是兜底，
+   liquid-glass.js 会用带 url() 的行内样式盖掉它。 */
+.topbar{background:rgba(255,255,255,.42);backdrop-filter:blur(3px) saturate(135%) brightness(108%);border-bottom:1px solid rgba(224,226,229,.7);box-shadow:inset 0 1.4px 0 rgba(255,255,255,.9);height:52px;display:flex;align-items:center;padding:0 16px 0 78px;gap:12px;flex-shrink:0;z-index:100;-webkit-app-region:drag;}
+
+/* ── 悬浮玻璃列头 ──
+   列头挪进滚动容器里做 sticky，列表就从它底下滚过去，行经过下边缘时会被掰弯。
+   列头留在滚动容器外面是看不到这个效果的——两者不重叠就没有可折射的内容。 */
+.glass-scroll{flex:1;min-height:0;overflow-y:auto;}
+/* 列头自己要带圆角：它挂了 backdrop-filter 成了合成层，Chrome 不保证用祖先的
+   border-radius 去裁合成层，不写这一条圆角面板里会露出一个方角 */
+.glass-head{border-radius:14px 14px 0 0;position:sticky;top:0;z-index:5;
+/* 列头的底色必须比它所在的面板更实，不能更透。之前是 50% 白压在 88% 白的面板上，
+   里外反过来，中间就显出一条灰带。这里给 .96，读起来是「一条页眉」而不是「一扇窗」。
+   工作面上的列头不上镜片：折射被面板底色盖住看不见，只剩圆角处那个畸变的结。 */
+  background:rgba(252,253,254,.96);
+  box-shadow:inset 0 -1px 0 rgba(224,226,229,.85),inset 0 1.2px 0 rgba(255,255,255,.95);}
+.parts-head{padding:9px 12px;font-size:10px;font-weight:600;color:var(--text3);}
+.marks-head{padding:10px 14px 7px;}
+.marks-head-row{display:flex;align-items:center;justify-content:space-between;}
+.logo{font-size:16px;font-weight:700;color:var(--text);cursor:pointer;-webkit-app-region:no-drag;}
+.logo span{color:var(--text3);font-size:11px;font-weight:400;margin-left:4px;}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);-webkit-app-region:no-drag;}
+.breadcrumb a{color:var(--text2);cursor:pointer;text-decoration:none;}
+.breadcrumb a:hover{color:var(--accent);}
+/* 返回：折角+来处文字，与模板编辑器同款（高频操作，常驻大热区） */
+.bk{border:none;background:transparent;cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text2);font-size:13px;font-weight:500;padding:6px 12px 6px 6px;border-radius:6px;transition:color .15s,background .15s;}
+.bk:hover{color:var(--text);background:var(--bg3);}
+.breadcrumb .sep{color:var(--text3);}
+.part-badge{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600;color:var(--text);}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;}
+
+/* ── Buttons ── */
+.btn{padding:6px 14px;border-radius:6px;border:1px solid transparent;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.btn-primary{background:var(--btn);color:#fff;}.btn-primary:hover{background:var(--btn-h);}
+.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border);}.btn-secondary:hover{background:var(--bg4);}
+.btn-ghost{background:transparent;color:var(--text2);}.btn-ghost:hover{background:var(--bg3);}
+.btn-green{background:var(--green);color:#fff;}.btn-green:hover{filter:brightness(.9);}
+.btn-sm{padding:4px 10px;font-size:11px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.ic{flex-shrink:0;vertical-align:-2px;}
+
+/* ── Workspace: left-sidebar + ep-main ── */
+.ep-workspace{display:flex;flex:1;min-height:0;overflow:hidden;}
+
+/* ── 面板层：统一高度 ─────────────────────────────────────────
+   阴影表达的是离背景多远，不是重不重要。这五块都是浮在工作台背景上的工作面，
+   属于同一层，阴影和圆角必须一模一样；谁少一套，那块就像贴死在背景上。
+   焦点不靠阴影抢：播放器是全页唯一的深色块，本来就最跳；「当前在哪」交给选中态。
+   面板里面的东西（Part 行、标记行、导轨色块）一律不给阴影，靠底色和描边区分。
+   比面板更高的只有弹窗和下拉菜单。 */
+.workflow-sidebar,
+.crop-player-area,
+.crop-info-col .info-card,
+.marks-info-card,
+.crop-timeline-wrap{
+  border-radius:14px;
+  box-shadow:0 0 0 1px rgba(24,28,36,calc(.055*var(--sh))),
+             0 1px 1px rgba(24,28,36,calc(.10*var(--sh))),
+             0 3px 5px rgba(24,28,36,calc(.09*var(--sh))),
+             0 9px 18px rgba(24,28,36,calc(.10*var(--sh)));
+}
+
+/* ── Left sidebar: tabbed ── */
+/* 外边距跟 ep-main 的 16px 内边距取齐：这样左栏的上下沿正好和播放器、片段信息卡在同一条线上 */
+.workflow-sidebar{
+  width:220px;flex-shrink:0;margin:16px 0 16px 16px;
+  background:rgba(255,255,255,var(--glass-work));
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.workflow-sidebar > *:not(.prism){position:relative;z-index:1;}
+
+/* ── Panel / subpanel ── */
+.sidebar-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;}
+.sidebar-subpanel{flex:1;min-height:0;overflow-y:auto;padding:10px;}
+
+/* ── legacy section kept for compat ── */
+.sidebar-section{border-bottom:1px solid var(--border);}
+.marks-section{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
+.marks-body{flex:1;overflow-y:auto;padding:8px 10px;}
+.export-section{flex-shrink:0;}
+
+/* ── 标记组：一段一行 ── */
+.mark-line{display:flex;align-items:center;gap:6px;min-height:30px;padding:0 4px 0 8px;cursor:pointer;font-size:11px;transition:background .12s;}
+.mark-line + .mark-line{border-top:1px solid var(--border);}
+.mark-line:hover{background:var(--bg3);}
+.mark-line::before{content:'';width:3px;height:12px;border-radius:2px;flex-shrink:0;}
+.mark-line.hl::before{background:var(--hl-color);}
+.mark-line.hk::before{background:var(--hook-color);}
+.mark-line-name{font-weight:600;color:var(--text);white-space:nowrap;}
+.mark-line-time{margin-left:auto;font-family:monospace;font-size:10px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.group-del-btn{background:none;border:none;cursor:pointer;color:var(--text3);font-size:13px;padding:1px 3px;border-radius:4px;}
+.group-del-btn:hover{background:rgba(220,38,38,.1);color:var(--red);}
+.score-badge{font-size:10px;font-weight:600;padding:1px 6px 1px 4px;border-radius:4px;background:rgba(234,179,8,.2);color:#b45309;margin-left:4px;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;cursor:help;}
+.score-badge svg{width:9px;height:9px;fill:currentColor;flex-shrink:0;}
+/* 手动划的段没有评分（评分只有 AI 会给）。空着的话看起来像"这条出了问题"，
+   所以给一个同尺寸的徽章占住位置，颜色和图标都跟评分区分开：
+   评分＝琥珀色星星，自选＝青灰色手形。 */
+.pick-badge{font-size:10px;font-weight:600;padding:1px 6px 1px 4px;border-radius:4px;
+  background:rgba(100,116,139,.16);color:#475569;margin-left:4px;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:3px;cursor:help;}
+.pick-badge svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:2.4;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+
+/* ── Export section ── */
+/* 导出弹窗表单行：左标签右控件 */
+.exp-row{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px;}
+.exp-label{width:56px;flex-shrink:0;font-size:12px;font-weight:600;color:var(--text2);padding-top:8px;}
+.exp-hint{font-size:11px;color:var(--text3);margin-top:5px;}
+/* 悬停说明：图标与浮层，写法与模板编辑器一致 */
+.info-ic{cursor:help;color:var(--text3);margin-left:6px;display:inline-flex;align-items:center;position:relative;}
+.info-ic:hover{color:var(--text2);}
+#tip-pop{position:fixed;z-index:9500;display:none;background:rgba(25,27,31,.94);color:#fff;
+  padding:7px 10px;border-radius:6px;font-size:11px;font-weight:400;line-height:1.65;
+  width:max-content;max-width:230px;white-space:pre-line;pointer-events:none;
+  box-shadow:0 4px 14px rgba(0,0,0,.22);}
+#tip-pop::before{content:"";position:absolute;left:-4px;top:50%;transform:translateY(-50%) rotate(45deg);
+  width:8px;height:8px;background:rgba(25,27,31,.94);}
+/* A 类分段控件（目标时长）：凹槽实色，滑块浮起，滑块本体样式在 ui-kit.js */
+.seg{position:relative;display:inline-flex;padding:3px;border-radius:10px;
+     background:rgba(20,24,30,.055);box-shadow:inset 0 1px 2px rgba(20,24,30,.1);}
+.seg label{position:relative;z-index:1;padding:7px 16px;border-radius:6px;font-size:12px;
+     font-weight:500;cursor:pointer;color:var(--text2);white-space:nowrap;
+     transition:color var(--t-color);}
+.seg label:not(:has(input:checked)):hover{color:var(--text);}
+.seg label:has(input:checked){color:var(--text);font-weight:600;}
+.seg input{display:none;}
+/* B 类块形态：左侧橙条从左边滑出来，跟 Part 列表用同一套语言 */
+.mode-option{position:relative;display:flex;align-items:flex-start;gap:7px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;cursor:pointer;margin-bottom:5px;overflow:hidden;transition:background var(--t-color),border-color var(--t-color);}
+.mode-option:not(.selected):hover{border-color:var(--text3);background:var(--bg3);}
+.mode-option::before{content:'';position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.mode-option.selected{border-color:var(--accent);background:rgba(249,115,22,.07);}
+.mode-option.selected::before{transform:scaleX(1);}
+.mode-radio{width:13px;height:13px;margin-top:2px;accent-color:var(--accent);flex-shrink:0;}
+.mode-name{font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.mode-desc{font-size:10px;color:var(--text3);line-height:1.3;}
+/* 导出范围：多列小方块，560px 弹窗一行放四个 */
+.pick-all-row{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer;padding-top:7px;}
+.pick-all-row input{accent-color:var(--accent);margin:0;}
+.part-pick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin-top:8px;}
+.part-pick{position:relative;display:flex;align-items:center;gap:5px;padding:5px 7px 5px 9px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text3);cursor:pointer;min-width:0;overflow:hidden;transition:background var(--t-color),border-color var(--t-color),color var(--t-color);}
+.part-pick:not(:has(input:checked)):hover{border-color:var(--text3);background:var(--bg3);}
+.part-pick::before{content:'';position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.part-pick input{accent-color:var(--accent);margin:0;flex-shrink:0;}
+.part-pick span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.part-pick:has(input:checked){border-color:var(--accent);background:rgba(249,115,22,.07);color:var(--text);font-weight:600;}
+.part-pick:has(input:checked)::before{transform:scaleX(1);}
+/* 导出历史：一批一行，展开才看单条 */
+.exp-batch{border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;}
+.exp-batch-head{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;background:var(--bg3);}
+.exp-batch-head:hover{background:var(--bg4);}
+.exp-batch-arrow{color:var(--text3);font-size:14px;line-height:1;transition:transform .15s;flex-shrink:0;}
+.exp-batch-arrow.open{transform:rotate(90deg);}
+.exp-batch-when{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;flex-shrink:0;}
+.exp-batch-mode{font-size:11px;color:var(--text2);white-space:nowrap;flex-shrink:0;}
+.exp-batch-folder{font-size:10px;color:var(--text3);font-family:monospace;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.exp-batch-body{padding:2px 10px 6px;}
+.exp-item-line{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;border-top:1px solid var(--border);}
+.exp-item-seq{font-family:monospace;font-weight:600;color:var(--text2);width:38px;flex-shrink:0;}
+/* 文件名直接摆在行上，不再靠「复制名」按钮把它拷出来才看得见。
+   「定位」也删了——它和批次头的「打开文件夹」调的是同一个 showItemInFolder，
+   一批 20 条本来就在同一个文件夹里，差别只是 Finder 里高亮第几个。 */
+.exp-item-name{flex:1;min-width:0;color:var(--text2);font-size:10.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.exp-item-dur{font-family:monospace;color:var(--text3);font-size:10px;flex-shrink:0;}
+.exp-item-err{color:var(--red);font-size:10px;}
+.export-list{display:flex;flex-direction:column;gap:5px;}
+.export-item{display:flex;align-items:center;gap:5px;padding:6px 8px;background:var(--bg3);border-radius:4px;font-size:11px;}
+.export-item-name{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.download-btn{background:var(--green);color:#fff;border:none;border-radius:6px;padding:2px 7px;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.download-btn:hover{filter:brightness(.9);}
+
+/* ── ep-main: crop-layout ── */
+.ep-main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px;}
+
+/*
+  高度计算:
+  topbar 52px + ep-main padding 32px + gap 8px + timeline 125px = 217px
+  timeline 125px = 外层下留白 10 + 边框 2 + 工具条 38 + vis 区上下留白 6 + vis 自适应高度 69
+*/
+.crop-layout{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}
+
+.crop-top-section{
+  display:flex;gap:12px;align-items:stretch;
+  flex:1;min-height:260px;
+}
+
+/* ── Player area ── */
+.crop-player-area{flex:1;min-width:0;display:flex;flex-direction:column;background:#111;overflow:hidden;}
+.crop-player-wrap{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative;overflow:hidden;}
+#main-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:1;}
+.player-placeholder{display:flex;flex-direction:column;align-items:center;gap:10px;color:rgba(255,255,255,.35);}
+.player-placeholder .ph-text{font-size:13px;}
+.time-overlay{position:absolute;top:8px;left:12px;background:rgba(0,0,0,.55);color:#fff;font-family:monospace;font-size:12px;font-weight:600;padding:2px 7px;border-radius:4px;pointer-events:none;z-index:2;}
+
+/* ── Video progress bar (DramaC style — inside player, absolute at bottom) ── */
+.video-progress{position:absolute;bottom:0;left:0;right:0;padding:8px 12px;background:rgba(0,0,0,.35);cursor:pointer;z-index:2;}
+.video-progress-bar{height:4px;background:rgba(255,255,255,.25);border-radius:2px;position:relative;}
+.video-progress-fill{height:100%;background:var(--accent);border-radius:2px;position:relative;width:0%;}
+.video-progress-thumb{position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 3px rgba(0,0,0,.4);}
+
+/* ── Video controls (below player) ── */
+.video-controls{background:#1a1b1e;padding:6px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.ctrl-btn{background:rgba(255,255,255,.1);border:none;color:#fff;border-radius:6px;cursor:pointer;padding:3px 9px;font-size:11px;font-weight:600;}
+.ctrl-btn:hover{background:rgba(255,255,255,.2);}
+.time-display{color:rgba(255,255,255,.6);font-size:11px;font-family:monospace;white-space:nowrap;}
+.speed-btn{background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.7);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:10px;}
+.speed-btn:hover{background:rgba(255,255,255,.2);}
+.speed-btn.active{background:var(--accent);color:#fff;}
+
+/* ── Right info col ── */
+.crop-info-col{
+  /* 左栏从 300 收到 220 省出来的 80px 全给这里：标记行要同时放下名字、分数、起止时间和删除，
+     320 是实测下限、一直在贴边。竖屏素材下播放器被高度卡住，这点宽度中间用不上 */
+  width:400px;flex-shrink:0;
+  display:flex;flex-direction:column;gap:10px;
+  height:100%;
+  /* 这里不能写 overflow:hidden。这一列的盒子和里面两张卡严丝合缝，一裁就把卡片的投影
+     沿着列的矩形边切断：落在矩形内、圆角外的那一小块留下来，外面的全没了，四个角上
+     各留一块直边的方形灰块——看起来就是「圆角外面还有个尖角」。
+     两张卡自己都有 overflow:hidden 和 min-height:0，列上再裁一层没有作用。 */
+}
+.crop-info-col .info-card{
+  /* 工作面不写 backdrop-filter：底色 88% 不透明，滤镜本来就看不见，白开一层合成层 */
+  background:rgba(255,255,255,var(--glass-work));
+  display:flex;flex-direction:column;overflow:hidden;padding:14px;
+}
+.crop-info-col .info-card > *:not(.prism){position:relative;z-index:1;}
+.crop-info-col .info-card:first-child{flex:0 0 auto;}
+.crop-info-col .info-card:last-child{flex:1;min-height:0;}
+.info-card-title{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;}
+.info-row{font-size:12px;color:var(--text);line-height:1.9;}
+.info-row span{color:var(--text3);}
+.part-list-scroll{overflow-y:auto;flex:1;min-height:0;}
+
+/* ── Timeline (full-width, below ep-workspace) ── */
+/* 底部留 14px 不是 10px：导轨底下就是窗口边，留白不够时落影被挤掉，
+   同一套阴影它看起来就比四面都有余量的侧栏弱一截 */
+.crop-timeline-outer{padding:0 16px 14px;flex-shrink:0;}
+.crop-timeline-wrap{
+  background:rgba(255,255,255,var(--glass-work));
+  overflow:hidden;
+}
+
+/* ── Marks card in right col ── */
+/* 内边距挪给了里面的列头和列表：列头要通栏才能让标记行从它整条底下滚过去 */
+.marks-info-card{
+  /* 工作面不写 backdrop-filter：底色 88% 不透明，滤镜本来就看不见，白开一层合成层 */
+  background:rgba(255,255,255,var(--glass-work));
+  display:flex;flex-direction:column;overflow:hidden;padding:0;
+  flex:1;min-height:0;
+}
+.marks-info-card > *:not(.prism){position:relative;z-index:1;}
+.marks-hint{font-size:10px;color:var(--text3);line-height:1.5;padding:5px 0 0;}
+.marks-info-card .marks-body{padding:4px 10px 10px;}
+.timeline-toolbar{
+  padding:7px 12px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:6px;background:var(--bg3);
+}
+/* 提示位只讲按钮本身讲不出来的那件事：E/R 是开合式，按一次开始再按一次结束。
+   拖色块、方向键微调这些是剪辑软件的通用操作，用户在别处已经会了，不占这里的位置。 */
+.tl-hint{font-size:10.5px;color:var(--text3);margin-left:6px;}
+/* 打点开合按钮：开段中实心＋脉动点＋文案换"结束"，另一颗禁用 */
+/* 静止是凹的，开段中浮起带光晕。宽度写死：开段时多一个脉动点、文案又从
+   「高光段开始」变成「结束」，不定宽的话按钮会跳一下 */
+.mark-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:126px;
+  box-shadow:inset 0 2px 4px rgba(16,24,40,.12),inset 0 -1px 0 rgba(255,255,255,.7);
+  transition:background var(--t-color),border-color var(--t-color),color var(--t-color),
+             transform var(--t-move),box-shadow var(--t-move);}
+.mark-btn:not(.on):active{transform:translateY(1px);
+  box-shadow:inset 0 3px 6px rgba(16,24,40,.18),inset 0 -1px 0 rgba(255,255,255,.5);}
+.mark-btn .kbd-tag{background:var(--bg2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:10px;color:var(--text2);line-height:15px;}
+.mark-btn .rec{width:7px;height:7px;border-radius:50%;background:#fff;animation:recPulse 1s infinite;display:none;}
+.mark-btn.on{background:var(--accent)!important;color:#fff!important;border-color:var(--accent2)!important;
+  box-shadow:0 0 0 3px rgba(249,115,22,.22),0 6px 14px -4px rgba(234,88,12,.5)!important;
+  transform:translateY(-1px);}
+.mark-btn.on.hk{background:var(--hook-color)!important;border-color:#1d4ed8!important;
+  box-shadow:0 0 0 3px rgba(37,99,235,.22),0 6px 14px -4px rgba(29,78,216,.5)!important;}
+.mark-btn.on .rec{display:inline-block;}
+.mark-btn.on .kbd-tag{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#fff;}
+.mark-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.75);}}
+
+/* ── vis-timeline 换肤（双泳道） ── */
+/* 右边不留内边距。左边这 12px 挨着「高光/钩子」标签列，两块白连成一条标签栏，看得出是干什么的；
+   右边同样宽的一条白后面什么都没有，就成了一根没来由的竖条。底部留 5px，免得泳道被卡片圆角啃掉一角。 */
+#vis-tl{background:var(--bg2);padding:0 0 5px 12px;}
+.vis-timeline{border:none;font-family:inherit;}
+.vis-panel.vis-bottom{border:none;}
+.vis-time-axis .vis-text{color:var(--text3);font-size:10px;font-variant-numeric:tabular-nums;padding:12px 4px 10px;}
+.vis-time-axis .vis-grid.vis-minor{border-color:var(--bg3);}
+.vis-labelset .vis-label{border:none;font-size:10px;color:var(--text3);}
+/* 泳道高度是被这个标签撑起来的，不是色块——要压扁泳道得改这里 */
+.vis-labelset .vis-label .vis-inner{padding:3px 6px;}
+.vis-group{background:rgba(0,0,0,.05);border-bottom:2px solid transparent;background-clip:padding-box;border-radius:4px;}
+.vis-panel.vis-center{cursor:pointer;border-color:var(--border);}
+.vis-panel.vis-left{border-color:var(--border);}
+.vis-item{border-radius:4px;border-width:1px;font-size:0;height:14px;cursor:grab;box-shadow:0 0 0 1.5px var(--bg2);}
+.vis-item:active{cursor:grabbing;}
+.vis-item.hl{background:rgba(249,115,22,.75);border-color:rgba(234,88,12,.9);}
+/* 钩子在标记组里是蓝的（--hook-color），导轨上原来是灰的，同一个东西两个颜色 */
+.vis-item.hk{background:rgba(37,99,235,.62);border-color:rgba(37,99,235,.85);}
+.vis-item.vis-selected{box-shadow:0 0 0 1.5px var(--bg2),0 0 0 4px rgba(249,115,22,.5);background-clip:padding-box;}
+.vis-item .vis-drag-left,.vis-item .vis-drag-right{width:12px;}
+/* 导轨的整体起止：时间窗两端各留了 1% 余量（updateTimelineRuler 里的 padMs），
+   0:00 和结尾都不落在面板边上，不画线就看不出这条导轨从哪开始、到哪结束。
+   颜色取主色橙的同一个色相（24°），把饱和度和明度压下来：同一家族，认得出是一路的，
+   但游标那种高饱和的亮橙只有一个，不会跟这两根固定的边界线混。 */
+.vis-custom-time.tstart,.vis-custom-time.tend{
+  background-color:#8c5a34;width:2px;pointer-events:none;z-index:1;}
+.vis-custom-time.tstart .vis-custom-time-marker{display:none;}
+/* 结尾的时间戳。刻度尺最后一格会被 _hideClippedTicks 整个藏掉（贴边会被裁成半个数字），
+   所以导轨右端本来是一片空白，读不出这条 Part 到底多长。标签永远朝左翻，它就在最右边。 */
+.vis-custom-time.tend .vis-custom-time-marker{
+  background:#8c5a34;color:#fff;font-size:9.5px;padding:1px 6px;
+  border-radius:4px 0 0 4px;font-variant-numeric:tabular-nums;white-space:nowrap;
+  top:0;pointer-events:none;transform:translateX(-100%);}
+.vis-item.vis-background.ovl{background:repeating-linear-gradient(45deg,rgba(220,38,38,.4) 0 4px,rgba(220,38,38,.12) 4px 8px);border:none;}
+/* 游标压在边界线之上：它比两条边界线晚加进 DOM，不写层级的话游标走到 0:00 会被起点的灰线盖掉 */
+.vis-custom-time.ph{background-color:var(--accent);width:2px;cursor:ew-resize;z-index:2;}
+/* 抓取区放宽到 12px：线只有 2px，鼠标压不住 */
+.vis-custom-time.ph::before{content:"";position:absolute;top:0;bottom:0;left:-5px;right:-5px;}
+/* 时间标签是读数不是控件，不吃点击。它浮在刻度尺上、正好盖在游标位置，
+   而要挪游标时本能就是往游标上点——被它吃掉就成了"点上面的时间没反应" */
+.vis-custom-time.ph .vis-custom-time-marker{background:var(--accent);color:#fff;font-size:9.5px;padding:1px 6px;border-radius:0 4px 4px 0;font-variant-numeric:tabular-nums;white-space:nowrap;top:0;pointer-events:none;}
+.vis-custom-time.ph .vis-custom-time-marker.flip{transform:translateX(-100%);border-radius:4px 0 0 4px;}
+.vis-time-axis.vis-foreground{cursor:pointer;}
+.vis-panel.vis-top{cursor:pointer;background:var(--bg3);}
+.vis-panel.vis-top:hover{background:var(--bg4);}
+.vis-panel.vis-top:hover .vis-text{color:var(--accent2);}
+.vis-delete{background:none;}
+.vis-delete:after{color:var(--red);}
+/* 删除按钮是 right:-24px，挂在色块外面右侧，而中间面板 overflow:hidden——
+   段落贴到时间窗右边缘时它整个被裁掉，点不到也看不见。裁到就翻到色块左侧去。 */
+.vis-delete.flip{right:auto;left:-24px;}
+/* E/R 开合中的段：蚂蚁线（流动虚线框）＝进行中未收尾 */
+.vis-item.vis-background.openseg{
+  --ant:rgba(234,88,12,.95);
+  background-image:
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    linear-gradient(rgba(249,115,22,.12),rgba(249,115,22,.12));
+  background-size:100% 2px,100% 2px,2px 100%,2px 100%,100% 100%;
+  background-position:0 0,0 100%,0 0,100% 0,0 0;background-repeat:no-repeat;
+  animation:ants .45s linear infinite;
+}
+.vis-item.vis-background.openseg.hk{--ant:rgba(74,78,85,.9);
+  background-image:
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    linear-gradient(rgba(74,78,85,.12),rgba(74,78,85,.12));}
+@keyframes ants{to{background-position:10px 0,-10px 100%,0 -10px,100% 10px,0 0;}}
+.vis-item.vis-background.openseg .vis-item-content{font-size:9px;color:var(--accent2);padding:2px 5px;font-weight:600;white-space:nowrap;}
+.vis-item.vis-background.openseg.hk .vis-item-content{color:#4a4e55;}
+
+/* ── Badges ── */
+/* nowrap 的 flex 行里，默认 flex-shrink:1 会把徽章压窄，「全部就绪」四个字就在徽章
+   内部折成两行、把整行撑高——所以同一个列表里有的行高有的行矮。徽章不参与收缩，
+   收缩交给右边那个带省略号的文件夹名。 */
+.badge{padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;display:inline-flex;
+  align-items:center;white-space:nowrap;flex-shrink:0;}
+.badge-green{background:rgba(5,150,105,.12);color:var(--green);}
+.badge-gray{background:rgba(86,91,99,.12);color:var(--text2);}
+.badge-blue{background:rgba(37,99,235,.12);color:var(--blue);}
+.badge-red{background:rgba(220,38,38,.12);color:var(--red);}
+.badge-orange{background:rgba(249,115,22,.12);color:var(--accent);}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.badge-blue.pulse{animation:pulse 1.5s infinite;}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+/* ── Input ── */
+.input{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:13px;width:100%;outline:none;transition:border-color .15s;}
+.input:focus{border-color:var(--accent);}
+
+/* ── Toast (bottom-right, DramaC style) ── */
+/* 通知放顶栏下方居中：底部是时间轴，右下角的通知会挡住它 */
+#toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
+.toast{background:#1f2328;color:#fff;border-radius:999px;padding:9px 18px 9px 12px;font-size:12.5px;font-weight:500;max-width:min(46vw,480px);animation:dropIn .25s ease;display:flex;align-items:center;gap:9px;box-shadow:0 10px 30px rgba(15,18,22,.28),0 2px 6px rgba(15,18,22,.16);}
+.toast-dot{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;}
+.toast-dot svg{width:10px;height:10px;stroke:#1f2328;stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.toast-success .toast-dot{background:#34d399;}
+.toast-error .toast-dot{background:#fb7185;}
+.toast-info .toast-dot{background:#60a5fa;}
+@keyframes dropIn{from{transform:translateY(-14px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:var(--bg2);}
+::-webkit-scrollbar-thumb{background:#c4c8cd;border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:var(--text3);}
+
+/* ── Part 列表：一行一个 Part，分割线只隔开相邻两条，不切在一条内部 ── */
+/* 就绪的 Part 一行就够：编号 + 时长。只有卡住的才长出第二行说明卡在哪、能干什么 */
+.part-item{
+  position:relative;display:flex;flex-direction:column;justify-content:center;gap:3px;
+  min-height:34px;padding:6px 10px 6px 14px;cursor:pointer;
+  font-size:12px;color:var(--text);overflow:hidden;
+  transition:background var(--t-color),color var(--t-color);
+}
+.part-line{display:flex;align-items:center;gap:7px;}
+.part-line2{display:flex;align-items:center;gap:6px;font-size:10.5px;}
+.part-item + .part-item{border-top:1px solid var(--border);}
+.part-item::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.part-item.active{background:rgba(249,115,22,.09);color:var(--accent);font-weight:600;}
+.part-item.active::before{transform:scaleX(1);}
+.part-item:not(.active):hover{background:var(--bg3);}
+.part-item-name{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 小圆点只标"这条还没准备好"，不写字：灰＝AI 未分析，红＝分析失败 */
+.part-item-tail{margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:6px;}
+.part-item-dur{font-size:11px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums;}
+/* 标记数：分析过的行有数字，没分析的写"无标记"。这是就绪行上唯一能区分两者的东西 */
+.part-marks{font-size:10px;color:var(--accent2);background:rgba(249,115,22,.1);
+  padding:1px 5px;border-radius:4px;white-space:nowrap;flex-shrink:0;}
+.part-item.active .part-item-dur{color:var(--accent2);}
+.part-item-dur.warn{color:var(--accent2);}
+/* 卡住的 Part 按钮常驻——重试就是这一行存在的理由；就绪的才藏起来等 hover。
+   按钮不再顶掉时长：原来 hover 一下时长就消失，想对着时长找 Part 的人没法用 */
+.part-act{border:1px solid var(--border);background:var(--bg2);border-radius:6px;font-size:10px;
+  color:var(--text2);padding:1px 7px;cursor:pointer;white-space:nowrap;
+  transition:border-color var(--t-color),color var(--t-color),background var(--t-color);}
+.part-act:hover{border-color:var(--accent);color:var(--accent2);}
+.part-act.ghost{visibility:hidden;}
+.part-item:hover .part-act.ghost{visibility:visible;}
+/* 时长要跟上下行对齐。就绪行的按钮在第一行（藏起来也占位），卡住的行按钮挪到了第二行，
+   第一行少了那一块，时长就会往右滑一截，两种行的时长对不上。这里补一块同宽的空位。
+   min-width 写死是因为四种按钮文案都是两个字，宽度本来就一样，占位块也得一样。 */
+.part-act{min-width:36px;text-align:center;}
+.part-act-slot{width:36px;flex-shrink:0;}
+/* 合成中 / 分析中：整行铺一层交叉斜纹并持续向前滚，再叠一道从左扫到右的柔光。
+   两个状态共用一套遮罩，因为它们对用户是同一件事：这一条正在后台跑，点了也没用
+   （合成中还没有视频可放，分析中标记随时会被覆盖），两行都没有操作按钮。
+   具体在跑哪一步由第二行的文字区分，不靠底纹区分。
+   一行小字加一个转圈，隔着半屏是看不见的；整行动起来才能远远看出哪几条在跑。
+   斜纹周期 14×√2≈19.8px——沿 x 轴滚满一个周期才不会看出接缝。
+   两组反向滚，交叉点会沿着行跑。
+   .part-item 的 ::before 已经被左侧选中条占了，扫光只能用真实子元素 .part-sheen；
+   z-index 从下到上是：斜纹(::after,auto) < 扫光(1) < 两行内容(2)，字压在纹上仍读得清。 */
+.part-item.analyzing:not(.active){background:rgba(249,115,22,.05);}
+.part-item.analyzing::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(249,115,22,.11) 0 5px, transparent 5px 14px),
+    repeating-linear-gradient(-45deg,rgba(249,115,22,.11) 0 5px, transparent 5px 14px);
+  background-size:19.8px 19.8px,19.8px 19.8px;
+  animation:partStripe 1.4s linear infinite;}
+@keyframes partStripe{to{background-position:19.8px 0,-19.8px 0;}}
+.part-sheen{position:absolute;left:0;top:0;bottom:0;width:100%;pointer-events:none;z-index:1;
+  background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.85) 50%,transparent 70%);
+  animation:partSheen 1.9s cubic-bezier(.4,0,.2,1) infinite;}
+@keyframes partSheen{0%{transform:translateX(-100%);}60%,100%{transform:translateX(100%);}}
+.part-item.analyzing .part-line,.part-item.analyzing .part-line2{position:relative;z-index:2;}
+/* 信息卡里的图标按钮：原来「打开文件夹」是个 10px 字、内边距 1px 的迷你文字按钮，
+   挤在等宽路径后面像块补丁，跟全站按钮也不是一套。这里只有"点一下打开所在文件夹"
+   一件事，用图标加悬停提示，不跟路径抢字重。 */
+.icon-mini{width:22px;height:22px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text3);cursor:pointer;
+  transition:background var(--t-color),color var(--t-color),border-color var(--t-color);}
+.icon-mini:hover{background:var(--bg3);color:var(--text);border-color:var(--border);}
+.part-state{display:inline-flex;align-items:center;gap:5px;color:var(--text3);}
+.part-state.bad{color:var(--red);}
+.part-state.busy{color:var(--blue);}
+.part-dot-sm{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;}
+.part-spin{width:9px;height:9px;border:1.5px solid currentColor;border-top-color:transparent;
+  border-radius:50%;flex-shrink:0;animation:pspin .9s linear infinite;}
+@keyframes pspin{to{transform:rotate(360deg)}}
+
+/* ── 左栏底部：AI 分析（作用于全部 Part，流程第一步） ── */
+/* AI 分析是这一页的主入口：先分析，不满意再手动打点。
+   "有多少活没干"和"点这里干活"合成一块卡片——拆成两行、两种视觉重量的话，
+   读的时候要自己拼起来。全部就绪时整块收成一行文字，不占位置。 */
+.sidebar-footer{flex-shrink:0;padding:10px;border-top:1px solid var(--border);}
+.ai-act{border:1px solid var(--border);border-radius:10px;padding:11px;background:var(--bg3);}
+.ai-act-hd{display:flex;align-items:center;gap:7px;margin-bottom:3px;}
+.ai-act-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;
+  animation:aiPulse 1.6s ease infinite;}
+@keyframes aiPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.ai-act-ttl{font-size:12px;font-weight:700;color:var(--text);}
+.ai-act-sub{font-size:10.5px;color:var(--text3);line-height:1.5;margin-bottom:9px;}
+.ai-act-sub b{color:var(--text2);font-weight:600;}
+.ai-act-sub .bad{color:var(--red);font-weight:600;}
+.ai-act-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;height:34px;
+  border:none;border-radius:6px;background:var(--btn);color:#fff;font-size:12.5px;font-weight:700;
+  cursor:pointer;box-shadow:0 4px 12px -3px rgba(31,35,40,.5);transition:background var(--t-color);}
+.ai-act-btn:hover:not(:disabled){background:var(--btn-h);}
+.ai-act-btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;}
+.ai-act-btn svg{width:15px;height:15px;flex-shrink:0;}
+/* 全部就绪：收成一行，配一个不抢眼的重析入口 */
+.ai-done{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:11px;color:var(--text2);}
+.ai-done-t{white-space:nowrap;}
+.ai-done-t b{color:var(--text);font-weight:700;}
+.ai-done b{color:var(--text2);font-weight:600;}
+.side-relink{margin-left:auto;background:none;border:none;padding:0;cursor:pointer;flex-shrink:0;
+  font-size:10.5px;color:var(--text3);text-decoration:underline;text-underline-offset:2px;}
+.side-relink:hover{color:var(--accent2);}
+.sidebar-footer .btn{width:100%;justify-content:center;}
+/* ── AI Confirm Modal ── */
+.ai-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:none;align-items:center;justify-content:center;}
+.ai-modal-backdrop.visible{display:flex;}
+/* 弹窗＝实色卡片 + 一圈玻璃边。中间实心，正文对比度不受影响；只有外圈那一环折射被遮罩压暗的页面。
+   通体做玻璃行不通：白玻璃叠在 45% 黑遮罩上混成一片灰浆，字跟着糊。
+   玻璃做在外层而不是伪元素上——导出设置和导出历史自带 overflow-y:auto，伪元素会被裁掉。 */
+.ai-modal-glass{padding:4px;border-radius:14px;display:flex;max-height:calc(100vh - 24px);
+  background:rgba(255,255,255,.2);
+  backdrop-filter:blur(4px) saturate(150%) brightness(112%);
+  box-shadow:inset 0 1.2px 0 rgba(255,255,255,.85),
+             inset 0 -1px 0 rgba(255,255,255,.25),
+             0 20px 56px rgba(10,13,18,.34),0 4px 12px rgba(10,13,18,.18);
+  /* 玻璃边不吃点击：点这一圈仍然穿透到遮罩，保持"点空白处关闭"的原行为 */
+  pointer-events:none;}
+.ai-modal-glass > *{pointer-events:auto;}
+.ai-modal-box{background:var(--bg2);border-radius:10px;padding:28px 32px;width:380px;}
+.ai-modal-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px;}
+.ai-modal-msg{font-size:13px;color:var(--text2);margin-bottom:22px;line-height:1.6;}
+/* 代价单独一行，用分隔线跟上面隔开：这是弹窗里唯一需要犹豫的信息，
+   混在正文里会跟"要做什么"一起被一眼扫过去 */
+.ai-modal-note{margin-top:11px;padding-top:10px;border-top:1px solid var(--border);
+  font-size:12.5px;color:var(--text2);line-height:1.7;}
+.ai-modal-note b{color:var(--text);}
+.ai-modal-footer{display:flex;gap:10px;justify-content:flex-end;}
+/* ── AI Progress Modal (2.0.0.20) ── */
+#ai-progress-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);z-index:10000;display:none;align-items:center;justify-content:center;}
+#ai-progress-modal.visible{display:flex;}
+.ai-progress-box{background:var(--bg2);border-radius:10px;padding:48px 56px;width:580px;max-width:92vw;box-shadow:0 8px 24px rgba(0,0,0,.12);text-align:center;}
+.ai-progress-icon{font-size:44px;margin-bottom:20px;}
+.ai-progress-title{font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px;}
+.ai-progress-subtitle{font-size:13px;color:var(--text3);margin-bottom:32px;line-height:1.6;}
+.ai-progress-counter{font-size:16px;font-weight:600;color:var(--text);margin-bottom:16px;}
+.ai-progress-track{background:var(--bg4);border-radius:999px;height:14px;width:100%;overflow:hidden;margin-bottom:14px;}
+.ai-progress-fill{height:100%;background:var(--accent);border-radius:999px;width:0%;transition:width 1.2s ease;}
+.ai-progress-status{font-size:12px;color:var(--text3);white-space:pre-line;line-height:1.75;}
+.ai-progress-status.slide{animation:aiStageSlide .35s ease;}
+@keyframes aiStageSlide{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.ai-progress-box{position:relative;}
+.ai-progress-close{position:absolute;top:14px;right:16px;background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);padding:4px 8px;border-radius:4px;line-height:1;}
+.ai-progress-close:hover{background:var(--bg3);}
+.ai-progress-done-btn{margin-top:28px;background:#22c55e;color:#fff;border:none;border-radius:6px;padding:9px 40px;font-size:14px;font-weight:600;cursor:pointer;}
+.ai-progress-done-btn:hover{filter:brightness(1.1);}
+.ai-progress-retry-btn{margin-top:28px;margin-right:10px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 28px;font-size:14px;font-weight:600;cursor:pointer;}
+.ai-progress-retry-btn:hover{background:var(--bg3);}
+.ai-progress-fill.done{background:#22c55e;}
+/* ── AI Choice Modal (2.0.0.20) ── */
+#ai-choice-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:none;align-items:center;justify-content:center;}
+#ai-choice-modal.visible{display:flex;}
+/* ── Export Progress Modal (2.0.0.22) ── */
+#export-progress-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);z-index:10000;display:none;align-items:center;justify-content:center;}
+#export-progress-modal.visible{display:flex;}
+</style>
+</head>
+<body>
+
+<!-- Topbar -->
+<div class="topbar">
+  <div class="breadcrumb">
+    <button class="bk" onclick="goBack()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="m14.5 17-5-5 5-5"/></svg>返回项目</button>
+    <span class="part-badge" id="part-name">—</span>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-secondary" onclick="openHistoryModal()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>导出历史</button>
+    <button class="btn btn-primary" id="topbar-export-btn" onclick="openExportModal()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>导出素材</button>
+  </div>
+</div>
+
+<!-- Workspace -->
+<div class="ep-workspace">
+
+  <!-- Left sidebar: tabbed -->
+  <div class="workflow-sidebar">
+
+    <!-- Panel: 素材 -->
+    <div id="panel-material" class="sidebar-panel">
+      <div class="glass-scroll">
+        <div class="glass-head parts-head" id="parts-head">分 Part 视频列表</div>
+        <div id="parts-list" style="padding:0 0 8px;">
+          <div style="color:var(--text3);font-size:12px;padding:12px;">加载中…</div>
+        </div>
+      </div>
+      <!-- AI 分析作用于左边这一整列 Part，按钮就挨着它的作用对象放 -->
+      <div class="sidebar-footer" id="ai-box"></div>
+    </div>
+
+    <!-- Panel: 素材剪辑 -->
+  </div><!-- /workflow-sidebar (素材列表；导出入口在右上角) -->
+
+<!-- 导出设置弹窗（右上角「导出素材」打开） -->
+<div id="export-modal" class="ai-modal-backdrop" onclick="if(event.target===this)closeExportModal()">
+  <div class="ai-modal-glass">
+    <div class="ai-modal-box" style="width:560px;max-width:96vw;max-height:86vh;overflow-y:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div class="ai-modal-title" style="margin-bottom:0;">导出素材</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeExportModal()">✕</button>
+      </div>
+      <div id="export-settings-body">
+
+        <div class="exp-row">
+          <div class="exp-label">参与的 Part</div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:center;gap:10px;padding-top:7px;">
+              <label class="pick-all-row">
+                <input type="checkbox" id="pick-all" checked onchange="toggleAllPartPick(this.checked)">
+                全选（已选 <span id="pick-count">0 / 0</span>）
+              </label>
+            </div>
+            <div class="part-pick-grid" id="part-pick-grid"></div>
+          </div>
+        </div>
+
+        <div class="exp-row">
+          <div class="exp-label">导出模式</div>
+          <div id="mode-options" style="display:flex;gap:8px;flex:1;">
+            <label class="mode-option selected" id="mode-hs" style="flex:1;margin-bottom:0;">
+              <input type="radio" name="mode" class="mode-radio" value="highlight_shunjian" checked>
+              <div>
+                <div class="mode-name">高光顺剪</div>
+                <div class="mode-desc">高光→白场→钩子</div>
+              </div>
+            </label>
+            <label class="mode-option" id="mode-xd" style="flex:1;margin-bottom:0;">
+              <input type="radio" name="mode" class="mode-radio" value="xuanyi_daozhi">
+              <div>
+                <div class="mode-name">悬疑倒置</div>
+                <div class="mode-desc">钩子→高光，制造悬念</div>
+              </div>
+            </label>
+            <label class="mode-option" id="mode-sg" style="flex:1;margin-bottom:0;">
+              <input type="radio" name="mode" class="mode-radio" value="shuanggaoguang">
+              <div>
+                <div class="mode-name">双高光顺剪</div>
+                <div class="mode-desc">需 2 个标记组</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="exp-row">
+          <div class="exp-label">目标时长</div>
+          <div style="display:flex;align-items:center;">
+            <div class="seg" data-seg>
+              <span class="seg-thumb"></span>
+              <label><input type="radio" name="clip-dur" value="180">3 分钟</label>
+              <label><input type="radio" name="clip-dur" value="360" checked>6 分钟</label>
+              <label><input type="radio" name="clip-dur" value="600">10 分钟</label>
+            </div>
+            <span class="info-ic" data-tip="系统在所有可用的高光与钩子组合里，挑总长最接近目标的那些。&#10;成片时长是高光起点到钩子终点的跨度，随素材浮动，不会正好等于目标值。"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
+          </div>
+        </div>
+
+        <div class="exp-row">
+          <div class="exp-label">素材数量</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="number" id="clip-count" value="2" min="1" max="30"
+              style="width:72px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none;">
+            <span class="exp-hint" style="margin-top:0;">条，最多 30</span>
+          </div>
+        </div>
+
+        <div class="exp-row">
+          <div class="exp-label">成片模板</div>
+          <div style="flex:1;">
+            <select id="export-template" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none;">
+              <option value="">（不套模板）</option>
+            </select>
+            <div class="exp-hint">对本批导出统一套用</div>
+          </div>
+        </div>
+
+        <div class="exp-row" style="margin-bottom:0;">
+          <div class="exp-label">导出目录</div>
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div id="export-dir-path" title="" style="flex:1;font-size:12px;color:var(--text2);background:var(--bg3);border:1px solid var(--border);border-radius:6px;padding:7px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">应用默认目录</div>
+              <button class="btn btn-secondary btn-sm" onclick="changeExportFolder()">更改</button>
+              <button class="btn btn-secondary btn-sm" onclick="openExportFolder()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>打开</button>
+            </div>
+            <div class="exp-hint">成片保存到该目录下的剧名子文件夹</div>
+          </div>
+        </div>
+
+      </div>
+      <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+        <div style="display:flex;gap:10px;">
+          <button class="btn btn-secondary" onclick="closeExportModal()">取消</button>
+          <button class="btn btn-primary" id="export-btn" onclick="doExport()">开始导出</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+  <!-- Main: crop-layout -->
+  <div class="ep-main">
+    <div class="crop-layout">
+
+      <!-- TOP: player (left) + info col (right) -->
+      <div class="crop-top-section">
+
+        <!-- Video player -->
+        <div class="crop-player-area">
+          <div class="crop-player-wrap">
+            <video id="main-video"
+              preload="metadata"
+              playsinline
+              oncanplay="onVideoReady()"
+              ontimeupdate="onTimeUpdate()"
+              onplay="startPlayheadLoop();syncPlayBtn()"
+              onpause="stopPlayheadLoop();onTimeUpdate();syncPlayBtn()"
+              onended="stopPlayheadLoop();onTimeUpdate();syncPlayBtn()"
+              onseeked="onTimeUpdate()"
+              onratechange="syncSpeedBtn()"
+              onloadedmetadata="applyPlaybackRate()"
+              onemptied="stopPlayheadLoop();syncPlayBtn()"
+              onclick="togglePlay()">
+            </video>
+            <div class="player-placeholder" id="player-placeholder">
+              <div class="ph-text">视频加载中…</div>
+            </div>
+            <div class="time-overlay" id="time-overlay">00:00:00</div>
+            <!-- DramaC-style progress bar inside player -->
+            <div class="video-progress" id="video-progress" onclick="onProgressClick(event)">
+              <div class="video-progress-bar">
+                <div class="video-progress-fill" id="progress-fill">
+                  <div class="video-progress-thumb"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- Controls -->
+          <div class="video-controls">
+            <button class="ctrl-btn" onclick="seek(-10)">-10s</button>
+            <button class="ctrl-btn" id="play-btn" onclick="togglePlay()">播放</button>
+            <button class="ctrl-btn" onclick="seek(10)">+10s</button>
+            <div style="flex:1;"></div>
+            <span class="time-display" id="time-label">00:00:00 / 00:00:00</span>
+            <button class="speed-btn active" id="speed-btn" onclick="cycleSpeed()">1×</button>
+          </div>
+        </div>
+
+        <!-- Right info col -->
+        <div class="crop-info-col">
+          <!-- Part info -->
+          <div class="info-card" style="flex-shrink:0;">
+            <div class="info-card-title">片段信息</div>
+            <div id="part-info" class="info-row">
+              <div><span>名称：</span><span id="info-name">—</span></div>
+              <div><span>时长：</span><span id="info-dur">—</span></div>
+              <div style="display:flex;align-items:center;gap:6px;min-width:0;"><span style="flex-shrink:0;">路径：</span><span id="info-path" title="" style="flex:0 1 auto;min-width:0;font-family:monospace;font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">—</span><button class="icon-mini" style="margin-left:auto;" title="打开所在文件夹" onclick="revealPartPath()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg></button></div>
+              <div><span>AI 分析：</span><span id="info-ai">—</span></div>
+            </div>
+          </div>
+          <!-- Marks card -->
+          <div class="marks-info-card">
+            <div class="glass-scroll">
+              <div class="glass-head marks-head" id="marks-head">
+                <div class="marks-head-row">
+                  <div class="info-card-title" style="margin:0;">标记组</div>
+                  <span id="marks-status" style="font-size:10px;color:var(--text3);"></span>
+                </div>
+                <div class="marks-hint">★ 为 AI 评分，满分 10 分。导出时优先选用高分段。</div>
+              </div>
+              <div class="marks-body" id="marks-panel">
+                <div style="color:var(--text3);text-align:center;padding:20px;font-size:12px;">加载中…</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /crop-top-section -->
+
+    </div><!-- /crop-layout -->
+  </div><!-- /ep-main -->
+
+</div><!-- /ep-workspace -->
+
+<!-- Timeline: full screen width（当前 Part 的高光/钩子双泳道，vis-timeline 驱动） -->
+<div class="crop-timeline-outer">
+  <div class="crop-timeline-wrap">
+    <!-- Toolbar：打点开合按钮（与 E/R 快捷键同义） -->
+    <div class="timeline-toolbar">
+      <button class="btn btn-secondary btn-sm mark-btn" id="btn-mark-hl" onclick="toggleSeg('hl')" aria-pressed="false"><span class="rec"></span><span id="btn-mark-hl-t">高光段开始</span><span class="kbd-tag">E</span></button>
+      <button class="btn btn-secondary btn-sm mark-btn hk" id="btn-mark-hook" onclick="toggleSeg('hk')" aria-pressed="false"><span class="rec"></span><span id="btn-mark-hook-t">钩子段开始</span><span class="kbd-tag">R</span></button>
+      <span class="tl-hint">按一次开始，再按一次结束；Esc 取消当前这一段</span>
+      <div style="flex:1;"></div>
+    </div>
+    <div id="vis-tl"></div>
+  </div><!-- /crop-timeline-wrap -->
+</div><!-- /crop-timeline-outer -->
+
+<div id="toast-container"></div>
+
+<!-- 导出历史弹窗 -->
+<div id="history-modal" class="ai-modal-backdrop">
+  <div class="ai-modal-glass">
+    <div class="ai-modal-box" style="width:520px;max-width:96vw;max-height:80vh;display:flex;flex-direction:column;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="ai-modal-title" style="margin-bottom:0;">导出历史</div>
+        <button class="btn btn-ghost btn-sm" onclick="closeHistoryModal()">✕</button>
+      </div>
+      <div id="history-modal-list" style="overflow-y:auto;flex:1;min-height:80px;">
+        <div style="color:var(--text3);font-size:12px;text-align:center;padding:20px;">加载中…</div>
+      </div>
+      <div class="ai-modal-footer" style="margin-top:12px;">
+        <button class="btn btn-secondary" onclick="closeHistoryModal()">关闭</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI 分析确认弹窗 (2.0.0.10) -->
+<div id="ai-confirm-modal" class="ai-modal-backdrop">
+  <div class="ai-modal-glass">
+    <div class="ai-modal-box">
+      <div class="ai-modal-title" id="ai-confirm-title">AI 分析确认</div>
+      <div class="ai-modal-msg" id="ai-confirm-msg"></div>
+      <div class="ai-modal-footer">
+        <button class="btn btn-secondary" onclick="hideAiModal()">取消</button>
+        <button class="btn btn-primary" id="ai-confirm-ok">确认</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- AI 分析进度弹窗 (2.0.0.20) — 不允许关闭 -->
+<div id="ai-progress-modal">
+  <div class="ai-modal-glass">
+  <div class="ai-progress-box">
+    <button class="ai-progress-close" id="ai-prog-close" style="display:none" onclick="hideAiProgressModal()">✕</button>
+    <div class="ai-progress-icon" id="ai-prog-icon"></div>
+    <div class="ai-progress-title" id="ai-prog-title">AI 分析中</div>
+    <div class="ai-progress-subtitle" id="ai-prog-subtitle">可以收起这个窗口，分析会在后台继续。退出应用会中断分析。</div>
+    <div class="ai-progress-counter" id="ai-prog-counter">已完成 0 / — 个 Part</div>
+    <div class="ai-progress-track">
+      <div class="ai-progress-fill" id="ai-prog-fill"></div>
+    </div>
+    <div class="ai-progress-status" id="ai-prog-status">正在准备...</div>
+    <button class="ai-progress-retry-btn" id="ai-prog-retry-btn" style="display:none" onclick="retryFailedParts()">重试失败</button>
+    <button class="ai-progress-done-btn" id="ai-prog-done-btn" style="display:none" onclick="hideAiProgressModal()">完成</button>
+    <button class="btn btn-secondary" id="ai-prog-min-btn" style="margin-top:18px;" onclick="minimizeAiProgress()">收起，后台继续</button>
+  </div>
+  </div>
+</div>
+
+<!-- AI 部分已分析 — 选择弹窗 (2.0.0.20) -->
+<div id="ai-choice-modal">
+  <div class="ai-modal-glass">
+    <div class="ai-modal-box" style="width:480px;">
+      <div class="ai-modal-title">部分 Part 已有标记</div>
+      <div class="ai-modal-msg" id="ai-choice-msg"></div>
+      <div class="ai-modal-footer" style="flex-wrap:wrap;gap:8px;">
+        <button class="btn btn-secondary" onclick="hideAiChoiceModal()">取消</button>
+        <button class="btn btn-secondary" id="ai-choice-partial-btn">只分析没标记的</button>
+        <button class="btn btn-primary"   id="ai-choice-all-btn">全部重新分析</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 素材导出进度弹窗 (2.0.0.22)：可收起到后台，导出期间照常编辑；只提醒别退出应用 -->
+<div id="export-progress-modal">
+  <div class="ai-modal-glass">
+  <div class="ai-progress-box">
+    <div class="ai-progress-title">素材导出中</div>
+    <div class="ai-progress-subtitle">可以收起这个窗口，导出会在后台继续。退出应用会中断导出。</div>
+    <div class="ai-progress-counter" id="exp-prog-counter">正在导出第 1 个 / 共 — 个素材</div>
+    <div class="ai-progress-track">
+      <div class="ai-progress-fill" id="exp-prog-fill"></div>
+    </div>
+    <div class="ai-progress-status" id="exp-prog-status">正在准备...</div>
+    <button class="btn btn-secondary" style="margin-top:18px;" onclick="minimizeExportProgress()">收起，后台继续</button>
+  </div>
+  </div>
+</div>
+
+<!-- 收起后的进度指示由 task-float.js 的边缘悬浮件承担（跨页面存活） -->
+
+<script>
+const _PORT  = (window.electronAPI && window.electronAPI.backendPort) || 8764;
+const API    = `http://127.0.0.1:${_PORT}/api/v1`;
+const UPLOAD = `http://127.0.0.1:${_PORT}/uploads`;
+let authToken = localStorage.getItem('skyart_token') || '';
+const params  = new URLSearchParams(window.location.search);
+const PART_ID = parseInt(params.get('partId') || '0');
+const PROJ_ID = parseInt(params.get('projectId') || '0');
+
+let hlGroups   = [];  // [{hs, he}, ...]
+let hookGroups = [];  // [{ks, ke}, ...]
+let videoDur = 0;
+let speedIdx = 0;
+const SPEEDS = [1, 1.5, 2, 0.5];
+let exportPollTimer = null;
+let allParts = [];
+let _partsPollTimer = null;
+
+// ── 导出范围勾选（替代旧"拖 Part 进视频轨"） ─────────────────────────────────
+// 勾选 = 该 Part 的标注参与本批导出；默认全选。持久化按项目存 localStorage。
+let partChecked = new Set();      // Set<partId>
+let activePartId = PART_ID || 0;  // which Part is currently loaded/being marked
+
+// Cache of marks for all Parts: { [partId]: { hlGroups, hookGroups } }
+// 列表统计和导出前检查用；active part uses live hlGroups/hookGroups.
+let partsMarks = {};
+let isSwitchingPart = false; // suppresses onTimeUpdate playhead writes during part switch
+
+// ── 打点状态（E/R 开合段） ────────────────────────────────────────────────────
+// openSeg: {type:'hl'|'hk', start:sec} — 一段开合中；null = 无
+let openSeg = null;
+
+// ── vis-timeline 双泳道 ──────────────────────────────────────────────────────
+let visTl = null;      // Timeline 实例（全局唯一，切 Part 换数据/窗口）
+let visItems = null;   // vis.DataSet：hlGroups/hookGroups 的视图投影，单向重建
+const VIS_GROUPS = [{ id: 'hl', content: '高光', order: 1 }, { id: 'hk', content: '钩子', order: 2 }];
+
+// Auto-save debounce
+let _saveTimer = null;
+
+// ── API ─────────────────────────────────────────────────────────────────────
+async function apiFetch(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(API + path, { ...opts, headers });
+  if (res.status === 401) { clearAuth(); throw new Error('未授权'); }
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    // FastAPI 错误体是 {"detail":"..."}，取出 detail，避免把原始 JSON 展示给用户
+    let msg = txt || res.statusText;
+    try {
+      const j = JSON.parse(txt);
+      if (j && j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+    } catch {}
+    const err = new Error(msg);
+    err.status = res.status;
+    throw err;
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function clearAuth() {
+  localStorage.removeItem('skyart_token');
+  window.location.href = '../../home.html';
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+// 环境依赖检测：后端检查 ffmpeg/ffprobe，缺失则顶部红条提示（视频功能会失败）
+async function checkFfmpeg() {
+  try {
+    const r = await fetch(`${API}/system/health`);
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d && d.ok) return;
+    let bar = document.getElementById('ffmpeg-missing-bar');
+    if (!bar) {
+      bar = document.createElement('div');
+      bar.id = 'ffmpeg-missing-bar';
+      // top:52px 让开顶部栏（含左侧红绿灯拖拽区），避免盖住窗口控制按钮、挡住顶部栏拖拽
+      bar.style.cssText = 'position:fixed;top:52px;left:0;right:0;z-index:500;background:#dc2626;'
+        + 'color:#fff;font-size:13px;line-height:1.5;padding:8px 16px;text-align:center;';
+      document.body.appendChild(bar);
+    }
+    bar.textContent = '未检测到 ffmpeg 组件，视频裁切/合并/导出将失败。请重新安装应用或联系管理员。';
+  } catch (e) { /* 检测失败不阻塞主流程 */ }
+}
+
+async function init() {
+  if (!authToken) { clearAuth(); return; }
+  if (!PROJ_ID) { window.location.href = 'index.html'; return; }
+  // Always set up interaction handlers first — must not be inside try/catch
+  setupModeListeners();
+  initVisTimeline();
+  checkFfmpeg();   // 环境依赖检测：缺 ffmpeg 时顶部红条提示
+  try {
+    await loadAllParts();
+    await preloadAllMarks(); // 预载全部 Part 的标注：列表统计要用
+    if (activePartId) {
+      await loadMarks();
+      await loadExports();
+    }
+    loadTemplateOptions();  // 导出面板成片模板下拉（预填项目默认模板）
+  } catch (e) { toast(e.message, 'error'); }
+  // 悬浮任务件"完成态点击标题"带 history=1 跳来：落地即开导出历史，并清掉已查看的任务
+  if (params.get('history') === '1') {
+    openHistoryModal();
+    if (window.ExportTaskFloat) window.ExportTaskFloat.clear();
+    // 用完就从地址栏抹掉。它是"这一次跳转要顺便打开历史"的一次性指令，
+    // 留在 URL 里就变成了常驻状态——用户早就看完关掉了，刷新一次它又弹出来。
+    // 用 replaceState 不留历史记录，按后退键也不会退回带参数的那一版。
+    params.delete('history');
+    const rest = params.toString();
+    history.replaceState(null, '', location.pathname + (rest ? '?' + rest : ''));
+  }
+}
+
+// 导出弹窗「成片模板」下拉：拉模板列表 + 预填项目默认模板
+// 失败会重试并在弹窗里显眼提示——不能静默：下拉空着会让整批导出不套默认模板
+let _templateOptionsReady = false;
+async function loadTemplateOptions() {
+  try {
+    const [tpls, proj] = await Promise.all([
+      apiFetch('/admake/templates'),
+      apiFetch(`/admake/projects/${PROJ_ID}`),
+    ]);
+    const sel = document.getElementById('export-template');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">（不套模板）</option>' +
+      tpls.map(t => `<option value="${t.id}">${esc(t.name)}${t.is_default ? ' · 默认' : ''}</option>`).join('');
+    // 优先用这个项目自己指定的模板；项目没指定就落到用户的默认模板。
+    // 两个都没有才停在「不套模板」上。预填不是强制，下拉里照样能改成不套。
+    const fallback = (tpls.find(t => t.is_default) || {}).id;
+    if (proj && proj.default_template_id) sel.value = String(proj.default_template_id);
+    else if (fallback) sel.value = String(fallback);
+    _templateOptionsReady = true;
+    // 导出目录展示
+    _exportPath = (proj && proj.export_path) ? proj.export_path : null;
+    _renderExportDir();
+  } catch (e) { _templateOptionsReady = false; }
+}
+
+function _renderExportDir() {
+  const dirEl = document.getElementById('export-dir-path');
+  if (!dirEl) return;
+  dirEl.textContent = _exportPath || '应用默认目录';
+  dirEl.title = _exportPath || '成片存在应用数据目录内，用「打开」按钮直达';
+}
+
+// 当前项目自定义导出目录（null=用应用默认目录）
+let _exportPath = null;
+
+// 导出设置弹窗
+function openExportModal() {
+  document.getElementById('export-modal').classList.add('visible');
+  resetPartChecked();   // 每次打开都回到全选，上次的选择不带过来
+  renderPartPicker();
+  // 打开时兜底重试：初始化时拉模板列表失败的话，这里再拉一次，避免静默丢默认模板
+  if (!_templateOptionsReady) loadTemplateOptions();
+  loadExports();
+}
+function closeExportModal() {
+  document.getElementById('export-modal').classList.remove('visible');
+}
+
+// 更改导出目录：原生选择文件夹 → 存到项目 → 刷新展示
+async function changeExportFolder() {
+  const api = window.electronAPI;
+  if (!api || !api.selectFolder) { toast('请在应用内使用此功能', 'info'); return; }
+  const dir = await api.selectFolder();
+  if (!dir) return;
+  try {
+    await apiFetch(`/admake/projects/${PROJ_ID}`, {
+      method: 'PUT', body: JSON.stringify({ export_path: dir }),
+    });
+    _exportPath = dir;
+    _renderExportDir();
+    toast('导出目录已更新', 'success');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// 打开导出目录：目录规则在后端一处维护，这里直接要结果（顺带把目录建好，首次也能打开）
+async function openExportFolder() {
+  const api = window.electronAPI;
+  if (!api || !api.openPath) { toast('请在应用内使用此功能', 'info'); return; }
+  try {
+    const r = await apiFetch(`/admake/projects/${PROJ_ID}/export-dir`);
+    const err = await api.openPath(r.dir);
+    if (err) toast('无法打开目录：' + err, 'error');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// Parse raw marks API response into { hlGroups, hookGroups }
+function parseRawMarks(marks) {
+  const hlTmp = {}, hookTmp = {};
+  for (const m of marks) {
+    if (m.mark_type === 'highlight_start' || m.mark_type === 'highlight_end') {
+      if (!hlTmp[m.group_index]) hlTmp[m.group_index] = { hs: null, he: null, score: null };
+      hlTmp[m.group_index][m.mark_type === 'highlight_start' ? 'hs' : 'he'] = m.time_sec;
+      if (m.score != null) hlTmp[m.group_index].score = m.score;
+    } else {
+      if (!hookTmp[m.group_index]) hookTmp[m.group_index] = { ks: null, ke: null, score: null };
+      hookTmp[m.group_index][m.mark_type === 'hook_start' ? 'ks' : 'ke'] = m.time_sec;
+      if (m.score != null) hookTmp[m.group_index].score = m.score;
+    }
+  }
+  return {
+    hlGroups:   Object.keys(hlTmp).sort((a,b) => +a - +b).map(k => hlTmp[k]),
+    hookGroups: Object.keys(hookTmp).sort((a,b) => +a - +b).map(k => hookTmp[k]),
+  };
+}
+
+// Fetch marks for all track clips not yet in the partsMarks cache
+async function preloadAllMarks() {
+  // 全部 Part 的标注进缓存：左列表统计（N 高光 · N 钩子）靠它
+  await Promise.all(allParts.map(async p => {
+    if (partsMarks[p.id]) return;
+    try {
+      partsMarks[p.id] = parseRawMarks(await apiFetch(`/admake/parts/${p.id}/marks`));
+    } catch {
+      partsMarks[p.id] = { hlGroups: [], hookGroups: [] };
+    }
+  }));
+  renderPartsList();  // 统计就绪后重绘一次
+}
+
+async function loadAllParts() {
+  allParts = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+  resetPartChecked();
+  renderPartsList();
+  renderAiBox();
+
+  // Resolve which Part to load: URL param → first Part in list
+  let part = allParts.find(p => p.id === activePartId);
+  if (!part) part = allParts[0];
+  if (!part) {
+    // No parts exist at all
+    document.getElementById('part-name').textContent = '暂无 Part';
+    document.getElementById('player-placeholder').style.display = 'flex';
+    return;
+  }
+  activePartId = part.id;
+
+  videoDur = part.duration_sec || 0;
+  document.getElementById('part-name').textContent = partLabel(part);
+  document.getElementById('info-name').textContent = partLabel(part);
+  document.getElementById('info-dur').textContent  = fmtDur(videoDur);
+  renderPartInfo(part);
+
+  const vid = document.getElementById('main-video');
+  if (part.file_path) {
+    vid.src = `${UPLOAD}/${part.file_path}`;
+    vid.style.display = 'block';
+    document.getElementById('player-placeholder').style.display = 'none';
+  } else {
+    // Part 还没生成视频：失败则提示失败；否则显示“合成中”并轮询等待
+    _setPartPlaceholder(part);
+    if (part.status !== 'failed') _startPartsPolling();
+  }
+
+  updateTimelineRuler();
+
+  // Also poll if any part (not just active) is still processing
+  const hasProcessing = allParts.some(p => p.status === 'pending' || p.status === 'processing');
+  if (hasProcessing) _startPartsPolling();
+}
+
+// 根据 Part 状态设置占位层文案：失败→明确提示失败，否则→“视频合成中”。
+// 解决“合并失败的 Part 也永久显示视频合成中、用户无法区分”的问题。
+function _setPartPlaceholder(part) {
+  const ph = document.getElementById('player-placeholder');
+  const phText = ph.querySelector('.ph-text');
+  if (phText) {
+    phText.textContent = (part && part.status === 'failed')
+      ? '合成失败：请检查源视频或重新合并'
+      : '视频合成中，请稍候…';
+  }
+  document.getElementById('main-video').style.display = 'none';
+  ph.style.display = 'flex';
+}
+
+function _startPartsPolling() {
+  if (_partsPollTimer) return;
+  _partsPollTimer = setInterval(async () => {
+    try {
+      const fresh = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+      allParts = fresh;
+      renderPartsList();
+      renderAiBox();
+
+      // 幂等加载：只要当前 Part 已生成视频(file_path)、而画面还停在占位/“视频合成中”，就加载它。
+      // 不再依赖 file_path “空→非空” 的边沿判断——边沿一旦在两次轮询之间被错过，
+      // 旧逻辑会永久卡在“视频合成中”。改为按占位层是否可见来判断，可靠且可重入。
+      const activePart = allParts.find(p => p.id === activePartId);
+      const ph = document.getElementById('player-placeholder');
+      if (activePart && activePart.file_path && ph.style.display !== 'none') {
+        const vid = document.getElementById('main-video');
+        vid.src = `${UPLOAD}/${activePart.file_path}`;
+        vid.style.display = 'block';
+        ph.style.display = 'none';
+        videoDur = activePart.duration_sec || videoDur;
+        document.getElementById('info-dur').textContent  = fmtDur(videoDur);
+        updateTimelineRuler();
+      } else if (activePart && activePart.status === 'failed' && ph.style.display !== 'none') {
+        // 合并失败：把占位文案从“合成中”切换为“失败”，避免永久假装在合成
+        _setPartPlaceholder(activePart);
+      }
+
+      // 停止条件与显示逻辑对齐：每个 Part 要么已生成视频(file_path)、要么失败，才停止轮询。
+      // 旧逻辑按 status==ready 停止，与“加载看 file_path”错位，可能 status 先就绪、
+      // 轮询已停但视频未加载，导致卡死。
+      const allSettled = allParts.every(p => p.file_path || p.status === 'failed');
+      if (allSettled) {
+        clearInterval(_partsPollTimer);
+        _partsPollTimer = null;
+      }
+    } catch (e) {
+      console.warn('[AdMake] parts 轮询失败，下次继续重试:', e);
+    }
+  }, 3000);
+}
+
+// 播放器上方原来有一条「视频合成中… 0/2 已完成」的横幅，已删。同一件事另有三处在讲：
+// 左栏每一行自己写着「合成中」并铺滚动斜纹（这条比横幅多说了是哪几个 Part）、
+// 左栏底部的卡片写着「共 N 个 Part · X 合成中」（横幅那个计数）、
+// 右缘的悬浮任务件写着「Part 合成」（跨页面都在）。横幅占的是播放器的上沿。
+
+// 一个 Part 的处境由两条流水线接力：先合成，再分析。取先卡住的那一条来说。
+// act 为 null 表示正在跑、没什么可点的。
+function partState(p) {
+  if (p.status === 'failed')       return { text: '合成失败', tone: 'bad',  spin: false, act: '重建',  fn: 'rebuildPart' };
+  if (!p.file_path)                return { text: '合成中',   tone: 'busy', spin: true,  act: null };
+  if (p.ai_status === 'analyzing') return { text: '分析中',   tone: 'busy', spin: true,  act: null };
+  if (p.ai_status === 'failed')    return { text: '分析失败', tone: 'bad',  spin: false, act: '重试', fn: 'reanalyzePart' };
+  if (p.ai_status !== 'done')      return { text: '待分析',   tone: '',     spin: false, act: '分析', fn: 'reanalyzePart' };
+  return { text: null, tone: '', spin: false, act: '重析', fn: 'reanalyzePart' };   // 就绪
+}
+
+function renderPartsList() {
+  const el = document.getElementById('parts-list');
+  if (!allParts.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:12px 0;">暂无 Part</div>'; return; }
+  // 只留"看/编哪个 Part"需要的信息：编号、时长、选中态、卡住时的原因和出路。
+  // 标记条数在右栏标记组标题里，导出范围在导出弹窗里，都不放这一列。
+  el.innerHTML = allParts.map(p => {
+    const st = partState(p);
+    // 卡住的行按钮常驻，就绪的行藏起来等 hover——重试是这一行存在的理由，不该要用户先猜
+    const btn = st.act
+      ? `<button class="part-act${st.text ? '' : ' ghost'}" title="${st.act}这一个 Part"
+                 onclick="${st.fn}(${p.id}, event)">${st.act}</button>`
+      : '';
+    const dur = p.file_path ? fmtDur(p.duration_sec) : '';
+    // 就绪的行原来只有编号和时长，分析过的和没分析的长得一模一样。
+    // 只需要回答"这条 AI 跑过没有"，不需要数出几个高光几个钩子——
+    // 具体标了什么，点进去看导轨和标记组就是了。
+    const marks = st.text ? '' : '<span class="part-marks">已分析</span>';
+    return `
+    <div class="part-item ${p.id === activePartId ? 'active' : ''}${st.spin ? ' analyzing' : ''}" onclick="loadPartForEditing(${p.id})">
+      ${st.spin ? '<span class="part-sheen"></span>' : ''}
+      <div class="part-line">
+        <span class="part-item-name">${partLabel(p)}</span>
+        <span class="part-item-tail">
+          ${marks}
+          <span class="part-item-dur">${dur}</span>
+          ${st.text ? '<span class="part-act-slot"></span>' : btn}
+        </span>
+      </div>
+      ${st.text ? `<div class="part-line2">
+        <span class="part-state ${st.tone}" ${p.ai_error ? `title="${esc(p.ai_error)}"` : ''}>
+          <span class="${st.spin ? 'part-spin' : 'part-dot-sm'}"></span>${st.text}</span>
+        <span style="margin-left:auto;">${btn}</span>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+// 界面上一律显示「Part N」。原始名带剧名前缀（drama_Part8、The_Perfumer_s_Pact_Part8），
+// 一列排下来前半截全一样，编号被挤没了。
+function partLabel(p) {
+  if (!p) return '—';
+  if (Number.isInteger(p.part_index)) return `Part ${p.part_index + 1}`;
+  const tail = /(\d+)\s*$/.exec(p.name || '');
+  return tail ? `Part ${tail[1]}` : (p.name || '—');
+}
+
+// ── 导出范围：只在导出弹窗里选，每次打开都回到全选，不做持久化 ────────────────
+// 记住上次的勾选会静默生效——用户看不到自己上周勾掉了哪个 Part，成片却少一段。
+// 项目 id 会被复用，历史遗留的两个 key 必须清掉，否则旧项目的选择会漂到新项目上。
+const _STALE_KEYS = [`skyart_export_checked_${PROJ_ID}`, `skyart_track_${PROJ_ID}`];
+
+function resetPartChecked() {
+  partChecked = new Set(allParts.map(p => p.id));
+  _STALE_KEYS.forEach(key => localStorage.removeItem(key));
+}
+
+// 点一格只管一格。原来按住 Shift 能连选一段，但一个项目就那么几个 Part，
+// 上面还有「全选」，连选省不下几次点击，却要额外用一行字教用户。
+function onPartPickClick(ev, idx) {
+  const p = allParts[idx];
+  if (!p) return;
+  if (ev.target.checked) partChecked.add(p.id); else partChecked.delete(p.id);
+  syncPartPickerHeader();
+}
+
+function toggleAllPartPick(on) {
+  partChecked = on ? new Set(allParts.map(p => p.id)) : new Set();
+  renderPartPicker();
+}
+
+function renderPartPicker() {
+  const grid = document.getElementById('part-pick-grid');
+  if (!grid) return;
+  grid.innerHTML = allParts.map((p, i) => `
+    <label class="part-pick" title="${esc(p.name)}">
+      <input type="checkbox" ${partChecked.has(p.id) ? 'checked' : ''}
+             onclick="onPartPickClick(event, ${i})">
+      <span>${partLabel(p)}</span>
+    </label>`).join('');
+  syncPartPickerHeader();
+}
+
+function syncPartPickerHeader() {
+  const all = document.getElementById('pick-all');
+  if (all) all.checked = allParts.length > 0 && partChecked.size === allParts.length;
+  const count = document.getElementById('pick-count');
+  if (count) count.textContent = `${partChecked.size} / ${allParts.length}`;
+  document.querySelectorAll('#part-pick-grid input').forEach((box, i) => {
+    box.checked = partChecked.has(allParts[i]?.id);
+  });
+}
+
+async function loadPartForEditing(partId) {
+  if (partId === activePartId) return;
+  isSwitchingPart = true;
+  // 取消欠着的延迟保存：否则它会在切换半途（标记已清空、activePartId 已是新 Part）触发，
+  // 把空标记存到新 Part 名下，覆盖掉服务器上的真实标记。下面的显式保存会兜住旧 Part 的改动。
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
+  try { await saveMarks(); } catch {}
+  activePartId = partId;
+  const part = allParts.find(p => p.id === partId);
+  if (!part) return;
+
+  videoDur = part.duration_sec || 0;
+  document.getElementById('part-name').textContent = partLabel(part);
+  document.getElementById('info-name').textContent = partLabel(part);
+  document.getElementById('info-dur').textContent  = fmtDur(videoDur);
+
+  const vid = document.getElementById('main-video');
+  if (part.file_path) {
+    vid.src = `${UPLOAD}/${part.file_path}`;
+    vid.style.display = 'block';
+    document.getElementById('player-placeholder').style.display = 'none';
+  } else {
+    vid.src = '';
+    _setPartPlaceholder(part);
+  }
+
+  hlGroups = []; hookGroups = [];
+  openSeg = null;             // 开合中的段随 Part 切换作废
+  updateMarkBtns();
+  renderPartInfo(part);
+  renderGroups();
+  await loadMarks();
+  updateTimelineRuler();
+  renderPartsList();
+  await loadExports();
+  isSwitchingPart = false;
+  // 换源既不发 pause 也不发 seeked，没有任何事件会触发重绘——不补这一下，
+  // 右上角时间码和导轨游标会停在上一个 Part 的位置
+  onTimeUpdate();
+}
+
+// 片段信息卡：本地文件路径 + AI 分析状态
+let _uploadDirCache = null;
+async function renderPartInfo(part) {
+  const aiEl = document.getElementById('info-ai');
+  if (aiEl) {
+    aiEl.innerHTML = part.ai_status === 'done' ? '<span class="badge badge-green">已完成</span>'
+      : part.ai_status === 'analyzing' ? '<span class="badge badge-blue pulse">分析中</span>'
+      : part.ai_status === 'failed' ? `<span class="badge badge-red" title="${esc(part.ai_error || '')}">失败</span>`
+      : '<span class="badge badge-gray">未分析</span>';
+  }
+  const pathEl = document.getElementById('info-path');
+  if (!pathEl) return;
+  if (!part.file_path) { pathEl.textContent = '—'; pathEl.title = ''; return; }
+  try {
+    if (_uploadDirCache === null && window.electronAPI?.getUploadDir)
+      _uploadDirCache = await window.electronAPI.getUploadDir();
+  } catch { _uploadDirCache = ''; }
+  const abs = _uploadDirCache ? `${_uploadDirCache}/${part.file_path}` : part.file_path;
+  pathEl.textContent = abs;
+  pathEl.title = abs;
+  pathEl.dataset.abs = abs;
+}
+
+function revealPartPath() {
+  const abs = document.getElementById('info-path')?.dataset.abs;
+  if (!abs) { toast('该 Part 还没有生成视频文件', 'info'); return; }
+  if (window.electronAPI?.showItemInFolder) window.electronAPI.showItemInFolder(abs);
+  else toast(abs, 'info');
+}
+
+// ── Video player ────────────────────────────────────────────────────────────
+function onVideoReady() {
+  const vid = document.getElementById('main-video');
+  videoDur = vid.duration || videoDur;
+  updateTimelineRuler();
+  updateTimeDisplay();
+}
+
+// 播放中的游标由 requestVideoFrameCallback 逐帧驱动（每帧真正上屏时回调，拿到的
+// mediaTime 就是那一帧的呈现时间）。video 的 timeupdate 事件浏览器只按约每 250ms
+// 发一次，一秒四下，游标会一顿一顿地跳——它现在只当暂停/跳转时的兜底。
+let _phHandle = null;
+let _phByFrame = false;
+
+function paintPlayhead(t) {
+  if (isSwitchingPart) return;
+  const vDur = videoDur || document.getElementById('main-video').duration || 0;
+  document.getElementById('progress-fill').style.width = (vDur > 0 ? t / vDur * 100 : 0) + '%';
+  document.getElementById('time-overlay').textContent  = fmtTime(t);
+  document.getElementById('time-label').textContent    = `${fmtTime(t)} / ${fmtTime(videoDur)}`;
+  syncVisPlayhead(t);
+  if (openSeg) drawOpenSeg();   // E/R 开合中的段跟着游标伸长
+}
+
+function startPlayheadLoop() {
+  const vid = document.getElementById('main-video');
+  stopPlayheadLoop();
+  const running = () => !vid.paused && !vid.ended;
+  if (typeof vid.requestVideoFrameCallback === 'function') {
+    _phByFrame = true;
+    const onFrame = (_now, meta) => {
+      paintPlayhead(meta.mediaTime);
+      _phHandle = running() ? vid.requestVideoFrameCallback(onFrame) : null;
+    };
+    _phHandle = vid.requestVideoFrameCallback(onFrame);
+  } else {
+    _phByFrame = false;   // 该 API 是 Chromium 独有，非 Chromium 环境退回屏幕刷新率
+    const onTick = () => {
+      paintPlayhead(vid.currentTime);
+      _phHandle = running() ? requestAnimationFrame(onTick) : null;
+    };
+    _phHandle = requestAnimationFrame(onTick);
+  }
+}
+
+function stopPlayheadLoop() {
+  if (_phHandle === null) return;
+  const vid = document.getElementById('main-video');
+  if (_phByFrame && typeof vid.cancelVideoFrameCallback === 'function') vid.cancelVideoFrameCallback(_phHandle);
+  else cancelAnimationFrame(_phHandle);
+  _phHandle = null;
+}
+
+// 暂停态的跳转（拖进度条、点轨道、±10s）走这里补一次
+function onTimeUpdate() {
+  if (_phHandle !== null) return;   // 播放中已有逐帧循环在画，不重复
+  paintPlayhead(document.getElementById('main-video').currentTime);
+}
+
+function onProgressClick(e) {
+  const bar = e.currentTarget.querySelector('.video-progress-bar');
+  const rect = bar.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  document.getElementById('main-video').currentTime = pct * videoDur;
+}
+
+function updateTimeDisplay() {
+  const vid = document.getElementById('main-video');
+  document.getElementById('time-label').textContent =
+    `${fmtTime(vid.currentTime)} / ${fmtTime(videoDur)}`;
+}
+
+function togglePlay() {
+  const vid = document.getElementById('main-video');
+  if (vid.paused) vid.play(); else vid.pause();
+  // 按钮文案不在这里改：播完、换素材、系统打断都会暂停，只有听 video 自己的事件才不会脱节
+}
+
+// 换 src 时浏览器把 paused 置回 true 却不派发 pause 事件（实测序列是
+// abort→emptied→loadstart→loadedmetadata），所以按钮和逐帧循环都要挂到 emptied 上收尾，
+// 光靠 onpause 会漏掉"切 Part"这条路径。
+function syncPlayBtn() {
+  const vid = document.getElementById('main-video');
+  document.getElementById('play-btn').textContent = vid.paused || vid.ended ? '播放' : '暂停';
+}
+
+function seek(delta) {
+  const vid = document.getElementById('main-video');
+  const dur = videoDur || vid.duration || 0;
+  vid.currentTime = Math.max(0, Math.min(dur, vid.currentTime + delta));
+}
+
+
+function cycleSpeed() {
+  speedIdx = (speedIdx + 1) % SPEEDS.length;
+  document.getElementById('main-video').playbackRate = SPEEDS[speedIdx];  // 触发 ratechange 去刷新按钮
+}
+
+// 换素材时浏览器会把 playbackRate 重置成 1，倍速按钮却还停在上次选的档位。
+// 元数据就绪后按用户选的档位重设一次，切 Part 不丢倍速。
+function applyPlaybackRate() {
+  document.getElementById('main-video').playbackRate = SPEEDS[speedIdx];
+}
+
+function syncSpeedBtn() {
+  const rate = document.getElementById('main-video').playbackRate;
+  const btn = document.getElementById('speed-btn');
+  btn.textContent = rate + '×';
+  btn.classList.toggle('active', rate !== 1);   // 高亮表示"当前不是正常速度"，别把 1× 标成特殊状态
+}
+
+// ══ vis-timeline 双泳道：初始化 + 数据桥 ══════════════════════════════════════
+// 设计约定：hlGroups/hookGroups 是唯一真源，vis DataSet 只是视图投影——任何结构
+// 变更后整体重建（renderTimeline），杜绝增量更新带来的 id 漂移。item id 即
+// `hl-<下标>` / `hk-<下标>`，group_index 契约与 saveMarks/后端保持一致。
+const SEC_MS = 1000;
+const MIN_SEG_MS = SEC_MS;        // 一段最短 1 秒
+const DRAG_SEEK_INTERVAL_MS = 120; // 拖拽预览的 seek 节流；太密解码器会打嗝
+
+// 吸附到整秒：标记精度就到秒，能拖出小数反而会让显示和落库对不上
+function _visSnap(d) { return Math.round(+d / SEC_MS) * SEC_MS; }
+
+// 拖拽预览：把画面带到正在动的那一端，不然是盲拖，看不见自己停在哪一帧。
+// 哪一端在动，靠和数组里的旧值比对——vis 只给新的 start/end，不告诉你抓的是哪个手柄。
+let _lastDragSeekAt = 0;
+function _previewDraggedEdge(itemId, startSec, endSec) {
+  const now = performance.now();
+  if (now - _lastDragSeekAt < DRAG_SEEK_INTERVAL_MS) return;
+  _lastDragSeekAt = now;
+  const ref = _itemRef(itemId);
+  if (!ref) return;
+  const [oldStart, oldEnd] = ref.type === 'hl' ? [ref.g.hs, ref.g.he] : [ref.g.ks, ref.g.ke];
+  const movedStart = Math.abs(startSec - (oldStart ?? startSec)) >= Math.abs(endSec - (oldEnd ?? endSec));
+  _previewSeek(movedStart ? startSec : endSec);
+}
+
+function _previewSeek(sec) {
+  const vid = document.getElementById('main-video');
+  if (!vid.paused) vid.pause();
+  vid.currentTime = Math.max(0, Math.min(videoDur, sec));
+}
+
+function initVisTimeline() {
+  const el = document.getElementById('vis-tl');
+  if (!el || typeof vis === 'undefined') return;
+  visItems = new vis.DataSet([]);
+  visTl = new vis.Timeline(el, visItems, VIS_GROUPS, {
+    // 只给 min/max，不给 start/end：vis 撤掉初次绘制的 loading 遮罩、把导轨设为可见的
+    // 条件里判了 `options.start || options.end`——我们的 start 是 0，在 JS 里是假值，
+    // 判断落到 end 上，于是它还要求先发生一次 rangechange。首次进页面只调一次
+    // setWindow，条件凑不齐，导轨会一直 visibility:hidden，要切一次 Part 才冒出来。
+    // 不传 start/end 就绕开这条，初次绘制直接完成；窗口在下面立刻补设。
+    min: 0, max: 60 * SEC_MS,   // 占位，loadPart 后重设
+    // 不写死高度：两条泳道内容只有 48px，固定高度会在钩子下面留一片死白，并白占播放器面积
+    // 不缩放不平移：一屏永远是完整一集 Part。标记精度是秒，一秒占 4-7 像素，
+    // 配合整秒吸附拖起来是一格一格跳的，放大反而只剩局部、还抢走滚轮和空白处的单击
+    zoomable: false, moveable: false, stack: false,
+    orientation: 'top', showMajorLabels: false, showCurrentTime: false,
+    margin: { item: 2, axis: 4 },
+    selectable: true, multiselect: false,
+    editable: { add: false, updateTime: true, updateGroup: false, remove: true },
+    // vis 默认「先点中再能拖」，但它的拖拽手柄不管选没选中都挂着 cursor:move——
+    // 光标摆出可以拖的样子，实际拖不动，第一下永远白费。开了这个就是所见即所得。
+    itemsAlwaysDraggable: { item: true, range: true },
+    snap: _visSnap,
+    // 刻度尺是标尺不是时间戳，用紧凑的 分:秒；写成 00:00:15 会宽六成、挤成一团被裁。
+    // 负数区不打标签，否则时间窗左边的余量里会多出一个 0:00
+    format: { minorLabels: d => (+d < 0 ? '' : fmtRuler(+d / SEC_MS)), majorLabels: () => '' },
+    onMoving: (item, cb) => {           // 拖动中钳制在 Part 内、最短 1 秒
+      let s = Math.max(0, +item.start), e = Math.min(videoDur * SEC_MS, +item.end);
+      if (e - s < MIN_SEG_MS) e = s + MIN_SEG_MS;
+      e = Math.min(e, videoDur * SEC_MS);
+      cb({ ...item, start: s, end: e });
+      _previewDraggedEdge(item.id, s / SEC_MS, e / SEC_MS);
+    },
+    onMove: (item, cb) => {             // 拖拽落定：写回数组（vis 自身的改动被 cb(null) 丢弃，随后全量重建）
+      cb(null);
+      if (isSwitchingPart) return;
+      const ref = _itemRef(item.id);
+      if (!ref) return;
+      const s = Math.round(+item.start / SEC_MS), e = Math.round(+item.end / SEC_MS);
+      if (ref.type === 'hl') { ref.g.hs = s; ref.g.he = e; }
+      else                   { ref.g.ks = s; ref.g.ke = e; }
+      _previewSeek(s);                  // 松手时精确定位到新的起点
+      _commitMarks();
+    },
+    onRemove: (item, cb) => {           // 选中后点 ✕
+      cb(null);
+      _removeByItemId(item.id);
+    },
+  });
+
+  // vis 给每个刻度标签分配一个"从刻度点起、宽度等于刻度间隔"的盒子。最右边那个刻度
+  // 贴着面板边缘，盒子撑出去半截，被时间轴根节点的 overflow:hidden 裁成"2:1"这样的残字。
+  // 加大时间窗右侧留白不解决——窗口变宽只会多出一个刻度，最后那个照样贴边。
+  // 装不下就整个藏掉：少一个刻度不影响读尺，半个数字反而让人以为时长是错的。
+  // 总时长在播放器右下角的时间码里始终看得到。
+  function _hideClippedTicks() {
+    const panel = el.querySelector('.vis-panel.vis-top');
+    if (!panel) return;
+    const right = panel.getBoundingClientRect().right;
+    panel.querySelectorAll('.vis-text').forEach(t => {
+      t.style.visibility = '';
+      if (t.getBoundingClientRect().right > right + 0.5) t.style.visibility = 'hidden';
+    });
+  }
+  // 删除按钮只在选中项上出现，位置随窗口滚动/缩放变，所以跟刻度一起在 changed 里复查
+  function _flipClippedDelete() {
+    const panel = el.querySelector('.vis-panel.vis-center');
+    if (!panel) return;
+    const right = panel.getBoundingClientRect().right;
+    panel.querySelectorAll('.vis-item .vis-delete').forEach(d => {
+      d.classList.remove('flip');
+      if (d.getBoundingClientRect().right > right - 1) d.classList.add('flip');
+    });
+  }
+  visTl.on('changed', () => { _hideClippedTicks(); _flipClippedDelete(); });
+  // 选中态变化时 vis 才插入删除按钮，changed 不一定跟着触发，这里补一次
+  visTl.on('select', () => requestAnimationFrame(_flipClippedDelete));
+
+  visTl.setWindow(0, 60 * SEC_MS, { animation: false });
+
+  // 点空白/刻度＝定位播放（点带子＝选中，交给 vis 自己）
+  visTl.on('click', p => {
+    if (p.what === 'item' || p.what === 'custom-time' || p.what === 'group-label' || p.time == null) return;
+    if (p.x < 0) return;   // 左侧「高光/钩子」标签列：那里的时间是负的，点了会莫名跳回 0 秒
+    const vid = document.getElementById('main-video');
+    vid.currentTime = Math.max(0, Math.min(videoDur, +p.time / SEC_MS));
+  });
+  // 双击空白泳道＝新建 15 秒段
+  visTl.on('doubleClick', p => {
+    if (p.what === 'item' || p.time == null || (p.group !== 'hl' && p.group !== 'hk')) return;
+    _addSegment(p.group, Math.round(+p.time / SEC_MS));
+  });
+  // 拖游标线＝seek
+  visTl.addCustomTime(0, 'ph');
+  try { visTl.setCustomTimeMarker(fmtPlayhead(0), 'ph', false); } catch {}
+  // 导轨整体的起点和终点。位置在 updateTimelineRuler 里跟着 Part 时长重设，
+  // 这里先按占位窗口放着。CSS 给它们 pointer-events:none，拖不动。
+  visTl.addCustomTime(0, 'tstart');
+  visTl.addCustomTime(60 * SEC_MS, 'tend');
+  // 拖游标线＝seek。拖动期间必须挡住 syncVisPlayhead 的回写：视频 seek 是异步的、
+  // 落点还会对齐到最近的关键帧，回写会把线从鼠标位置拽走，一来一回就是肉眼看到的闪动。
+  visTl.on('timechange', p => {
+    if (p.id !== 'ph') return;
+    _phDragging = true;
+    const t = Math.max(0, Math.min(videoDur, +p.time / SEC_MS));
+    try { visTl.setCustomTimeMarker(fmtPlayhead(t), 'ph', false); } catch {}
+    const now = performance.now();
+    if (now - _lastPhSeekAt < DRAG_SEEK_INTERVAL_MS) return;  // 每动一像素就 seek，解码器会打嗝
+    _lastPhSeekAt = now;
+    _previewSeek(t);
+  });
+  visTl.on('timechanged', p => {
+    if (p.id !== 'ph') return;
+    _phDragging = false;
+    _previewSeek(Math.max(0, Math.min(videoDur, +p.time / SEC_MS)));  // 松手精确落位
+  });
+}
+
+function _itemRef(itemId) {
+  const m = /^(hl|hk)-(\d+)$/.exec(String(itemId));
+  if (!m) return null;
+  const arr = m[1] === 'hl' ? hlGroups : hookGroups;
+  const g = arr[+m[2]];
+  return g ? { type: m[1], gi: +m[2], g, arr } : null;
+}
+
+function _removeByItemId(itemId) {
+  const ref = _itemRef(itemId);
+  if (!ref) return;
+  ref.arr.splice(ref.gi, 1);
+  _commitMarks();
+  toast(`已删除${ref.type === 'hl' ? '高光' : '钩子'}段`, 'success');
+}
+
+function _addSegment(type, startSec) {
+  const dur = videoDur || 0;
+  const s = Math.max(0, Math.min(startSec, Math.max(0, dur - 1)));
+  const e = Math.min(dur || s + 15, s + 15);
+  if (e - s < 1) { toast('位置太靠结尾，放不下一段', 'info'); return; }
+  if (_hasIdenticalSeg(type, s, e)) { toast(`该时段的${type === 'hl' ? '高光' : '钩子'}段已存在`, 'info'); return; }
+  if (type === 'hl') hlGroups.push({ hs: s, he: e, score: null });
+  else               hookGroups.push({ ks: s, ke: e, score: null });
+  _commitMarks();
+  toast(`已添加${type === 'hl' ? '高光' : '钩子'}段 ${fmtTime(s)}–${fmtTime(e)}`, 'success');
+}
+
+function _hasIdenticalSeg(type, s, e) {
+  const arr = type === 'hl' ? hlGroups : hookGroups;
+  return arr.some(g => {
+    const gs = type === 'hl' ? g.hs : g.ks, ge = type === 'hl' ? g.he : g.ke;
+    return gs != null && ge != null && Math.round(gs) === s && Math.round(ge) === e;
+  });
+}
+
+// 所有编辑落点统一收口：右栏、时间轴、防抖保存三处同步
+function _commitMarks() {
+  renderGroups();
+  renderTimeline();
+  scheduleSave();
+}
+
+// 播放进度 → 游标线（onTimeUpdate 每帧调用）
+let _phDragging = false;
+let _lastPhSeekAt = 0;
+
+function syncVisPlayhead(sec) {
+  if (!visTl || _phDragging) return;   // 用户正在拖游标，别跟他抢
+  const t = sec != null ? sec : (document.getElementById('main-video').currentTime || 0);
+  try {
+    visTl.setCustomTime(t * SEC_MS, 'ph');
+    visTl.setCustomTimeMarker(fmtPlayhead(t), 'ph', false);
+    _flipPlayheadLabelNearEdge(t);
+  } catch {}
+}
+
+// 标签默认从竖线向右展开，游标走到右缘时整块都在可视区外，只剩第一个字符露着。
+// 进入当前视野最后 12% 就把它翻到线的左边。
+function _flipPlayheadLabelNearEdge(t) {
+  const marker = document.querySelector('.vis-custom-time.ph .vis-custom-time-marker');
+  if (!marker) return;
+  const win = visTl.getWindow();
+  const span = +win.end - +win.start;
+  const ratio = span > 0 ? (t * SEC_MS - +win.start) / span : 0;
+  marker.classList.toggle('flip', ratio > 0.88);
+}
+
+// ══ E/R 打点状态机（按钮与快捷键同义的开/合 toggle） ═══════════════════════════
+function toggleSeg(type) {
+  const vid = document.getElementById('main-video');
+  const t = Math.round(vid.currentTime || 0);
+  if (openSeg && openSeg.type === type) {
+    const s = Math.min(openSeg.start, t), e = Math.max(openSeg.start, t);
+    openSeg = null;
+    updateMarkBtns(); drawOpenSeg();
+    if (e - s < 2) { toast('段太短，已取消（不足 2 秒）', 'info'); return; }
+    if (_hasIdenticalSeg(type, s, e)) { toast(`该时段的${type === 'hl' ? '高光' : '钩子'}段已存在`, 'info'); return; }
+    if (type === 'hl') hlGroups.push({ hs: s, he: e, score: null });
+    else               hookGroups.push({ ks: s, ke: e, score: null });
+    _commitMarks();
+    toast(`已标记${type === 'hl' ? '高光' : '钩子'}段 ${fmtTime(s)}–${fmtTime(e)}`, 'success');
+  } else if (openSeg) {
+    toast(`先结束当前${openSeg.type === 'hl' ? '高光' : '钩子'}段（或 Esc 取消）`, 'info');
+  } else {
+    openSeg = { type, start: t };
+    updateMarkBtns(); drawOpenSeg();
+    toast(`${type === 'hl' ? '高光' : '钩子'}段开始于 ${fmtTime(t)}——到结尾处再点一次结束，Esc 取消`, 'info');
+  }
+}
+
+function cancelOpenSeg() {
+  if (!openSeg) return;
+  const label = openSeg.type === 'hl' ? '高光' : '钩子';
+  openSeg = null;
+  updateMarkBtns(); drawOpenSeg();
+  toast(`已取消${label}段（未保存）`, 'info');
+}
+
+// 开合中的段画成蚂蚁线背景区间，随游标伸长
+function drawOpenSeg() {
+  if (!visItems) return;
+  if (visItems.get('openseg')) visItems.remove('openseg');
+  if (!openSeg) return;
+  const t = document.getElementById('main-video').currentTime || 0;
+  const s = Math.min(openSeg.start, t), e = Math.max(openSeg.start, t, openSeg.start + 1);
+  visItems.add({
+    id: 'openseg', group: openSeg.type, type: 'background',
+    className: `openseg ${openSeg.type}`,
+    start: s * SEC_MS, end: e * SEC_MS,
+    content: `按 ${openSeg.type === 'hl' ? 'E' : 'R'} 结束 · Esc 取消`,
+  });
+}
+
+function updateMarkBtns() {
+  const hlBtn   = document.getElementById('btn-mark-hl');
+  const hookBtn = document.getElementById('btn-mark-hook');
+  if (!hlBtn || !hookBtn) return;
+  const on = openSeg?.type || null;
+  hlBtn.classList.toggle('on', on === 'hl');
+  hookBtn.classList.toggle('on', on === 'hk');
+  hlBtn.disabled   = on === 'hk';
+  hookBtn.disabled = on === 'hl';
+  hlBtn.setAttribute('aria-pressed', String(on === 'hl'));
+  hookBtn.setAttribute('aria-pressed', String(on === 'hk'));
+  const hlT = document.getElementById('btn-mark-hl-t');
+  const hkT = document.getElementById('btn-mark-hook-t');
+  if (hlT) hlT.textContent = on === 'hl' ? '高光段结束' : '高光段开始';
+  if (hkT) hkT.textContent = on === 'hk' ? '钩子段结束' : '钩子段开始';
+}
+
+// ── Auto-save (debounced) ─────────────────────────────────────────────────────
+function scheduleSave() {
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(() => saveMarks(), 800);
+}
+
+// ── AI 分析 (2.0.0.10 / 2.0.0.20) ──────────────────────────────────────────
+let _aiPollTimer = null;
+let _aiRunning   = false;
+
+// ── 素材导出 (2.0.0.22) ──────────────────────────────────────────────────────
+let _exportPollTimer = null;
+let _exportRunning   = false;
+let _exportSubmitting = false; // 提交请求期间的可重入保护：防止双击或两个导出按钮几乎同时触发
+
+// 阻止 AI 分析 / 素材导出期间关闭窗口
+// 只拦"关掉整个应用"（会杀后端进程、导出/分析真会失败）；应用内跳转不影响后端任务，
+// 各跳转入口先置 _inAppNav 放行。
+let _inAppNav = false;
+// 悬浮任务件等外部脚本发起的应用内跳转也要能放行；3 秒后复位，防"放行了但没跳"留下不设防的口子
+window.__allowInAppNav = () => { _inAppNav = true; setTimeout(() => { _inAppNav = false; }, 3000); };
+window.addEventListener('beforeunload', e => {
+  if (_inAppNav) return;
+  if (_aiRunning || _exportRunning) {
+    const msg = _exportRunning
+      ? '素材导出中，退出应用会导致剪辑失败。任务在后台运行，可以正常跳转页面。'
+      : 'AI 分析中，退出应用会中断分析。';
+    e.preventDefault();
+    e.returnValue = msg;
+    return msg;
+  }
+});
+
+// ── 进度弹窗 ──────────────────────────────────────────────────────────────────
+// 进度弹窗副标题只留这一个来源。原来 HTML 里写死一句、openAiProgressModal 打开时
+// 又用另一句覆盖，两句措辞还不一样——改了 HTML 那句等于白改，用户永远看到 JS 这句。
+const AI_PROG_SUBTITLE = '可以收起这个窗口，分析会在后台继续。退出应用会中断分析。';
+
+const AI_STAGE_LABEL = { starting: '准备中', compressing: '压缩视频', uploading: '上传素材', analyzing: 'AI 分析中' };
+
+// 阶段文案带滑入动画，只在内容变化时触发，避免每次轮询都闪
+function setAiStageText(text) {
+  const el = document.getElementById('ai-prog-status');
+  if (el.textContent === text) return;
+  el.classList.remove('slide');
+  void el.offsetWidth; // 强制 reflow 重新触发动画
+  el.textContent = text;
+  el.classList.add('slide');
+}
+
+function formatEta(seconds) {
+  if (seconds < 60) return `${seconds} 秒`;
+  return `约 ${Math.ceil(seconds / 60)} 分钟`;
+}
+
+function openAiProgressModal(total) {
+  // 恢复"进行中"状态（上次的完成态可能残留）
+  document.getElementById('ai-prog-icon').textContent = '';
+  document.getElementById('ai-prog-title').textContent = 'AI 分析中';
+  document.getElementById('ai-prog-subtitle').textContent =
+    AI_PROG_SUBTITLE;
+  document.getElementById('ai-prog-done-btn').style.display = 'none';
+  document.getElementById('ai-prog-retry-btn').style.display = 'none';
+  document.getElementById('ai-prog-close').style.display = 'none';
+  document.getElementById('ai-prog-min-btn').style.display = '';
+  const fill = document.getElementById('ai-prog-fill');
+  fill.classList.remove('done');
+  fill.style.width = '0%';
+  document.getElementById('ai-prog-counter').textContent =
+    total > 0 ? `已完成 0 / ${total} 个 Part` : '';
+  setAiStageText('连接检测中…');
+  document.getElementById('ai-progress-modal').classList.add('visible');
+}
+
+function hideAiProgressModal() {
+  document.getElementById('ai-progress-modal').classList.remove('visible');
+}
+
+// 收起进度弹窗：分析在后台照跑，进度显示交给右缘悬浮任务件（跨页面存活），点它可展开
+function minimizeAiProgress() {
+  document.getElementById('ai-progress-modal').classList.remove('visible');
+  toast('已收起，进度看右侧边缘的悬浮条', 'info');
+}
+
+function expandAiProgress() {
+  document.getElementById('ai-progress-modal').classList.add('visible');
+}
+
+// 给悬浮任务件判断用：本页的 AI 进度 UI 是否还活着（刷新后弹窗数据是死的，不该展开它）
+window.__aiUiLive = () => _aiRunning;
+
+// 一键重试失败的 Part：失败的 Part 没有留下标记，only_unanalyzed=true 只会重跑这些
+function retryFailedParts() {
+  hideAiProgressModal();
+  startAiAnalysis(true);
+}
+
+function formatElapsed(seconds) {
+  if (seconds == null) return '';
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
+// 完成/失败结果驻留在弹窗内，用户手动点"完成"或 ✕ 关闭，避免 toast 一闪而过分不清成败
+function showAiResult(s) {
+  const ok = s.status === 'done';
+  // 后端只要有一条报错就把状态写成 partial，一个都没成功时也是 partial。
+  // 直接照搬会在全军覆没时显示「分析部分失败」，得看成功数才知道该叫哪个
+  const allFailed = s.success === 0 && s.total > 0;
+  document.getElementById('ai-prog-icon').textContent = '';
+  document.getElementById('ai-prog-title').textContent =
+    ok ? '分析完成' : (allFailed ? '分析失败' : '分析部分失败');
+  const elapsed = s.elapsed_seconds != null ? ` · 总耗时 ${formatElapsed(s.elapsed_seconds)}` : '';
+  // total 可能缺失（后端重启丢状态 / 状态查询失败的本地兜底结果），此时不显示计数
+  document.getElementById('ai-prog-subtitle').textContent = s.total != null
+    ? `成功 ${s.success != null ? s.success : s.total} / ${s.total} 个 Part${elapsed}`
+    : '';
+  // 清掉进行中的"已完成 X / N"计数——最后一次轮询直接从处理中跳到完成态，
+  // 这行不清会残留旧值（如 3/4），与副标题的最终数量（4/4）打架
+  document.getElementById('ai-prog-counter').textContent = '';
+  const fill = document.getElementById('ai-prog-fill');
+  fill.style.width = '100%';
+  if (ok) fill.classList.add('done');
+  // 结果行：说这次做出了什么，而不是只说"成功几个"。标记数才是这次分析的产物。
+  // 逐 Part 的数量和耗时跟在后面，某一条明显慢或者一个都没挑出来时一眼能看到。
+  const fin = Array.isArray(s.finished_parts) ? s.finished_parts : [];
+  let resultText;
+  if (fin.length) {
+    const nHl = fin.reduce((a, p) => a + (p.highlights || 0), 0);
+    const nHk = fin.reduce((a, p) => a + (p.hooks || 0), 0);
+    const detail = fin.map(p => {
+      const local = allParts.find(x => x.name === p.name);
+      return `${local ? partLabel(local) : (p.name || '')} ${p.highlights || 0}高 ${p.hooks || 0}钩`
+             + (p.elapsed ? ` · ${formatElapsed(p.elapsed)}` : '');
+    }).join('　｜　');
+    // 部分失败时，成功的那几个 Part 的结果照样要报出来——finished_parts 里只有成功的，
+    // 全部并到"失败原因"一句里，等于把已经做出来的东西藏了
+    const head = ok ? `共标出 ${nHl} 个高光、${nHk} 个钩子`
+                    : `成功的 ${fin.length} 个 Part 共标出 ${nHl} 个高光、${nHk} 个钩子`;
+    resultText = `${head}\n${detail}`;
+    if (!ok) resultText += `\n失败原因：${s.error || '未知错误'}`;
+  } else if (ok) {
+    resultText = '高光和钩子已标注在下方导轨上';
+  } else {
+    resultText = `失败原因：${s.error || '未知错误'}`;
+  }
+  setAiStageText(resultText);
+  document.getElementById('ai-prog-done-btn').style.display = '';
+  document.getElementById('ai-prog-close').style.display = '';
+  document.getElementById('ai-prog-min-btn').style.display = 'none';
+  // 有失败的 Part 时，给一个一键"重试失败"入口（只重跑没标记的那些）
+  const failed = (s.total != null && s.success != null) ? (s.total - s.success) : null;
+  const retryBtn = document.getElementById('ai-prog-retry-btn');
+  if (!ok && (failed == null || failed > 0)) {
+    retryBtn.textContent = failed != null ? `重试失败 (${failed})` : '重试失败';
+    retryBtn.style.display = '';
+  } else {
+    retryBtn.style.display = 'none';
+  }
+}
+
+function updateAiProgressModal(s) {
+  document.getElementById('ai-prog-counter').textContent = `已完成 ${s.progress} / ${s.total} 个 Part`;
+  const pct = s.total > 0 ? Math.round((s.progress / s.total) * 90) : 0;
+  document.getElementById('ai-prog-fill').style.width = pct + '%';
+  // 流水线并发：可能同时有多个 Part 在不同阶段；带上该阶段已持续时长，卡在哪一步一目了然
+  const activeText = (s.active_parts || [])
+    .map(p => {
+      const t = p.stage_elapsed != null && p.stage_elapsed > 0 ? ` ${formatElapsed(p.stage_elapsed)}` : '';
+      // 进度接口只回原始名，映射回本地列表拿统一的「Part N」写法
+      const local = allParts.find(x => x.name === p.name);
+      return `${local ? partLabel(local) : (p.name || '')} · ${AI_STAGE_LABEL[p.stage] || '处理中'}${t}`;
+    })
+    .join('　｜　');
+  const eta = s.eta_seconds != null && s.eta_seconds > 0 ? `　·　预计还需 ${formatEta(s.eta_seconds)}` : '';
+  setAiStageText(`${activeText || 'AI 处理中'}${eta}`);
+}
+
+// ── 选择弹窗（部分已分析） ────────────────────────────────────────────────────
+function showAiChoiceModal(analyzedCount, unanalyzedCount, onPartial, onAll) {
+  // 两个选项各自动到几个 Part，写在按钮上比写在正文里更管用——点之前最后看的是按钮。
+  // 这里数的是有没有标记，不是有没有分析过：AI 跑完也可能一个高光都没挑出来，
+  // 那种 Part 在左边列表里挂着「已分析」，写成"还没有分析过"会跟列表对不上。
+  const total = analyzedCount + unanalyzedCount;
+  document.getElementById('ai-choice-msg').innerHTML =
+    `${total} 个 Part 里，<strong>${analyzedCount} 个已经有标记</strong>，<strong>${unanalyzedCount} 个还没有标记</strong>。`
+    + `<div class="ai-modal-note">选「全部重新分析」，那 ${analyzedCount} 个已有的标记<b>会被覆盖</b>。</div>`;
+  document.getElementById('ai-choice-partial-btn').textContent = `只分析没标记的 ${unanalyzedCount} 个`;
+  document.getElementById('ai-choice-all-btn').textContent     = `全部重新分析 ${total} 个`;
+  document.getElementById('ai-choice-partial-btn').onclick = () => { hideAiChoiceModal(); onPartial(); };
+  document.getElementById('ai-choice-all-btn').onclick     = () => { hideAiChoiceModal(); onAll(); };
+  document.getElementById('ai-choice-modal').classList.add('visible');
+}
+
+function hideAiChoiceModal() {
+  document.getElementById('ai-choice-modal').classList.remove('visible');
+}
+
+// ── 触发入口 ──────────────────────────────────────────────────────────────────
+async function triggerAiAnalysis() {
+  const readyParts = allParts.filter(p => p.status === 'ready');
+  if (!readyParts.length) { toast('没有就绪的 Part 视频', 'error'); return; }
+
+  // 确保所有 ready Part 的 marks 都已载入缓存
+  await Promise.all(readyParts.map(async p => {
+    if (partsMarks[p.id]) return;
+    try {
+      partsMarks[p.id] = parseRawMarks(await apiFetch(`/admake/parts/${p.id}/marks`));
+    } catch {
+      partsMarks[p.id] = { hlGroups: [], hookGroups: [] };
+    }
+  }));
+
+  const hasMarks    = p => { const m = partsMarks[p.id]; return m && (m.hlGroups.length > 0 || m.hookGroups.length > 0); };
+  const analyzed    = readyParts.filter(hasMarks);
+  const unanalyzed  = readyParts.filter(p => !hasMarks(p));
+
+  if (analyzed.length > 0 && unanalyzed.length > 0) {
+    showAiChoiceModal(
+      analyzed.length, unanalyzed.length,
+      () => startAiAnalysis(true),
+      () => startAiAnalysis(false)
+    );
+  } else if (analyzed.length > 0 && unanalyzed.length === 0) {
+    showAiModal(
+      '重新分析全部 Part',
+      `对 <strong>${readyParts.length} 个 Part</strong> 重新跑一次 AI 分析。`
+        + `<div class="ai-modal-note">这 ${readyParts.length} 个 Part 现在的高光和钩子`
+        + `<b>会被新结果覆盖</b>，手动改过的也一样。</div>`,
+      () => startAiAnalysis(false)
+    );
+  } else {
+    showAiModal(
+      '开始 AI 分析',
+      `让 AI 看完 <strong>${readyParts.length} 个 Part</strong>，挑出高光和钩子。`
+        + `<div class="ai-modal-note">视频会压缩后<b>上传到云端</b>处理，分析期间别退出应用。</div>`,
+      () => startAiAnalysis(false)
+    );
+  }
+}
+
+function showAiModal(title, msg, onConfirm, width) {
+  document.getElementById('ai-confirm-title').textContent = title;
+  document.getElementById('ai-confirm-msg').innerHTML     = msg;
+  document.querySelector('#ai-confirm-modal .ai-modal-box').style.width = width || '';
+  document.getElementById('ai-confirm-modal').classList.add('visible');
+  document.getElementById('ai-confirm-ok').onclick = () => { hideAiModal(); onConfirm(); };
+}
+
+function hideAiModal() {
+  document.getElementById('ai-confirm-modal').classList.remove('visible');
+}
+
+let _aiPollFails = 0; // 状态查询连续失败计数：单次失败可能只是后端瞬时繁忙，任务还在跑
+
+async function startAiAnalysis(onlyUnanalyzed = false) {
+  if (_aiRunning) { toast('AI 分析已在进行中', 'error'); return; }
+  // 先弹窗展示"连接检测中"——后端入口会实测密钥连通性（OSS/模型服务），
+  // 缺配置或密钥无效会在这一步秒级返回明确错误，而不是空等到上传阶段才失败
+  openAiProgressModal(0);
+  _aiRunning = true; // 请求期间即置位：拦截重复点击和中途关窗
+  _aiPollFails = 0;
+  renderAiBox();
+  try {
+    const url = `/admake/projects/${PROJ_ID}/ai-analyze` + (onlyUnanalyzed ? '?only_unanalyzed=true' : '');
+    const res = await apiFetch(url, {
+      method: 'POST',
+      // 兜底超时：连通性预检正常最多 ~25s，网络挂死时不能让用户被无关闭按钮的弹窗困住
+      signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined,
+    });
+    document.getElementById('ai-prog-counter').textContent = `已完成 0 / ${res.total} 个 Part`;
+    setAiStageText('连接成功，开始处理…');
+    // only_unanalyzed 跟后端一个口径：已合成、且还没分析出结果的那些
+    _markAnalyzingLocal(allParts
+      .filter(p => p.file_path && p.status !== 'failed'
+                   && (!onlyUnanalyzed || p.ai_status !== 'done'))
+      .map(p => p.id));
+    if (_aiPollTimer) clearInterval(_aiPollTimer);
+    _aiPollTimer = setInterval(pollAiAnalysis, 4000);
+  } catch (e) {
+    if (e.status === 409) {
+      // 后端已有批次在跑（比如页面刷新后再次点击）：不报错，直接接管进度轮询
+      setAiStageText('已有分析任务在进行，正在同步进度…');
+      if (_aiPollTimer) clearInterval(_aiPollTimer);
+      _aiPollTimer = setInterval(pollAiAnalysis, 4000);
+      return;
+    }
+    _aiRunning = false;
+    hideAiProgressModal();
+    renderAiBox();   // 少了这行，侧栏卡片会停在进 try 之前渲染的"AI 分析中"上
+    const msg = e.name === 'TimeoutError' ? '连接后端超时（60 秒无响应）' : e.message;
+    toast(`AI 分析无法启动：${msg}`, 'error', 8000);
+  }
+}
+
+// 分析期间把左栏各行的状态跟后端对齐。批量分析时几个 Part 是先后完成的，
+// 不拉这一下，整批跑完之前左栏会一直停在发起那一刻的样子。
+// 状态没变就不重画：轮询 4 秒一次，每次重建列表会打断 hover 和滚动。
+let _partsSig = '';
+async function _syncPartsDuringAi() {
+  let fresh;
+  try {
+    fresh = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+  } catch { return; }   // 拉一次失败不影响主轮询，下一轮再说
+  const sig = fresh.map(p => `${p.id}:${p.status}:${p.ai_status}`).join(',');
+  if (sig === _partsSig) return;
+  _partsSig = sig;
+  allParts = fresh;
+  renderPartsList();
+  renderAiBox();
+  const cur = allParts.find(p => p.id === activePartId);
+  if (cur) renderPartInfo(cur);
+}
+
+// 发起后先把要分析的行本地置成"分析中"，不等下一轮轮询。后端接了请求到状态落库
+// 之间有几秒，这几秒里用户刚点完按钮，左栏却毫无反应。
+function _markAnalyzingLocal(ids) {
+  const set = new Set(ids);
+  allParts.forEach(p => { if (set.has(p.id)) p.ai_status = 'analyzing'; });
+  _partsSig = '';   // 作废签名，下一轮轮询必定重画一次，跟后端的真实状态对齐
+  renderPartsList();
+}
+
+async function pollAiAnalysis() {
+  let s;
+  try {
+    s = await apiFetch(`/admake/projects/${PROJ_ID}/ai-analyze/status`);
+    _aiPollFails = 0;
+  } catch (e) {
+    // 后端可能正被 ffmpeg 压缩打满，偶发一次查询失败不代表任务挂了；
+    // 连续 3 次（约 12 秒）才放弃，否则一次抖动就永远丢失分析结果
+    _aiPollFails += 1;
+    if (_aiPollFails < 3) return;
+    clearInterval(_aiPollTimer); _aiPollTimer = null;
+    _aiRunning = false;
+    renderAiBox();
+    showAiResult({ status: 'failed',
+      error: `无法查询分析状态（${e.message}）。任务可能仍在后台运行，稍后重新打开本页即可看到已生成的标记` });
+    return;
+  }
+  if (s.status === 'processing') {
+    updateAiProgressModal(s);
+    _syncPartsDuringAi();
+    return;
+  }
+  clearInterval(_aiPollTimer); _aiPollTimer = null;
+  _aiRunning = false;
+  renderAiBox();
+  if (s.status === 'idle') {
+    // 后端重启会丢掉内存中的任务状态
+    showAiResult({ status: 'failed', error: '后端服务已重启，本次分析中断，请重新发起' });
+    return;
+  }
+  showAiResult(s);
+  // 标记重载失败不能吞掉上面的结果弹窗（标记本身已保存在后端），只提示刷新
+  try {
+    partsMarks = {};
+    await preloadAllMarks();
+    await loadMarks();
+    renderTimeline();
+    // 各 Part 的 ai_status 已变化：刷新列表统计、顶栏 AI 入口、片段信息
+    allParts = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+    renderPartsList();
+    renderAiBox();
+    const cur = allParts.find(p => p.id === activePartId);
+    if (cur) renderPartInfo(cur);
+  } catch (e) {
+    toast(`标记载入失败，刷新页面即可看到：${e.message}`, 'error');
+  }
+}
+
+// ── 顶栏 AI 入口状态机 ────────────────────────────────────────────────────────
+// 有待分析的就绪 Part → 主橙按钮；分析中 → 禁用态（详情在进度弹窗）；全部完成 → 次级"重新分析"
+// 按钮状态就是流程指示：还有没分析的 Part → AI 按钮是主按钮、导出灰着；
+// 全分析完 → AI 降级成次要按钮，导出接棒变主按钮。
+// 底部这块是本页的主入口。整批里有几个卡住、卡在哪，和"点这里开始分析"合成一件事说。
+// 全量重析是低频又昂贵的操作，只在全部就绪时以文字链接出现，不占主按钮的位置。
+const AI_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+  + 'stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M4.9 4.9l2.1 2.1'
+  + 'M17 17l2.1 2.1M3 12h3M18 12h3M4.9 19.1L7 17M17 7l2.1-2.1"/><circle cx="12" cy="12" r="3.2"/></svg>';
+
+function renderAiBox() {
+  const box = document.getElementById('ai-box');
+  if (!box) return;
+  if (!allParts.length) { box.innerHTML = ''; syncExportBtn(false); return; }
+
+  const n = { building: 0, buildFailed: 0, pending: 0, analyzing: 0, aiFailed: 0, done: 0 };
+  allParts.forEach(p => {
+    if (p.status === 'failed') n.buildFailed++;
+    else if (!p.file_path) n.building++;
+    else if (p.ai_status === 'analyzing') n.analyzing++;
+    else if (p.ai_status === 'failed') n.aiFailed++;
+    else if (p.ai_status !== 'done') n.pending++;
+    else n.done++;
+  });
+
+  const bits = [];
+  if (n.done)        bits.push(`<b>${n.done}</b> 就绪`);
+  if (n.building)    bits.push(`${n.building} 合成中`);
+  if (n.analyzing)   bits.push(`${n.analyzing} 分析中`);
+  if (n.aiFailed)    bits.push(`<span class="bad">${n.aiFailed} 分析失败</span>`);
+  if (n.buildFailed) bits.push(`<span class="bad">${n.buildFailed} 合成失败</span>`);
+  const sub = `共 <b>${allParts.length}</b> 个 Part` + (bits.length ? ' · ' + bits.join(' · ') : '');
+
+  // 待处理 = 待分析 + 分析失败。分析失败的 Part 同样没有标记，
+  // 后端的 only_unanalyzed 正好覆盖这两种
+  const todo = n.pending + n.aiFailed;
+
+  // n.analyzing 也算进来：分析从别的页面发起、或者刚刷新完还没轮询到时，_aiRunning 还是 false，
+  // 但 Part 的 ai_status 已经是 analyzing。只看 _aiRunning 会掉到最后那个分支，
+  // 左边列表明明有一条在转圈，这里却报"都已分析"，导出按钮也跟着点亮
+  if (_aiRunning || n.analyzing > 0) {
+    // 分析中这颗按钮不置灰：进度弹窗可以收起，收起之后这里是回到进度的唯一入口
+    box.innerHTML = `<div class="ai-act">
+      <div class="ai-act-hd"><span class="ai-act-dot"></span><span class="ai-act-ttl">AI 分析中</span></div>
+      <div class="ai-act-sub">${sub}</div>
+      <button class="ai-act-btn" onclick="expandAiProgress()">${AI_ICON}查看进度</button></div>`;
+  } else if (todo > 0) {
+    box.innerHTML = `<div class="ai-act">
+      <div class="ai-act-hd"><span class="ai-act-dot"></span><span class="ai-act-ttl">还有 ${todo} 个待分析</span></div>
+      <div class="ai-act-sub">${sub}</div>
+      <button class="ai-act-btn" onclick="startAiAnalysis(true)">${AI_ICON}开始 AI 分析</button></div>`;
+  } else if (n.done) {
+    // 全部分析完时不用再报一遍各种计数——没有待办了，报数字只会让人以为还有事要做。
+    // 一句结论，加一个明确标出是"重来一遍"的次要动作，中间空开，不连成一句话。
+    box.innerHTML = `<div class="ai-done">
+      <span class="ai-done-t"><b>${n.done}</b> 个 Part ${n.done > 1 ? '都' : ''}已分析</span>
+      <button class="side-relink" onclick="triggerAiAnalysis()"
+              title="丢掉现在全部的高光和钩子，让 AI 从头再跑一遍">重新分析</button></div>`;
+  } else {
+    // 一个都还没就绪（全在合成中或合成失败），没有可分析的对象
+    box.innerHTML = `<div class="ai-done"><span>${sub}</span></div>`;
+  }
+  syncExportBtn(n.done > 0 && todo === 0 && n.analyzing === 0
+                && n.building === 0 && n.buildFailed === 0 && !_aiRunning);
+}
+
+function syncExportBtn(enabled) {
+  const btn = document.getElementById('topbar-export-btn');
+  if (!btn) return;
+  btn.disabled = !enabled;
+  btn.title = enabled ? '' : 'AI 分析完成后才能导出';
+}
+
+// 单 Part 重建合成（列表项「重建」入口）。合成失败以前只能整个项目重新分 Part，
+// 七集挂一集要连另外六集和已做的标注一起重来。
+async function rebuildPart(partId, ev) {
+  if (ev) ev.stopPropagation();
+  const p = allParts.find(x => x.id === partId);
+  if (!p) return;
+  showAiModal(
+    `重新合成 ${partLabel(p)}`,
+    `只重新合成这一个 Part 的视频，不影响其它 Part。`
+      + `<div class="ai-modal-note">已经打好的标记<b>不会被清空</b>。</div>`,
+    async () => {
+      try {
+        await apiFetch(`/admake/parts/${partId}/rebuild`, { method: 'POST' });
+        toast(`${partLabel(p)} 已重新排队合成`, 'success');
+        // 列表和横幅交给合成轮询刷新——它本来就是干这个的，不另起一套
+        allParts = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+        renderPartsList(); renderAiBox(); _startPartsPolling();
+      } catch (e) {
+        toast(`重建失败：${e.message}`, 'error', 6000);
+      }
+    }
+  );
+}
+
+// 单 Part 重析（列表项「↻ 重析/分析」入口）：走同一套进度弹窗与轮询
+async function reanalyzePart(partId, ev) {
+  if (ev) ev.stopPropagation();
+  if (_aiRunning) { toast('AI 分析已在进行中，完成后再重析', 'info'); return; }
+  const p = allParts.find(x => x.id === partId);
+  if (!p) return;
+  showAiModal(
+    `重新分析 ${partLabel(p)}`,
+    `只重新分析这一个 Part，不影响其它 Part。`
+      + `<div class="ai-modal-note">${partLabel(p)} 现在的高光和钩子<b>会被新结果覆盖</b>。</div>`,
+    async () => {
+      openAiProgressModal(1);
+      _aiRunning = true;
+      _aiPollFails = 0;
+      renderAiBox();
+      try {
+        await apiFetch(`/admake/projects/${PROJ_ID}/ai-analyze?part_id=${partId}`, {
+          method: 'POST',
+          signal: AbortSignal.timeout ? AbortSignal.timeout(60000) : undefined,
+        });
+        setAiStageText('连接成功，开始处理…');
+        _markAnalyzingLocal([partId]);
+        if (_aiPollTimer) clearInterval(_aiPollTimer);
+        _aiPollTimer = setInterval(pollAiAnalysis, 4000);
+      } catch (e) {
+        _aiRunning = false;
+        hideAiProgressModal();
+        renderAiBox();
+        toast(`重析无法启动：${e.message}`, 'error', 6000);
+      }
+    }
+  );
+}
+
+// ── Timeline ruler (dynamic) ─────────────────────────────────────────────────
+function updateTimelineRuler() {
+  // 时间窗跟随当前 Part 时长；刻度由 vis 自己按整数步长铺（format 已定成 mm:ss）
+  if (!visTl || !videoDur) return;
+  const maxMs = Math.max(1, Math.round(videoDur * SEC_MS));
+  // 两端各留一点余量：时间窗如果正好等于 [0, 时长]，游标走到结尾时那条 2px 的线整条
+  // 落在可视区外被裁掉，走到 0 时又和左侧泳道标签栏的边框重叠，看着都像"消失了"
+  const padMs = Math.max(300, Math.round(maxMs * 0.01));
+  visTl.setOptions({ min: -padMs, max: maxMs + padMs });
+  visTl.setWindow(-padMs, maxMs + padMs, { animation: false });
+  // 结尾标签用刻度尺的 mm:ss，不用游标那套 00:00:00.00——它读的是「这条导轨到哪结束」，
+  // 和刻度尺上的 5:15 是同一个量，格式跟着刻度尺走
+  try {
+    visTl.setCustomTime(0, 'tstart');
+    visTl.setCustomTime(maxMs, 'tend');
+    visTl.setCustomTimeMarker(fmtRuler(videoDur), 'tend', false);
+  } catch {}
+  syncVisPlayhead();
+}
+
+function fieldLabel(f) {
+  return {hs:'高光开始',he:'高光结束',ks:'钩子开始',ke:'钩子结束'}[f] || f;
+}
+
+// ── Marks ───────────────────────────────────────────────────────────────────
+async function loadMarks() {
+  if (!activePartId) return;
+  try {
+    const marks = await apiFetch(`/admake/parts/${activePartId}/marks`);
+    const parsed = parseRawMarks(marks);
+    hlGroups   = parsed.hlGroups;
+    hookGroups = parsed.hookGroups;
+    partsMarks[activePartId] = { hlGroups: hlGroups.map(g=>({...g})), hookGroups: hookGroups.map(g=>({...g})) };
+    renderGroups();
+    renderTimeline();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function deleteHlGroup(i) {
+  hlGroups.splice(i, 1);
+  if (hlPhase === 'he' && !hlGroups.some(g => g.he === null)) hlPhase = 'hs';
+  renderGroups(); renderTimeline(); scheduleSave();
+}
+
+function deleteHookGroup(i) {
+  hookGroups.splice(i, 1);
+  if (hookPhase === 'ke' && !hookGroups.some(g => g.ke === null)) hookPhase = 'ks';
+  renderGroups(); renderTimeline(); scheduleSave();
+}
+
+// 选中段后的键盘微调：不按 Shift 整段平移，按住 Shift 只收放终点（改时长）。
+// 比拖拽准——一秒只有 4-7 个像素，鼠标很难稳稳落在格子上。
+const _round1 = v => Math.round(v * 10) / 10;   // 0.1 步长连按会攒出 22.299999999 这种尾巴
+
+function nudgeSelectedSeg(itemId, step, resizeEnd) {
+  const ref = _itemRef(itemId);
+  if (!ref) return;
+  const [fs, fe] = ref.type === 'hl' ? ['hs', 'he'] : ['ks', 'ke'];
+  const s0 = ref.g[fs], e0 = ref.g[fe];
+  if (s0 == null || e0 == null) return;
+  let s = s0, e = e0;
+  if (resizeEnd) {
+    e = Math.max(s0 + MIN_SEG_MS / SEC_MS, Math.min(videoDur, e0 + step));
+  } else {
+    const shift = Math.max(-s0, Math.min(videoDur - e0, step));
+    s = s0 + shift; e = e0 + shift;
+  }
+  s = _round1(s); e = _round1(e);
+  if (s === s0 && e === e0) return;
+  ref.g[fs] = s; ref.g[fe] = e;
+  _previewSeek(resizeEnd ? e : s);
+  _commitMarks();
+  visTl.setSelection(itemId);   // 全量重建会清掉选中态，重新选回来才能连按
+}
+
+// 点标记行＝定位到该段并在时间轴上选中它
+// 不能叫 focusGroup：Chromium 给 HTMLElement 加了同名的 focusgroup 属性，
+// 而行内 onclick 的作用域链是「元素 → document → window」，元素排在最前面，
+// 名字会先解析到元素那个属性上（是个对象不是函数），点一下必然抛错。
+function focusMarkGroup(type, gi) {
+  const arr = type === 'hl' ? hlGroups : hookGroups;
+  const g = arr[gi];
+  if (!g) return;
+  const start = type === 'hl' ? g.hs : g.ks;
+  if (start != null) document.getElementById('main-video').currentTime = start;
+  if (visTl) { try { visTl.setSelection(`${type}-${gi}`); } catch {} }
+}
+
+// 一段标记＝一行。时间只读展示，改时间靠时间轴拖拽或「设起点/设终点」——
+// 敲数字是盲改，拖拽时画面跟着走；帧级精度靠播放到位后点「设起点/设终点」。
+function renderGroups() {
+  const panel = document.getElementById('marks-panel');
+  const lines = [
+    ...hlGroups.map((g, i)   => markLine('hl', i, g, g.hs, g.he)),
+    ...hookGroups.map((g, i) => markLine('hk', i, g, g.ks, g.ke)),
+  ];
+  panel.innerHTML = lines.length ? lines.join('')
+    : '<div style="color:var(--text3);text-align:center;padding:20px;font-size:12px;">暂无标记<br><small>点「高光段开始」打点，或在时间轴泳道上双击新建</small></div>';
+  renderMarksCount();
+}
+
+function markLine(type, gi, g, start, end) {
+  const isHl = type === 'hl';
+  const name = isHl ? '高光' : '钩子';
+  const del = isHl ? `deleteHlGroup(${gi})` : `deleteHookGroup(${gi})`;
+  // 这里用 fmtClock 不用 fmtTime：标记组是给人扫一眼看这段在哪，时分秒够了。
+  // 小数位留在导轨和播放器时间码上，那里才是精调时要盯的地方。
+  const at  = t => (t != null ? fmtClock(t) : '--:--:--');
+  return `
+    <div class="mark-line ${type}" onclick="focusMarkGroup('${type}',${gi})" title="定位到该段并在时间轴上选中">
+      <span class="mark-line-name">${name} ${gi + 1}</span>
+      ${g.score != null
+        ? `<span class="score-badge" title="AI 对这一段的评分，满分 10 分。导出时优先选用高分段">
+            <svg viewBox="0 0 24 24"><path d="M12 3.2l2.55 5.5 6 .8-4.4 4.15 1.15 5.95L12 16.65 6.7 19.6l1.15-5.95L3.45 9.5l6-.8z"/></svg>${g.score}/10</span>`
+        : `<span class="pick-badge" title="你自己划的段。评分只有 AI 会给，导出排序时排在有评分的段后面">
+            <svg viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg>自选</span>`}
+      <span class="mark-line-time">${at(start)} → ${at(end)}</span>
+      <button class="group-del-btn" onclick="${del};event.stopPropagation()" title="删除这一段">✕</button>
+    </div>`;
+}
+
+// 标记条数写在卡片标题行，左侧素材列表不再重复一份
+function renderMarksCount() {
+  const el = document.getElementById('marks-status');
+  if (!el) return;
+  const nHl = hlGroups.filter(g => g.hs != null && g.he != null).length;
+  const nHk = hookGroups.filter(g => g.ks != null && g.ke != null).length;
+  el.textContent = (nHl || nHk) ? `${nHl} 高光 · ${nHk} 钩子` : '';
+}
+
+// ── Timeline rendering：hlGroups/hookGroups → vis items 全量重建 ──────────────
+// 任何结构变更后整体重建（清空重加），杜绝增量更新的 id 漂移；段数量几十个，成本可忽略。
+function renderTimeline() {
+  if (!visItems) return;
+  const items = [];
+  hlGroups.forEach((g, gi) => {
+    if (g.hs != null && g.he != null && g.he > g.hs)
+      items.push({ id: `hl-${gi}`, group: 'hl', className: 'hl', content: '',
+                   start: g.hs * SEC_MS, end: g.he * SEC_MS, type: 'range',
+                   title: `高光 ${gi + 1}　${fmtTime(g.hs)}–${fmtTime(g.he)}${g.score != null ? `　${g.score}/10` : ''}` });
+  });
+  hookGroups.forEach((g, gi) => {
+    if (g.ks != null && g.ke != null && g.ke > g.ks)
+      items.push({ id: `hk-${gi}`, group: 'hk', className: 'hk', content: '',
+                   start: g.ks * SEC_MS, end: g.ke * SEC_MS, type: 'range',
+                   title: `钩子 ${gi + 1}　${fmtTime(g.ks)}–${fmtTime(g.ke)}${g.score != null ? `　${g.score}/10` : ''}` });
+  });
+  // 同泳道两段相交的区间画红斜纹（导出时重叠超一半视为同一素材）
+  let ovlSeq = 0;
+  ['hl', 'hk'].forEach(tp => {
+    const rs = items.filter(it => it.group === tp && it.type === 'range');
+    for (let a = 0; a < rs.length; a++) for (let b = a + 1; b < rs.length; b++) {
+      const s2 = Math.max(+rs[a].start, +rs[b].start), e2 = Math.min(+rs[a].end, +rs[b].end);
+      if (e2 > s2) items.push({ id: `ovl-${tp}-${ovlSeq++}`, group: tp, type: 'background',
+                                className: 'ovl', start: s2, end: e2, content: '' });
+    }
+  });
+  visItems.clear();
+  if (items.length) visItems.add(items);
+  drawOpenSeg();   // 开合中的蚂蚁线段随重建恢复
+}
+
+// ── Save marks ───────────────────────────────────────────────────────────────
+async function saveMarks() {
+  if (!activePartId) return;
+  partsMarks[activePartId] = { hlGroups: hlGroups.map(g=>({...g})), hookGroups: hookGroups.map(g=>({...g})) };
+  const marks = [];
+  hlGroups.forEach((g, i) => {
+    if (g.hs !== null) marks.push({ mark_type: 'highlight_start', group_index: i, time_sec: g.hs, score: g.score ?? null });
+    if (g.he !== null) marks.push({ mark_type: 'highlight_end',   group_index: i, time_sec: g.he, score: g.score ?? null });
+  });
+  hookGroups.forEach((g, i) => {
+    if (g.ks !== null) marks.push({ mark_type: 'hook_start', group_index: i, time_sec: g.ks, score: g.score ?? null });
+    if (g.ke !== null) marks.push({ mark_type: 'hook_end',   group_index: i, time_sec: g.ke, score: g.score ?? null });
+  });
+  try {
+    await apiFetch(`/admake/parts/${activePartId}/marks`, { method: 'PUT', body: JSON.stringify({ marks }) });
+    renderTimeline();
+    renderMarksCount();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ── Sidebar tab navigation ───────────────────────────────────────────────────
+
+// ── 导出进度弹窗 (2.0.0.22) ──────────────────────────────────────────────────
+function openExportProgressModal(total) {
+  document.getElementById('exp-prog-counter').textContent = `正在导出第 1 个 / 共 ${total} 个素材`;
+  document.getElementById('exp-prog-fill').style.width    = '0%';
+  document.getElementById('exp-prog-status').textContent  = '正在准备...';
+  document.getElementById('export-progress-modal').classList.add('visible');
+}
+
+function updateExportProgressModal(done, total) {
+  const cur = Math.min(done + 1, total);
+  document.getElementById('exp-prog-counter').textContent = `正在导出第 ${cur} 个 / 共 ${total} 个素材`;
+  const pct = total > 0 ? Math.round((done / total) * 90) : 0;
+  document.getElementById('exp-prog-fill').style.width   = pct + '%';
+  document.getElementById('exp-prog-status').textContent = `已完成 ${done} / ${total}，正在处理第 ${cur} 个...`;
+}
+
+function closeExportProgressModal(successCount, failedCount) {
+  document.getElementById('exp-prog-fill').style.width   = '100%';
+  document.getElementById('exp-prog-status').textContent = failedCount > 0
+    ? `导出结束，${failedCount} 个没成功`
+    : '导出完成';
+  setTimeout(() => {
+    document.getElementById('export-progress-modal').classList.remove('visible');
+  }, 800);
+}
+
+// 收起进度弹窗：进度显示交给右缘悬浮任务件（跨页面存活），点它可展开
+function minimizeExportProgress() {
+  document.getElementById('export-progress-modal').classList.remove('visible');
+  toast('已收起，进度看右侧边缘的悬浮条', 'info');
+}
+function expandExportProgress() {
+  document.getElementById('export-progress-modal').classList.add('visible');
+}
+// 给悬浮任务件判断用：本页的导出进度 UI 是否还活着（刷新后弹窗数据是死的，不该展开它）
+window.__exportUiLive = () => _exportRunning;
+
+// ── Export ───────────────────────────────────────────────────────────────────
+function setupModeListeners() {
+  document.querySelectorAll('input[name="mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      document.querySelectorAll('.mode-option').forEach(el => el.classList.remove('selected'));
+      radio.closest('.mode-option').classList.add('selected');
+    });
+  });
+}
+
+function getMode() {
+  const r = document.querySelector('input[name="mode"]:checked');
+  return r ? r.value : 'highlight_shunjian';
+}
+
+function doExport() {
+  // 同步入口守卫：必须在弹确认框之前就拦住重入，
+  // 否则网络请求耗时窗口内的二次点击（双击）不会被挡住。
+  if (_exportSubmitting || _exportRunning) { toast('有一批素材正在导出，完成后再发起下一批', 'info'); return; }
+
+  const mode   = getMode();
+  const count  = parseInt(document.getElementById('clip-count').value) || 1;
+  const durVal = document.querySelector('input[name="clip-dur"]:checked')?.value || '360';
+  const modeLabel = { highlight_shunjian: '高光顺剪', xuanyi_daozhi: '悬疑倒置', shuanggaoguang: '双高光顺剪' }[mode] || mode;
+
+  const checked = _checkedPartsOrdered();
+  if (!checked.length) { toast('至少勾选一个 Part 参与导出', 'info'); return; }
+  // 模式、时长、取材范围都不再复述——上一屏刚填完就在眼前，读一遍不帮人做决定。
+  // 这里只说会产出什么、放到哪儿，以及唯一需要犹豫的那件事：开始了就停不下来。
+  const dir = (document.getElementById('export-dir-path') || {}).textContent || '应用默认目录';
+  showAiModal(
+    '确认导出',
+    `生成 <strong>${count} 个成片</strong>，保存到「<strong>${esc(dir)}</strong>」。`
+      + `<div class="ai-modal-note">开始后<b>不能中途取消</b>。</div>`,
+    () => _runExport(mode, count, durVal),
+    '440px'
+  );
+}
+
+// 勾选参与导出的 Part，按 part_index 排序（后端拼中间白场依赖顺序语义）
+function _checkedPartsOrdered() {
+  return allParts
+    .filter(p => partChecked.has(p.id))
+    .sort((a, b) => a.part_index - b.part_index);
+}
+
+async function _runExport(mode, count, durVal) {
+  _exportSubmitting = true;
+  const btns = ['export-btn'].map(id => document.getElementById(id)).filter(Boolean);
+  btns.forEach(b => { b.disabled = true; b.textContent = '处理中…'; });
+
+  try {
+    await saveMarks();
+    const targetDur = parseFloat(durVal) || 360;
+
+    const checked = _checkedPartsOrdered();
+    const exports = await apiFetch(`/admake/projects/${PROJ_ID}/export`, {
+      method: 'POST',
+      body: JSON.stringify({ mode, count, target_duration: targetDur,
+                             // 全选＝不过滤（传 null 走后端"全部 Part"路径，语义等价且日志更干净）
+                             part_ids: checked.length === allParts.length ? null : checked.map(p => p.id),
+                             template_id: Number(document.getElementById('export-template')?.value) || null }),
+    });
+    const batchIds = new Set(exports.map(e => e.id));
+    _exportRunning = true;
+    closeExportModal();  // 提交成功即收起设置弹窗，进度另开
+    openExportProgressModal(batchIds.size);
+    // 注册到边缘悬浮任务件：跨页面显示进度、点任务名跳回本项目
+    if (window.ExportTaskFloat) ExportTaskFloat.start(PROJ_ID, [...batchIds]);
+    await loadExports();
+
+    if (_exportPollTimer) clearInterval(_exportPollTimer);
+    _exportPollTimer = setInterval(async () => {
+      const list = await apiFetch(`/admake/projects/${PROJ_ID}/exports`).catch(() => null);
+      if (!list) return;
+      renderExports(list);
+      const batch = list.filter(e => batchIds.has(e.id));
+      const done  = batch.filter(e => e.status === 'ready' || e.status === 'failed').length;
+      updateExportProgressModal(done, batchIds.size);
+      if (done >= batchIds.size) {
+        clearInterval(_exportPollTimer); _exportPollTimer = null;
+        _exportRunning = false;
+        const successCount = batch.filter(e => e.status === 'ready').length;
+        const failedCount  = batch.filter(e => e.status === 'failed').length;
+        const tplFails     = batch.filter(e => e.template_error).length;
+        closeExportProgressModal(successCount, failedCount);
+        // 出问题只报一条，不再按"几个成功几个失败""模板没套上"分三种 toast 弹三次。
+        // 目前还没遇到过真实的导出失败，等遇到了再按真实场景细分。
+        // 失败本身照常记在导出历史里（那里有 就绪/等待/合成中/失败 四态），这里只提醒去看。
+        const bad = failedCount + tplFails;
+        if (bad === 0) toast(`导出完成：${successCount} 个素材`, 'success', 4000);
+        else toast(`导出完成 ${successCount} 个，${bad} 个有问题，详见导出历史`, 'error', 6000);
+      }
+    }, 3000);
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    _exportSubmitting = false;
+    btns.forEach(b => { b.disabled = false; b.textContent = '开始导出'; });
+  }
+}
+
+async function loadExports() {
+  try {
+    const list = await apiFetch(`/admake/projects/${PROJ_ID}/exports`);
+    renderExports(list);
+  } catch {}
+}
+
+function renderExports(list) {
+  const el = document.getElementById('export-list');
+  if (!list || !list.length) {
+    if (el) el.innerHTML = '<div style="color:var(--text3);font-size:11px;text-align:center;padding:8px;">暂无导出记录</div>';
+    return;
+  }
+  const hasPending = list.some(e => e.status === 'pending' || e.status === 'processing');
+  if (hasPending && !exportPollTimer) pollExports();
+  else if (!hasPending && exportPollTimer) { clearInterval(exportPollTimer); exportPollTimer = null; }
+  if (!el) return;  // 列表 UI 已并入「导出历史」弹窗，这里只维护轮询
+
+  el.innerHTML = list.map((e, i) => {
+    const modeLabel = { highlight_shunjian:'顺剪', xuanyi_daozhi:'倒置', shuanggaoguang:'双高光' }[e.mode] || e.mode;
+    const badgeCls  = { ready:'badge-green', failed:'badge-red', pending:'badge-gray', processing:'badge-blue pulse' }[e.status] || 'badge-gray';
+    const statusLabel = { ready:'就绪', failed:'失败', pending:'等待', processing:'合成中' }[e.status] || e.status;
+    return `
+      <div class="export-item">
+        <div style="min-width:0;flex:1">
+          <div class="export-item-name">${modeLabel} #${list.length - i}</div>
+          <div style="display:flex;align-items:center;gap:4px;margin-top:2px">
+            <span class="badge ${badgeCls}">${statusLabel}</span>
+            ${e.duration_sec > 0 ? `<span style="color:var(--text3);font-size:10px">${fmtDur(e.duration_sec)}</span>` : ''}
+          </div>
+        </div>
+        ${e.status === 'ready' && e.file_path
+          ? `<button class="download-btn" data-path="${esc(e.file_path)}" onclick="openExportDir(this.dataset.path)">打开目录</button>`
+          : ''}
+      </div>`;
+  }).join('');
+}
+
+function pollExports() {
+  if (exportPollTimer) return;
+  exportPollTimer = setInterval(async () => {
+    const list = await apiFetch(`/admake/projects/${PROJ_ID}/exports`).catch(() => null);
+    if (!list) return;
+    renderExports(list);
+    // 导出历史弹窗开着时跟着轮询刷新——从任务中心跳进来盯进度/成败的就是这个面板
+    const hm = document.getElementById('history-modal');
+    if (hm && hm.classList.contains('visible')) {
+      renderModalExports(list, document.getElementById('history-modal-list'));
+    }
+    // 停止条件加 file_path 判断：ready 但 file_path 尚未写入时继续轮询，
+    // 防两次写被拆开时下载按钮永不出现（技术债 #2）
+    const stillPending = list.some(e =>
+      e.status === 'pending' || e.status === 'processing' ||
+      (e.status === 'ready' && !e.file_path));
+    if (!stillPending) {
+      clearInterval(exportPollTimer); exportPollTimer = null;
+    }
+  }, 3000);
+}
+
+async function openExportDir(filePath) {
+  // 自定义导出目录的成片入库存的是绝对路径，直接用；相对路径才拼 App 数据目录
+  let absPath = filePath;
+  if (!filePath.startsWith('/')) {
+    const uploadDir = await window.electronAPI.getUploadDir();
+    absPath = uploadDir + '/' + filePath;
+  }
+  window.electronAPI.showItemInFolder(absPath);
+}
+
+// ── Export history modal ──────────────────────────────────────────────────────
+async function openHistoryModal() {
+  document.getElementById('history-modal').classList.add('visible');
+  await refreshHistoryModal();
+}
+
+function closeHistoryModal() {
+  document.getElementById('history-modal').classList.remove('visible');
+}
+
+async function refreshHistoryModal() {
+  const el = document.getElementById('history-modal-list');
+  try {
+    const list = await apiFetch(`/admake/projects/${PROJ_ID}/exports`);
+    renderModalExports(list, el);
+  } catch (e) {
+    el.innerHTML = `<div style="color:var(--danger);font-size:12px;text-align:center;padding:20px;">加载失败</div>`;
+  }
+}
+
+const EXPORT_MODE_LABEL = { highlight_shunjian:'高光顺剪', xuanyi_daozhi:'悬疑倒置', shuanggaoguang:'双高光顺剪' };
+const EXPORT_STATUS_LABEL = { ready:'就绪', failed:'失败', pending:'等待', processing:'合成中' };
+const EXPORT_STATUS_BADGE = { ready:'badge-green', failed:'badge-red', pending:'badge-gray', processing:'badge-blue pulse' };
+
+// 一次导出会一口气生成一二十条成片，平铺出来每行文件名只差末尾序号，翻不动也认不出。
+// 按批次折叠：一批一行，展开才看单条。同一批的记录创建时间只差几毫秒，按分钟归组即可。
+let _openBatches = new Set();
+// 「默认展开最新一批」只在第一次画的时候做。每次重绘都做的话，用户点收起 →
+// 集合空了 → 重绘又把它加回去，最新那一批就永远收不起来
+let _batchDefaultDone = false;
+
+function _groupExportBatches(list) {
+  const batches = new Map();
+  list.forEach(e => {
+    const key = (e.created_at || '').slice(0, 16) || `id-${e.id}`;
+    if (!batches.has(key)) batches.set(key, []);
+    batches.get(key).push(e);
+  });
+  return [...batches.entries()].map(([key, items]) => ({ key, items }));
+}
+
+function renderModalExports(list, el) {
+  if (!list || !list.length) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px;text-align:center;padding:20px;">暂无导出记录</div>';
+    return;
+  }
+  const batches = _groupExportBatches(list);
+  if (!_batchDefaultDone && batches.length) {          // 最新一批默认展开，只做一次
+    _openBatches.add(batches[0].key);
+    _batchDefaultDone = true;
+  }
+  el.innerHTML = batches.map(b => _batchHtml(b)).join('');
+}
+
+function _batchHtml({ key, items }) {
+  const nReady  = items.filter(e => e.status === 'ready').length;
+  const nFailed = items.filter(e => e.status === 'failed').length;
+  const running = items.filter(e => e.status === 'pending' || e.status === 'processing').length;
+  // 一批全成或全败时只挂一个徽章。混合才分开报——整批都失败还挂个「就绪 0」，
+  // 等于让人先读一个 0 再去读旁边的真数字
+  const summary = running ? `<span class="badge badge-blue pulse">合成中 ${running}</span>`
+    : !nFailed ? `<span class="badge badge-green">全部就绪</span>`
+    : !nReady  ? `<span class="badge badge-red">全部失败</span>`
+    : `<span class="badge badge-green">就绪 ${nReady}</span><span class="badge badge-red">失败 ${nFailed}</span>`;
+  const nTplErr = items.filter(e => e.template_error).length;
+  const first = items.find(e => e.file_path);
+  const when = key.includes('-')
+    ? new Date(key.replace(' ', 'T') + 'Z').toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' })
+    : '';
+  const folder = first ? first.file_path.split('/').slice(-2, -1)[0] : '';
+  const open = _openBatches.has(key);
+  return `
+    <div class="exp-batch">
+      <div class="exp-batch-head" onclick="toggleExportBatch('${key}')">
+        <span class="exp-batch-arrow ${open ? 'open' : ''}">›</span>
+        <span class="exp-batch-when">${when}</span>
+        <span class="exp-batch-mode">${esc(EXPORT_MODE_LABEL[items[0].mode] || items[0].mode)} · ${items.length} 条</span>
+        ${summary}
+        ${nTplErr ? `<span class="badge badge-red" title="成片本身没问题，只是模板没套上">模板未套用 ${nTplErr}</span>` : ''}
+        ${folder ? `<span class="exp-batch-folder" title="成片在这个文件夹里">${esc(folder)}</span>` : ''}
+        ${first ? `<button class="download-btn" data-path="${esc(first.file_path)}"
+                     onclick="openExportDir(this.dataset.path);event.stopPropagation()">打开文件夹</button>` : ''}
+      </div>
+      ${open ? `<div class="exp-batch-body">${items.map(e => _batchItemHtml(e)).join('')}</div>` : ''}
+    </div>`;
+}
+
+function _batchItemHtml(e) {
+  const fname = e.file_path ? e.file_path.split('/').pop() : '';
+  const seq = fname ? (/_(\d+)\.[^.]+$/.exec(fname)?.[1] ?? '') : '';
+  return `
+    <div class="exp-item-line" title="${esc(fname || '')}">
+      <!-- 没出文件就没有序号，占位符撑住这一列；状态由右边的徽章报，写两遍就成了「失败 失败」 -->
+      <span class="exp-item-seq">${seq ? '#' + seq : '—'}</span>
+      <span class="badge ${EXPORT_STATUS_BADGE[e.status] || 'badge-gray'}">${EXPORT_STATUS_LABEL[e.status] || e.status}</span>
+      ${e.template_error ? `<span class="exp-item-err" title="${esc(e.template_error)}">模板未套用</span>` : ''}
+      <span class="exp-item-name">${esc(fname)}</span>
+      <span class="exp-item-dur">${e.duration_sec > 0 ? fmtDur(e.duration_sec) : ''}</span>
+    </div>`;
+}
+
+function toggleExportBatch(key) {
+  if (_openBatches.has(key)) _openBatches.delete(key); else _openBatches.add(key);
+  refreshHistoryModal();
+}
+
+// ── Navigation ───────────────────────────────────────────────────────────────
+function goHome() { _inAppNav = true; window.location.href = '../../home.html'; }
+function goBack() { _inAppNav = true; window.location.href = `index.html?projectId=${PROJ_ID}`; }
+
+// ── 悬停说明 ─────────────────────────────────────────────────────────────────
+// 浮层挂在 body 上，不受弹窗的 overflow 裁剪；文案写在 .info-ic 的 data-tip 里。
+const _tipPop = document.createElement('div');
+_tipPop.id = 'tip-pop';
+document.body.appendChild(_tipPop);
+document.addEventListener('mouseover', (e) => {
+  const ic = e.target.closest('.info-ic');
+  if (!ic || !ic.dataset.tip) { _tipPop.style.display = 'none'; return; }
+  _tipPop.textContent = ic.dataset.tip;
+  _tipPop.style.display = 'block';
+  const r = ic.getBoundingClientRect();
+  _tipPop.style.left = `${r.right + 10}px`;
+  const h = _tipPop.offsetHeight;
+  const top = Math.max(8, Math.min(r.top + r.height / 2 - h / 2, window.innerHeight - h - 8));
+  _tipPop.style.top = `${top}px`;
+});
+document.addEventListener('scroll', () => { _tipPop.style.display = 'none'; }, true);
+
+// ── Utils ────────────────────────────────────────────────────────────────────
+const _p2 = n => String(n).padStart(2, '0');
+
+// 全站时间一律 时:分:秒，不带小数。原因是标记的时间来自 AI，而 Gemini 默认按 1 帧/秒
+// 采样视频、时间戳也按秒给（要亚秒得显式提高采样率），小数位是模型编出来的假精度。
+// 显示、编辑吸附、落库三处统一到秒，避免"看到的"和"存下的"对不上。
+function fmtClock(sec) {
+  if (sec === null || sec === undefined || isNaN(sec)) return '--:--:--';
+  const t = Math.floor(Math.max(0, sec));
+  return `${_p2(Math.floor(t / 3600))}:${_p2(Math.floor(t % 3600 / 60))}:${_p2(t % 60)}`;
+}
+
+// 时间点专用：整秒就不显示小数，非整秒显示一位。AI 给的值一律是整秒，只有人工精调
+// 才会出现小数——所以界面上看见小数点，就代表这一段被人手动改过。
+// 游标标签专用：秒后面固定两位小数，宽度永远一样。
+// 原来跟别处共用 fmtTime——整秒不显示小数、非整秒显示一位，标签在 8 字和 10 字之间来回跳，
+// 指针一动整块橙标签就弹一下。两位小数同时把精度提到帧级（30fps 一帧 33 毫秒），
+// 精调的时候看得见自己停在哪一帧。别处的时间显示不动。
+function fmtPlayhead(sec) {
+  if (sec === null || sec === undefined || isNaN(sec)) return '--:--:--.--';
+  const t = Math.max(0, sec);
+  const whole = Math.floor(t);
+  const cs = Math.round((t - whole) * 100);
+  // 进位：99.6 毫秒会四舍五入成 100，要把这一秒抬上去，否则出现 20.100
+  return cs >= 100 ? `${fmtClock(whole + 1)}.00` : `${fmtClock(whole)}.${_p2(cs)}`;
+}
+
+function fmtTime(sec) {
+  if (sec === null || sec === undefined || isNaN(sec)) return '--:--:--';
+  const t = Math.round(Math.max(0, sec) * 10) / 10;
+  const whole = Math.floor(t);
+  const tenth = Math.round((t - whole) * 10);
+  return tenth ? `${fmtClock(whole)}.${tenth}` : fmtClock(whole);
+}
+
+// 刻度尺专用：分:秒，超过一小时才带小时位。刻度是标尺，读的是相对位置，不需要补零对齐
+function fmtRuler(sec) {
+  const t = Math.max(0, sec);
+  const mm = Math.floor(t % 3600 / 60), ss = Math.floor(t % 60);
+  const h = Math.floor(t / 3600);
+  return h > 0 ? `${h}:${_p2(mm)}:${_p2(ss)}` : `${mm}:${_p2(ss)}`;
+}
+
+function fmtDur(sec) {
+  if (!sec || sec <= 0) return '--:--:--';
+  return fmtClock(sec);
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// 深色胶囊＋图标圆点：浅色界面上一眼能认出是临时浮层，不会被当成顶栏的一部分
+const TOAST_ICON = {
+  success: '<path d="M4 12l6 6L20 6"/>',
+  error:   '<path d="M6 6l12 12M18 6L6 18"/>',
+  info:    '<path d="M12 8v5M12 16.5v.5"/>',
+};
+
+function toast(msg, type = 'info', ms = 3500) {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  const dot = document.createElement('span');
+  dot.className = 'toast-dot';
+  dot.innerHTML = `<svg viewBox="0 0 24 24">${TOAST_ICON[type] || TOAST_ICON.info}</svg>`;
+  const text = document.createElement('span');
+  text.textContent = msg;          // 文本走 textContent，消息里含 < > 也不会被当标签解析
+  el.append(dot, text);
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), ms + 400);
+}
+
+// ── Keyboard shortcuts ───────────────────────────────────────────────────────
+const NUDGE_SEC = 1;         // 方向键一步＝1 秒，AI 标记本来就是秒级
+const NUDGE_BIG_SEC = 5;     // 按住 Shift 一步 5 秒
+const NUDGE_FINE_SEC = 0.1;  // 按住 Alt 一步 0.1 秒——拖拽做不到这个精度（一秒才 4-7 像素）
+
+document.addEventListener('keydown', e => {
+  // 焦点在任何表单控件上都不接管快捷键——否则在"成片模板"下拉上按空格会触发播放、
+  // Backspace 会删轨道剪辑
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+
+  if (e.key === 'Escape') { cancelOpenSeg(); return; }
+
+  // E/R：高光/钩子段开合（与工具条按钮同义）
+  const segType = /^e$/i.test(e.key) ? 'hl' : /^r$/i.test(e.key) ? 'hk' : null;
+  if (segType) { e.preventDefault(); toggleSeg(segType); return; }
+
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const dir = e.key === 'ArrowLeft' ? -1 : 1;
+    const sel = visTl ? visTl.getSelection() : [];
+    if (sel.length) {
+      // 选中段：Shift 收放终点，否则整段平移；按住 Alt 都走 0.1 秒
+      nudgeSelectedSeg(sel[0], (e.altKey ? NUDGE_FINE_SEC : NUDGE_SEC) * dir, e.shiftKey);
+    } else {
+      seek((e.altKey ? NUDGE_FINE_SEC : e.shiftKey ? NUDGE_BIG_SEC : NUDGE_SEC) * dir);
+    }
+    return;
+  }
+
+  if (e.key === 'Delete' || e.key === 'Backspace') {
+    // 删除时间轴上选中的段
+    const sel = visTl ? visTl.getSelection() : [];
+    if (sel.length) {
+      e.preventDefault();
+      _removeByItemId(sel[0]);
+    }
+  }
+});
+
+// ── 液态玻璃 ────────────────────────────────────────────────────────────────
+// 顶栏是为了跟列表页长得一样，底下没有滚动内容穿过，看不到折射。
+// 两个列头和四个弹窗才是真有内容从底下过的地方。
+function initGlass() {
+  if (window.SkyUI) SkyUI.layoutSegs();
+  if (!window.LiquidLens) return;
+  LiquidLens.setJellyGain(2);
+  // 定位线浓度只给一半：这一页它的职责是让玻璃有边可折，不是让人去读那些线，
+  // 满浓度会跟导轨刻度互相干扰
+  LiquidLens.mountBackdrop({ ink: .06, tint: false });
+  LiquidLens.glass('.topbar', { band: 5, sat: 140 });
+  // 工作面只给一点点：弧面窄、折射弱、色散轻，效果落在边缘那一圈上，不进内容区
+  LiquidLens.glass('.crop-info-col .info-card, .marks-info-card, .workflow-sidebar', { band: 5, lens: false });
+  document.querySelectorAll('.btn').forEach(b =>
+    LiquidLens.bindJelly(b, { amp: 1.2, freq: 3.6, dur: 520 }));
+  // 玻璃在外层那一圈上，不在卡片本体。弹窗显示的那一刻才量得到尺寸，位移图要在这时重算。
+  // 各个弹窗的外壳类名不统一（有的是 .ai-modal-backdrop，两个进度弹窗直接挂在 id 上），
+  // 所以按「玻璃圈的父节点」来盯，以后新加弹窗只要套上玻璃圈就行，不用回这里再登记一次。
+  document.querySelectorAll('.ai-modal-glass').forEach(g => {
+    LiquidLens.glass(g, { band: 6, sat: 150, bright: 106, rim: false });
+    const shell = g.parentElement;
+    if (!shell) return;
+    new MutationObserver(() => {
+      if (shell.classList.contains('visible')) LiquidLens.refresh();
+    }).observe(shell, { attributeFilter: ['class'] });
+  });
+
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(initGlass);
+else window.addEventListener('load', initGlass);
+
+init();
+</script>
+<script src="task-float.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+python-jose[cryptography]==3.3.0
+# cryptography 从 49.0.0 起不再发 Intel 版 macOS 轮子，pip 会退回下源码现编，
+# 编出来的 _rust.abi3.so 链的是构建机的新 OpenSSL，而 PyInstaller 收进包里的是
+# 另一个旧 libssl.3.dylib，装好的应用一启动就 Symbol not found: _SSL_get0_group_name。
+# 48.0.1 是最后一个带 universal2 轮子的版本（Intel 与 Apple 芯片通吃）。
+cryptography==48.0.1
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.12
+aiofiles==24.1.0
+pydantic==2.10.3
+pydantic-settings==2.6.1
+python-dotenv==1.0.1
+ffmpeg-python==0.2.0
+httpx==0.28.0
+pillow==11.0.0
+greenlet>=3.0.0
+oss2==2.19.1

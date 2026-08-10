@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkyArt 天工 — 创作平台</title>
+<link rel="stylesheet" href="shared/liquid-lens.css">
+<style>
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#eef0f1; --bg4:#e5e7e9;
+  --border:#e0e2e5; --accent:#f97316; --accent2:#ea580c;
+  --btn:#1f2328; --btn-h:#000000;
+  --text:#191b1f; --text2:#565b63; --text3:#9298a1;
+  --green:#059669; --red:#dc2626; --blue:#2563eb; --yellow:#d97706;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+.ic { flex-shrink: 0; vertical-align: -2px; }
+body { background: var(--bg); color: var(--text); font-family: system-ui, "PingFang SC", sans-serif; min-height: 100vh; display: flex; flex-direction: column; }
+
+/* 工作台定位线 + 6D 镜边 + 阴影梯队 → shared/liquid-lens.css（全站共用） */
+
+/* ── Topbar ──────────────────────────────────────────────── */
+.topbar {
+  /* 顶栏的弧面按自身高度收窄：52px 高的条上铺 6px 已经够，宽了整条都是边 */
+  --band: 5px;
+  background: rgba(255,255,255,calc(var(--glass-a) * .85));
+  backdrop-filter: saturate(140%);   /* 兜底：运行时不认 url() 时退化成普通玻璃 */
+  border-bottom: 1px solid rgba(24,28,36,calc(.07 * var(--sh)));
+  height: 52px; /* 全站统一 52px，红绿灯居中 */ display: flex; align-items: center; padding: 0 28px 0 78px; gap: 16px;
+  position: sticky; top: 0; z-index: 100; flex-shrink: 0;
+  -webkit-app-region: drag;
+}
+.topbar .logo, .topbar-right { position: relative; z-index: 3; }
+/* 用 flex 居中，不走 inline 基线。18px 的大标题和 12px 的小标题按基线排时，中线会差 2px，
+   而基线位置取决于字体度量——系统字体没加载完用的是回退字体，加载完基线又变一次，
+   所以这个偏移每次看到的都不一样。flex 的 align-items:center 只按盒子中线算，与字体无关。 */
+.logo { display: flex; align-items: center; gap: 8px;
+  font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: 0.3px; cursor: default; }
+.logo span { color: var(--text3); font-size: 12px; font-weight: 400; letter-spacing: 0; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; -webkit-app-region: no-drag; }
+.avatar {
+  width: 32px; height: 32px; border-radius: 50%; background: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 600; color: #fff; cursor: pointer;
+  position: relative;
+}
+.avatar-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  min-width: 160px; overflow: hidden; z-index: 200; display: none;
+}
+.avatar-menu.show { display: block; }
+.avatar-menu-item {
+  padding: 10px 16px; font-size: 13px; cursor: pointer;
+  color: var(--text); display: flex; align-items: center; gap: 8px;
+}
+.avatar-menu-item:hover { background: var(--bg3); }
+.avatar-menu-item.danger { color: var(--red); }
+.avatar-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
+.user-name { font-size: 13px; color: var(--text2); }
+
+/* ── 玻璃调参面板（⌥G 开关，调试用，不常驻） ───────────────── */
+.gl-panel { position:fixed; right:20px; bottom:20px; width:290px; z-index:600; display:none;
+  background:var(--bg2); border-radius:12px; padding:12px 14px 10px;
+  box-shadow:0 0 0 1px rgba(24,28,36,.13), 0 4px 10px rgba(24,28,36,.10), 0 18px 40px rgba(24,28,36,.22);
+  font-size:12px; color:var(--text); }
+.gl-panel.show { display:block; }
+.gl-panel h4 { font-size:12px; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
+.gl-panel h4 span { font-weight:400; color:var(--text3); font-size:10px;
+  font-family:ui-monospace,Menlo,monospace; }
+.gl-row { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.gl-row label { width:62px; flex-shrink:0; color:var(--text2); }
+.gl-row input[type=range] { flex:1; min-width:0; accent-color:var(--accent); height:16px; }
+.gl-row b { width:44px; text-align:right; font-weight:600;
+  font-family:ui-monospace,Menlo,monospace; font-size:11px; font-variant-numeric:tabular-nums; }
+.gl-acts { display:flex; gap:6px; margin-top:9px; }
+.gl-acts button { flex:1; border:none; border-radius:6px; padding:5px 0; font-size:11px; cursor:pointer;
+  background:var(--bg3); color:var(--text2); }
+.gl-acts button:hover { background:var(--bg4); color:var(--text); }
+.gl-acts button.k { background:var(--btn); color:#fff; }
+
+/* ── 系统自检 ────────────────────────────────────────────── */
+.sc-chip { display:flex; align-items:center; gap:6px; height:26px; padding:0 10px;
+  border:none; border-radius:999px; cursor:pointer; font-size:12px; color:var(--text2);
+  background:rgba(255,255,255,.55);
+  box-shadow:0 0 0 1px rgba(24,28,36,calc(.09*var(--sh))), 0 1px 2px rgba(24,28,36,calc(.08*var(--sh)));
+  transition:background var(--t-color,.15s); }
+.sc-chip:hover { background:rgba(255,255,255,.85); color:var(--text); }
+/* 灯只有三色，不做渐变——它是状态不是装饰，一眼要能分出来 */
+.sc-dot { width:8px; height:8px; border-radius:50%; background:var(--text3); flex-shrink:0;
+  box-shadow:0 0 0 2px rgba(255,255,255,.7); }
+.sc-dot.ok   { background:#16a34a; }
+.sc-dot.warn { background:#f59e0b; }
+.sc-dot.fail { background:#dc2626; }
+/* 红灯才闪：黄灯是"某个功能不可用"，一直闪会变成噪音；红灯是"现在就用不了" */
+.sc-dot.fail { animation:sc-pulse 1.6s ease-in-out infinite; }
+@keyframes sc-pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+@media (prefers-reduced-motion: reduce){ .sc-dot.fail{ animation:none } }
+
+.sc-panel { position:fixed; top:58px; right:20px; width:380px; max-height:70vh; z-index:400;
+  display:none; flex-direction:column; overflow:hidden;
+  background:var(--bg2); border-radius:12px;
+  box-shadow:0 0 0 1px rgba(24,28,36,.13), 0 1px 2px rgba(24,28,36,.10),
+             0 4px 10px rgba(24,28,36,.10), 0 18px 40px rgba(24,28,36,.22); }
+.sc-panel.show { display:flex; }
+.sc-head { display:flex; align-items:center; gap:8px; padding:11px 12px;
+  border-bottom:1px solid var(--border); flex-shrink:0; }
+.sc-head b { font-size:13px; }
+.sc-time { font-size:10px; color:var(--text3); font-family:ui-monospace,Menlo,monospace; }
+.sc-btn { margin-left:auto; border:none; background:var(--bg3); color:var(--text2);
+  border-radius:6px; padding:4px 9px; font-size:11px; cursor:pointer; }
+.sc-btn:hover { background:var(--bg4); color:var(--text); }
+.sc-btn:disabled { opacity:.5; cursor:progress; }
+.sc-x { border:none; background:none; color:var(--text3); cursor:pointer; font-size:13px; padding:2px 4px; }
+.sc-body { overflow-y:auto; padding:6px 0; }
+.sc-row { display:flex; align-items:flex-start; gap:9px; padding:8px 14px; font-size:12px; }
+.sc-row + .sc-row { border-top:1px solid var(--bg3); }
+.sc-row .d { width:8px; height:8px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+.sc-row .d.ok{background:#16a34a} .sc-row .d.warn{background:#f59e0b} .sc-row .d.fail{background:#dc2626}
+.sc-row .t { flex:1; min-width:0; }
+.sc-row .n { font-weight:600; color:var(--text); }
+.sc-row .v { color:var(--text2); margin-top:2px; word-break:break-all; }
+.sc-row .h { color:var(--text3); margin-top:3px; }
+.sc-row .go { border:none; background:none; color:var(--accent2); font-size:11px;
+  cursor:pointer; padding:0; margin-top:3px; }
+
+/* ── Main content ────────────────────────────────────────── */
+.home-content {
+  /* justify-content:center 让内容在可用高度里居中，不再顶在上面、下面空一大片。
+     内容比窗口高时 body 会跟着长、页面照常滚，不会把顶部截掉。 */
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 40px 28px 56px;
+  position: relative; z-index: 1;   /* 压在定位线之上 */
+}
+
+.home-hero { text-align: center; margin-bottom: 48px; }
+.home-hero h1 { font-size: 32px; font-weight: 700; color: var(--text); }
+.home-hero h1 em { font-style: normal; color: var(--accent); }
+.home-hero p { margin-top: 12px; font-size: 15px; color: var(--text2); }
+
+/* ── Tool cards ──────────────────────────────────────────── */
+.tools-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  width: 100%; max-width: 860px;
+}
+
+/* 阴影五层：外缘暗线把图层切开 → 贴边接触阴影决定「浮起来」→ 中程和环境负责重量。
+   只有一层大散阴影时读不出图层关系，那是重量不是高度。 */
+.tool-card {
+  background: rgba(255,255,255,var(--glass-a));
+  backdrop-filter: saturate(150%);   /* 兜底，同顶栏 */
+  border-radius: 14px; cursor: pointer;
+  display: flex; flex-direction: column;
+}
+.tool-card.locked { cursor: not-allowed; opacity: 0.6; }
+
+.tool-card-banner {
+  height: 160px; display: flex; align-items: center; justify-content: center;
+  position: relative; z-index: 1;
+}
+.tool-card-banner .banner-icon {
+  line-height: 0; color: var(--text3); position: relative; z-index: 1;
+}
+
+/* 工具卡预设图：CSS 插画（B 方案）。拆解=三条竖屏分镜，素材制作=一叠广告卡。
+   原来的暖杏底已删——卡片是玻璃，实色底会把背后的定位线挡死 */
+.frames{display:flex;gap:10px;align-items:center;transform:rotate(-4deg);}
+.frame{width:60px;height:104px;border-radius:9px;position:relative;box-shadow:0 8px 18px -7px rgba(120,60,20,.35);}
+.frame.f1{background:linear-gradient(160deg,#e8956b,#c05f33);transform:translateY(10px) rotate(-2deg);}
+.frame.f2{background:linear-gradient(160deg,#43301d,#6b4a2e);width:68px;height:118px;z-index:2;}
+.frame.f3{background:linear-gradient(160deg,#f2b98c,#d97742);transform:translateY(13px) rotate(3deg);}
+.frame .play{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;}
+.frame .play i{width:28px;height:28px;border-radius:50%;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(0,0,0,.25);}
+.frame .play i::after{content:"";margin-left:2px;border-left:9px solid #c05f33;border-top:6px solid transparent;border-bottom:6px solid transparent;}
+.frame .cap{position:absolute;left:8px;right:8px;bottom:8px;height:4px;border-radius:2px;background:rgba(255,255,255,.55);}
+.frame .cap.s{bottom:17px;width:55%;}
+.stack{position:relative;width:165px;height:112px;transform:rotate(-3deg);}
+.adc{position:absolute;border-radius:9px;box-shadow:0 8px 18px -7px rgba(120,60,20,.35);}
+.adc.a1{width:100px;height:68px;background:linear-gradient(150deg,#f2b98c,#e8956b);left:0;top:31px;transform:rotate(-7deg);}
+.adc.a2{width:108px;height:73px;background:linear-gradient(150deg,#e8956b,#c05f33);left:27px;top:16px;transform:rotate(-1deg);}
+.adc.a3{width:115px;height:78px;background:linear-gradient(150deg,#43301d,#6b4a2e);left:50px;top:0;transform:rotate(5deg);}
+.adc.a3::after{content:"HOT";position:absolute;top:7px;right:9px;font-size:9px;font-weight:800;letter-spacing:.08em;color:#43301d;background:#fdf0e3;padding:2px 7px;border-radius:9px;}
+.adc.a3::before{content:"";position:absolute;left:9px;bottom:9px;width:56%;height:5px;border-radius:3px;background:rgba(255,255,255,.5);}
+.stack .spark{position:absolute;right:4px;bottom:8px;color:#d97742;font-size:17px;}
+
+.tool-card-body { padding: 24px; flex: 1; display: flex; flex-direction: column; gap: 8px; position: relative; z-index: 1; }
+.tool-card-title { font-size: 20px; font-weight: 700; color: var(--text); display: flex; align-items: center; gap: 10px; }
+.tool-card-tag {
+  font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+.drama .tool-card-tag { background: rgba(249,115,22,0.1); color: var(--accent); }
+.admake .tool-card-tag { background: rgba(249,115,22,0.1); color: var(--accent2); }
+
+.tool-card-desc { font-size: 13px; color: var(--text2); line-height: 1.7; flex: 1; }
+
+.tool-card-footer { padding: 0 24px 24px; display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 1; }
+.tool-card-features { display: flex; gap: 6px; flex-wrap: wrap; }
+.feature-chip {
+  font-size: 11px; color: #43301d; background: rgba(255,255,255,.55);
+  border: 1px solid rgba(24,28,36,calc(.07 * var(--sh))); padding: 3px 8px; border-radius: 999px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.9);
+}
+.tool-enter-btn {
+  padding: 8px 20px; border-radius: 6px; border: none; cursor: pointer;
+  font-size: 13px; font-weight: 600;
+  transition: background var(--t-color, .15s);
+  display: flex; align-items: center; gap: 6px; white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(24,28,36,calc(.22 * var(--sh))),
+              0 4px 12px rgba(24,28,36,calc(.18 * var(--sh))),
+              inset 0 1px 0 rgba(255,255,255,.12);
+}
+.drama .tool-enter-btn { background: var(--btn); color: #fff; }
+.drama .tool-enter-btn:hover { background: var(--btn-h); }
+.admake .tool-enter-btn { background: var(--btn); color: #fff; }
+.admake .tool-enter-btn:hover { background: var(--btn-h); }
+.tool-card.locked .tool-enter-btn { background: var(--bg4); color: var(--text3); cursor: not-allowed; }
+
+.lock-badge {
+  position: absolute; top: 12px; right: 12px;
+  background: rgba(0,0,0,0.4); color: #fff; font-size: 11px; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; backdrop-filter: blur(4px);
+}
+
+/* ── Toast ───────────────────────────────────────────────── */
+/* 通知在顶栏正中 */
+#toast-container { position: fixed; top: 8px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 13px; font-weight: 500; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,0.2); opacity: 0; transform: translateX(20px); transition: all 0.25s; pointer-events: auto; max-width: 320px; }
+.toast.show { opacity: 1; transform: translateX(0); }
+.toast.success { background: var(--green); }
+.toast.error   { background: var(--red); }
+.toast.info    { background: var(--blue); }
+
+/* ── Login overlay ───────────────────────────────────────── */
+#login-overlay {
+  position: fixed; inset: 0; z-index: 8000;
+  background: var(--bg);
+  display: flex; align-items: center; justify-content: center;
+}
+.login-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; width: 400px; padding: 40px; box-shadow: 0 8px 24px rgba(0,0,0,0.12); }
+.login-logo { text-align: center; margin-bottom: 32px; }
+.login-logo h1 { font-size: 28px; font-weight: 700; color: var(--text); }
+.login-logo p { color: var(--text2); font-size: 14px; margin-top: 4px; }
+.login-tabs { display: flex; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+.login-tab { flex: 1; text-align: center; padding: 10px; font-size: 14px; cursor: pointer; color: var(--text2); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; }
+.login-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.login-form { display: flex; flex-direction: column; gap: 14px; }
+.login-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 9px 12px; font-size: 14px; width: 100%; outline: none; transition: border-color 0.15s; }
+.login-input:focus { border-color: var(--accent); }
+.login-input::placeholder { color: var(--text3); }
+.login-btn { background: var(--btn); color: #fff; border: none; border-radius: 6px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.15s; }
+.login-btn:hover { background: var(--btn-h); }
+.login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.login-hint { font-size: 11px; color: var(--text3); text-align: center; padding: 8px 12px; background: var(--bg3); border-radius: 6px; }
+
+/* ── Settings modal ──────────────────────────────────────── */
+#settings-overlay {
+  position: fixed; inset: 0; z-index: 8000; background: rgba(0,0,0,0.6); backdrop-filter: blur(3px);
+  display: none; align-items: center; justify-content: center;
+}
+#settings-overlay.show { display: flex; }
+.settings-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; width: 520px; max-height: 90vh; overflow-y: auto; padding: 32px 36px; position: relative; }
+.settings-title { font-size: 18px; font-weight: 700; color: var(--text); text-align: center; margin-bottom: 24px; }
+.settings-close { position: absolute; top: 14px; right: 16px; background: none; border: none; cursor: pointer; font-size: 20px; color: var(--text3); padding: 4px 8px; border-radius: 4px; line-height: 1; }
+.settings-close:hover { background: var(--bg3); }
+.settings-section { font-size: 12px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+.settings-section:first-of-type { margin-top: 0; }
+.cfg-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.cfg-label { font-size: 13px; font-weight: 500; color: var(--text2); }
+.cfg-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-size: 13px; width: 100%; outline: none; transition: border-color 0.15s; }
+.cfg-input:focus { border-color: var(--accent); }
+.cfg-input::placeholder { color: var(--text3); }
+.cfg-save-btn { background: var(--btn); color: #fff; border: none; border-radius: 6px; padding: 10px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px; transition: background 0.15s; }
+.cfg-save-btn:hover { background: var(--btn-h); }
+.cfg-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.cfg-status { text-align: center; font-size: 12px; color: var(--text3); margin-top: 8px; min-height: 16px; }
+</style>
+</head>
+<body>
+
+<!-- ── Login overlay ─────────────────────────────────────── -->
+<div id="login-overlay" style="display:none">
+  <div class="login-card">
+    <div class="login-logo">
+      <h1>SkyArt 天工</h1>
+      <p>AI 短剧创作平台</p>
+    </div>
+    <div class="login-tabs">
+      <div class="login-tab active" id="tab-login" onclick="switchTab('login')">登录</div>
+      <div class="login-tab" id="tab-register" onclick="switchTab('register')">注册</div>
+    </div>
+    <!-- 登录表单 -->
+    <div id="login-form" class="login-form">
+      <input class="login-input" id="login-username" type="text" placeholder="用户名" value="admin">
+      <input class="login-input" id="login-password" type="password" placeholder="密码" value="123456">
+      <div class="login-hint">演示账号：admin / 123456</div>
+      <button class="login-btn" id="login-btn" onclick="doLogin()">登录</button>
+    </div>
+    <!-- 注册表单 -->
+    <div id="register-form" class="login-form" style="display:none">
+      <input class="login-input" id="reg-username" type="text" placeholder="用户名">
+      <input class="login-input" id="reg-email" type="email" placeholder="邮箱">
+      <input class="login-input" id="reg-password" type="password" placeholder="密码（至少6位）">
+      <input class="login-input" id="reg-confirm" type="password" placeholder="确认密码">
+      <button class="login-btn" id="register-btn" onclick="doRegister()">注册</button>
+    </div>
+    <div id="login-error" style="color:#dc2626;font-size:12px;text-align:center;margin-top:8px;min-height:16px"></div>
+  </div>
+</div>
+
+<!-- ── Settings modal ────────────────────────────────────── -->
+<div id="settings-overlay">
+  <div class="settings-card">
+    <button class="settings-close" onclick="closeSettings()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+    <div class="settings-title">API 配置</div>
+
+    <div class="settings-section">HappyHorse（短剧创作 AI）</div>
+    <div class="cfg-row">
+      <div class="cfg-label">API Key <span style="color:var(--red)">*</span></div>
+      <input class="cfg-input" id="cfg-hh-key" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">API 地址</div>
+      <input class="cfg-input" id="cfg-hh-url" placeholder="https://dashscope-us.aliyuncs.com/api/v1">
+    </div>
+
+    <div class="settings-section">Gemini 代理（素材 AI 分析）</div>
+    <div class="cfg-row">
+      <div class="cfg-label">Proxy URL</div>
+      <input class="cfg-input" id="cfg-gemini-url" placeholder="https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Proxy Key</div>
+      <input class="cfg-input" id="cfg-gemini-key" type="password" placeholder="由 Dscript 提供" style="font-family:monospace">
+    </div>
+
+    <div class="settings-section">Qwen（素材 AI 分析备选）</div>
+    <div class="cfg-row">
+      <div class="cfg-label">API Key</div>
+      <input class="cfg-input" id="cfg-qwen-key" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">API 地址</div>
+      <input class="cfg-input" id="cfg-qwen-url" placeholder="https://dashscope.aliyuncs.com/api/v1">
+    </div>
+
+    <div class="settings-section">阿里云 OSS 国内区（短剧创作存储）</div>
+    <div class="cfg-row">
+      <div class="cfg-label">Access Key ID</div>
+      <input class="cfg-input" id="cfg-oss-cn-id" type="password" placeholder="LTAI5t…" style="font-family:monospace">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Access Key Secret</div>
+      <input class="cfg-input" id="cfg-oss-cn-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Bucket 名称</div>
+      <input class="cfg-input" id="cfg-oss-cn-bucket" placeholder="your-bucket-name">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Endpoint</div>
+      <input class="cfg-input" id="cfg-oss-cn-endpoint" placeholder="https://oss-cn-hangzhou.aliyuncs.com">
+    </div>
+
+    <div class="settings-section">阿里云 OSS 美区（Gemini 代理视频上传）</div>
+    <div class="cfg-row">
+      <div class="cfg-label">Access Key ID</div>
+      <input class="cfg-input" id="cfg-oss-us-id" type="password" placeholder="LTAI5t…" style="font-family:monospace">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Access Key Secret</div>
+      <input class="cfg-input" id="cfg-oss-us-secret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Bucket 名称</div>
+      <input class="cfg-input" id="cfg-oss-us-bucket" placeholder="saas-dscriptr-dscriptr-develop">
+    </div>
+    <div class="cfg-row">
+      <div class="cfg-label">Endpoint</div>
+      <input class="cfg-input" id="cfg-oss-us-endpoint" placeholder="https://oss-us-west-1.aliyuncs.com">
+    </div>
+
+    <button class="cfg-save-btn" id="cfg-save-btn" onclick="saveSettings()">保存配置</button>
+    <div class="cfg-status" id="cfg-status"></div>
+  </div>
+</div>
+
+<!-- ── Topbar ───────────────────────────────────────────── -->
+<div class="topbar ll-raise-bar">
+  <div class="logo">SkyArt <span>天工创作平台</span></div>
+  <div class="topbar-right">
+    <button class="sc-chip" id="sc-chip" onclick="toggleSelfCheck()" title="系统自检">
+      <span class="sc-dot" id="sc-dot"></span><span id="sc-label">检测中</span>
+    </button>
+    <span class="user-name" id="user-display"></span>
+    <div class="avatar" id="user-avatar" onclick="toggleAvatarMenu()"><span id="user-avatar-letter">?</span>
+      <div class="avatar-menu" id="avatar-menu">
+        <div class="avatar-menu-item" onclick="openSettings()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          设置
+        </div>
+        <div class="avatar-menu-divider"></div>
+        <div class="avatar-menu-item danger" onclick="logout()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          退出登录
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Home content ─────────────────────────────────────── -->
+<div class="home-content">
+  <div class="home-hero">
+    <h1>欢迎使用 <em>SkyArt</em> 天工</h1>
+  </div>
+
+  <div class="tools-grid">
+    <!-- 短剧创作 -->
+    <div class="tool-card drama ll-raise" id="card-drama" onclick="enterDrama()">
+      <div class="tool-card-banner">
+        <div class="banner-icon"><div class="frames">
+          <div class="frame f1"><div class="cap"></div></div>
+          <div class="frame f2"><div class="play"><i></i></div><div class="cap s"></div><div class="cap"></div></div>
+          <div class="frame f3"><div class="cap"></div></div>
+        </div></div>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-title">
+          短剧创作
+        </div>
+        <div class="tool-card-desc">
+          将爆款素材逐镜拆解、结构化归档，沉淀为可检索的分镜资产库，支持导出复用。
+        </div>
+      </div>
+      <div class="tool-card-footer">
+        <div class="tool-card-features">
+          <span class="feature-chip">逐镜拆解</span>
+          <span class="feature-chip">结构化归档</span>
+          <span class="feature-chip">检索导出</span>
+        </div>
+        <button class="tool-enter-btn">进入<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="m9 18 6-6-6-6"/></svg></button>
+      </div>
+    </div>
+
+    <!-- 素材制作 -->
+    <div class="tool-card admake ll-raise" id="card-admake" onclick="enterAdMake()">
+      <div class="tool-card-banner">
+        <div class="banner-icon"><div class="stack">
+          <div class="adc a1"></div><div class="adc a2"></div><div class="adc a3"></div>
+          <span class="spark">✦</span>
+        </div></div>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-title">
+          素材制作
+        </div>
+        <div class="tool-card-desc">
+          AI 标注高光与钩子片段，按多种剪辑模式批量合成，产出可直接投放的广告素材。
+        </div>
+      </div>
+      <div class="tool-card-footer">
+        <div class="tool-card-features">
+          <span class="feature-chip">高光标注</span>
+          <span class="feature-chip">批量剪辑</span>
+          <span class="feature-chip">广告投放</span>
+        </div>
+        <button class="tool-enter-btn">进入<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="m9 18 6-6-6-6"/></svg></button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script src="shared/liquid-lens.js"></script>
+<script>
+if (window.LiquidLens) {                                   // 组件没加载上也不能让页面塌掉
+  LiquidLens.setJellyGain(2);
+  LiquidLens.mountBackdrop({ drift: true });               // 工作台定位线 + 横向漂移的制图母版
+  LiquidLens.glass('.topbar');                             // 参数走 liquid-lens 的 DEFAULTS
+  LiquidLens.glass('.tool-card:not(.locked)', { jelly: true });
+  // 鼠标划过大卡片也弹一下，幅度比点击小
+  document.querySelectorAll('.tool-card:not(.locked)').forEach(c => LiquidLens.bindHoverJelly(c));
+  LiquidLens.glass('.tool-card.locked');
+  // 「进入」小按钮不单独绑 Q 弹。它原来自己一套参数（1.25/3.6/540）、又用 stopPropagation
+  // 拦住冒泡，于是点卡片和点按钮弹出来是两种手感——卡片带折射一起抖，按钮只有缩放。
+  // 现在按钮不拦冒泡也不自己处理跳转，点击一路冒泡到卡片，跳转和动效都只有一份。
+  LiquidLens.bindJelly(document.getElementById('user-avatar'), { amp: 1.3, freq: 3.8, dur: 520 });
+}
+</script>
+
+<script>
+const _PORT = (window.electronAPI && window.electronAPI.backendPort) || 8764;
+const API   = `http://127.0.0.1:${_PORT}/api/v1`;
+let authToken = localStorage.getItem('skyart_token') || '';
+let currentUser = null;
+let currentRole  = null;
+
+// ── API helpers ──────────────────────────────────────────────
+async function apiFetch(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(API + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
+  if (res.status === 401) { showLoginOverlay(true); return null; }
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+function showLoginOverlay(clearToken = true) {
+  if (clearToken) {
+    authToken = '';
+    currentUser = null;
+    currentRole = null;
+    localStorage.removeItem('skyart_token');
+  }
+  document.getElementById('login-overlay').style.display = 'flex';
+}
+
+function hideLoginOverlay() {
+  document.getElementById('login-overlay').style.display = 'none';
+}
+
+// ── Init ─────────────────────────────────────────────────────
+async function init() {
+  if (!authToken) { showLoginOverlay(); return; }
+
+  // Backend may still be starting up — retry for up to 30s before giving up.
+  // On network errors we do NOT clear the stored token; only 401 clears it.
+  const MAX_RETRIES = 30;
+  let me = null;
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    try {
+      me = await apiFetch('/auth/me');
+      break; // success (or 401 handled inside apiFetch)
+    } catch {
+      if (!authToken) return; // 401 cleared the token — show login
+      if (i < MAX_RETRIES - 1) await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+  if (!me) {
+    // Exhausted retries and token still in localStorage — keep it, show login
+    showLoginOverlay(false);
+    document.getElementById('login-error').textContent = '无法连接后端，请稍后重试';
+    return;
+  }
+
+  currentUser = me.username;
+  currentRole  = me.role || 'admin';
+  document.getElementById('user-display').textContent = currentUser;
+  document.getElementById('user-avatar-letter').textContent = currentUser[0].toUpperCase();
+  applyRolePermissions();
+  hideLoginOverlay();
+  if (!localStorage.getItem('skyart_api_configured')) openSettings();
+  // 自检把密钥缺失也涵盖了，原来那条黄色横幅留着会和面板重复说一遍同一件事
+  runSelfCheckAuto();
+
+  // Rolling 30-day token refresh: every successful login extends expiry
+  try {
+    const refreshed = await apiFetch('/auth/refresh', { method: 'POST' });
+    if (refreshed && refreshed.access_token) {
+      authToken = refreshed.access_token;
+      localStorage.setItem('skyart_token', authToken);
+    }
+  } catch {}
+}
+
+
+// ── 玻璃调参面板 ────────────────────────────────────────────
+// ⌥G 开关。前六项是滤镜参数（改完要重新算位移图，走 LiquidLens.glass 重挂）；
+// 后四项是 CSS 变量，直接写在 :root 上即时生效。
+const GL_SPEC = [
+  { k:'band',    n:'弧面宽',  min:2,  max:16, step:1,    css:0 },
+  { k:'push',    n:'折射',    min:0,  max:40, step:1,    css:0 },
+  { k:'disp',    n:'色散',    min:0,  max:.6, step:.02,  css:0 },
+  { k:'blur',    n:'中心模糊', min:0,  max:6,  step:.5,   css:0 },
+  { k:'sat',     n:'饱和',    min:100,max:220,step:5,    css:0 },
+  { k:'bright',  n:'亮度',    min:88, max:130,step:2,    css:0 },
+  { k:'glassA',  n:'底色',    min:0,  max:.45,step:.01,  css:'--glass-a' },
+  { k:'rim',     n:'反光',    min:0,  max:2.4,step:.05,  css:'--rim' },
+  { k:'sh',      n:'阴影',    min:0,  max:2.6,step:.05,  css:'--sh' },
+  { k:'ink',     n:'线条',    min:0,  max:.45,step:.01,  css:'--ink' },
+];
+// 出厂值＝liquid-lens 的 DEFAULTS 和 :root 里那组
+// 出厂值＝shared/liquid-lens 里定稿的那组，改了那边这里要跟着改，否则「恢复默认」会把
+// 界面拨回一个已经不存在的旧样子
+const GL_FACTORY = { band:8, push:17, disp:.12, blur:1.5, sat:165, bright:106,
+                     glassA:.10, rim:1.45, sh:1.53, ink:.26 };
+let glVal = Object.assign({}, GL_FACTORY);
+
+function glApply() {
+  const r = document.documentElement.style;
+  r.setProperty('--glass-a', glVal.glassA);
+  r.setProperty('--rim', glVal.rim);
+  r.setProperty('--sh', glVal.sh);
+  const bg = document.querySelector('.ll-bgfx');
+  if (bg) bg.style.setProperty('--ink', glVal.ink);
+  if (!window.LiquidLens) return;
+  const o = { band:glVal.band, push:glVal.push, disp:glVal.disp,
+              blur:glVal.blur, sat:glVal.sat, bright:glVal.bright };
+  LiquidLens.glass('.topbar', o);
+  LiquidLens.glass('.tool-card:not(.locked)', Object.assign({ jelly:true }, o));
+  LiquidLens.glass('.tool-card.locked', o);
+  localStorage.setItem('skyart_glass_tune_v2', JSON.stringify(glVal));
+}
+
+function glRender() {
+  document.getElementById('gl-rows').innerHTML = GL_SPEC.map(s => `
+    <div class="gl-row">
+      <label>${s.n}</label>
+      <input type="range" min="${s.min}" max="${s.max}" step="${s.step}"
+             value="${glVal[s.k]}" oninput="glSet('${s.k}', this.value)">
+      <b id="gl-v-${s.k}">${glVal[s.k]}</b>
+    </div>`).join('');
+}
+function glSet(k, v) {
+  glVal[k] = parseFloat(v);
+  document.getElementById('gl-v-' + k).textContent = glVal[k];
+  glApply();
+}
+function glPreset() {
+  glVal = Object.assign({}, GL_FACTORY);
+  glRender(); glApply();
+}
+function glCopy() {
+  const t = GL_SPEC.map(s => s.n + '=' + glVal[s.k]).join('  ');
+  navigator.clipboard.writeText(t).then(() => toast && toast('参数已复制', 'success'), () => {});
+}
+function glToggle() {
+  const p = document.getElementById('gl-panel');
+  if (!p.dataset.init) { p.dataset.init = '1'; glRender(); }
+  p.classList.toggle('show');
+}
+document.addEventListener('keydown', e => {
+  if (e.altKey && (e.key === 'g' || e.key === 'G' || e.code === 'KeyG')) { e.preventDefault(); glToggle(); }
+});
+// 隐藏入口：顶栏 logo 两秒内连点五下。不放常驻按钮——调参是给我们自己用的，
+// 摆在界面上运营会点开、拖两下，然后整个应用的观感就跟别人不一样了，还查不出原因。
+// 键盘那条留着（⌥G），远程协助时说得清楚；连点这条是给没有外接键盘的场景。
+(() => {
+  const logo = document.querySelector('.topbar .logo');
+  if (!logo) return;
+  let n = 0, t = 0;
+  logo.style.cursor = 'default';
+  logo.addEventListener('click', () => {
+    const now = performance.now();
+    n = (now - t < 2000) ? n + 1 : 1;
+    t = now;
+    if (n >= 5) { n = 0; glToggle(); }
+  });
+})();
+// 调过的值刷新后还在，不然拖到一半刷新就白拖了
+try {
+  const saved = JSON.parse(localStorage.getItem('skyart_glass_tune_v2') || 'null');
+  if (saved) { glVal = Object.assign({}, GL_FACTORY, saved); glApply(); }
+} catch {}
+
+// 后端返回的文案会带路径和密钥名，直接拼进 innerHTML 之前必须转义
+function esc(v) {
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// ── 系统自检 ────────────────────────────────────────────────
+// 开机只跑浅检（本地检查，实测 52ms）。深检要实测密钥连通，秒级、还会因一次网络抖动
+// 报出问题，放进开机流程只会让人干等再吓一跳，所以只挂在「重新检测」上。
+let _scBusy = false;
+// 进页面就自动测两轮：先浅检（本地，50ms 出结果，面板立刻有东西看），
+// 再后台补一次网络实测，回来自动刷新面板。不让人再去点一次按钮。
+async function runSelfCheckAuto() {
+  await runSelfCheck(false);
+  runSelfCheck(true);
+}
+async function runSelfCheck(deep) {
+  if (_scBusy) return;
+  _scBusy = true;
+  const btn = document.getElementById('sc-deep');
+  if (deep && btn) { btn.disabled = true; btn.textContent = '检测中…'; }
+  try {
+    const d = await apiFetch('/system/selfcheck' + (deep ? '?deep=1' : ''));
+    renderSelfCheck(d);
+  } catch (e) {
+    // 连不上后端本身就是红灯，而且是最要紧的那种
+    renderSelfCheck({ level: 'fail', items: [{ key: 'backend', name: '后端服务', level: 'fail',
+      detail: '连不上（' + (e.message || '未知错误') + '）',
+      hint: '退出应用重开一次；仍然不行就把日志发给管理员' }] });
+  } finally {
+    _scBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '重新检测（含网络）'; }
+  }
+}
+
+function renderSelfCheck(d) {
+  const dot = document.getElementById('sc-dot');
+  const label = document.getElementById('sc-label');
+  dot.className = 'sc-dot ' + d.level;
+  label.textContent = { ok: '正常', warn: '有提醒', fail: '异常' }[d.level] || '未知';
+  const n = (d.items || []).filter(i => i.level !== 'ok').length;
+  if (n) label.textContent += ' ' + n;
+  document.getElementById('sc-time').textContent =
+    new Date().toTimeString().slice(0, 8) + (d.deep ? ' · 含网络' : '');
+  document.getElementById('sc-body').innerHTML = (d.items || []).map(i => `
+    <div class="sc-row">
+      <span class="d ${i.level}"></span>
+      <span class="t">
+        <span class="n">${esc(i.name)}</span>
+        <div class="v">${esc(i.detail || '')}</div>
+        ${i.hint ? `<div class="h">${esc(i.hint)}</div>` : ''}
+        ${i.level !== 'ok' && /密钥|配置|缺 /.test((i.detail || '') + (i.hint || ''))
+          ? '<button class="go" onclick="openSettings()">去设置 →</button>' : ''}
+      </span>
+    </div>`).join('');
+  // 首次进来有红灯或黄灯就自动展开一次，别让人自己去发现那颗小圆点
+  if (d.level !== 'ok' && !window.__scShown) { window.__scShown = 1; toggleSelfCheck(true); }
+}
+
+function toggleSelfCheck(force) {
+  const p = document.getElementById('sc-panel');
+  p.classList.toggle('show', force === undefined ? !p.classList.contains('show') : !!force);
+}
+document.addEventListener('click', e => {
+  const p = document.getElementById('sc-panel');
+  if (p && p.classList.contains('show') && !p.contains(e.target)
+      && !e.target.closest('#sc-chip')) p.classList.remove('show');
+});
+
+
+function applyRolePermissions() {
+  const admakeCard = document.getElementById('card-admake');
+  const dramaCard  = document.getElementById('card-drama');
+  const role = currentRole;
+
+  if (role === 'drama') {
+    admakeCard.classList.add('locked');
+    admakeCard.querySelector('.tool-enter-btn').textContent = '无权限';
+    const banner = admakeCard.querySelector('.tool-card-banner');
+    if (!banner.querySelector('.lock-badge')) {
+      const lock = document.createElement('div');
+      lock.className = 'lock-badge';
+      lock.textContent = '需要「素材制作」权限';
+      banner.appendChild(lock);
+    }
+  } else if (role === 'admake') {
+    dramaCard.classList.add('locked');
+    dramaCard.querySelector('.tool-enter-btn').textContent = '无权限';
+    const banner = dramaCard.querySelector('.tool-card-banner');
+    if (!banner.querySelector('.lock-badge')) {
+      const lock = document.createElement('div');
+      lock.className = 'lock-badge';
+      lock.textContent = '需要「短剧创作」权限';
+      banner.appendChild(lock);
+    }
+  }
+}
+
+// ── Login ─────────────────────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('login-form').style.display    = tab === 'login'    ? 'flex' : 'none';
+  document.getElementById('register-form').style.display = tab === 'register' ? 'flex' : 'none';
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  document.getElementById('login-error').textContent = '';
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  if (!username || !password) { errEl.textContent = '请填写用户名和密码'; return; }
+  btn.disabled = true; btn.textContent = '登录中…';
+  errEl.textContent = '';
+  try {
+    const res = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) { errEl.textContent = '用户名或密码错误'; return; }
+    const data = await res.json();
+    authToken = data.access_token;
+    localStorage.setItem('skyart_token', authToken);
+    await init();
+  } catch (e) {
+    errEl.textContent = '无法连接后端，请稍后重试';
+  } finally {
+    btn.disabled = false; btn.textContent = '登录';
+  }
+}
+
+async function doRegister() {
+  const username = document.getElementById('reg-username').value.trim();
+  const email    = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const confirm  = document.getElementById('reg-confirm').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('register-btn');
+  if (!username || !password) { errEl.textContent = '请填写用户名和密码'; return; }
+  if (password !== confirm) { errEl.textContent = '两次密码不一致'; return; }
+  btn.disabled = true; btn.textContent = '注册中…';
+  errEl.textContent = '';
+  try {
+    const res = await fetch(API + '/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password }),
+    });
+    if (!res.ok) { errEl.textContent = '注册失败：' + (await res.text()); return; }
+    errEl.style.color = '#059669';
+    errEl.textContent = '注册成功，请登录';
+    switchTab('login');
+    document.getElementById('login-username').value = username;
+  } catch (e) {
+    errEl.textContent = '无法连接后端';
+  } finally {
+    errEl.style.color = '#dc2626';
+    btn.disabled = false; btn.textContent = '注册';
+  }
+}
+
+// Enter 键登录
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const overlay = document.getElementById('login-overlay');
+  if (overlay.style.display === 'flex') {
+    if (document.getElementById('login-form').style.display !== 'none') doLogin();
+    else doRegister();
+  }
+});
+
+// ── Navigation ───────────────────────────────────────────────
+// 「进入」按钮的 Q 弹是 540ms，原来点完立刻跳，动画第一帧还没画完页面就换了，
+// 等于白做。等它弹完再跳：420ms 是过冲最大的那一下弹回来、曲线基本收平的位置，
+// 等满 540 会多出一段静止的停顿，读起来像卡住了。
+// _navLock 防连点：两下点击会排两个跳转，第二个在新页面加载途中触发。
+const NAV_DELAY = 420;
+let _navLock = false;
+function _navAfterJelly(href) {
+  if (_navLock) return;
+  _navLock = true;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  setTimeout(() => { window.location.href = href; }, reduced ? 0 : NAV_DELAY);
+  setTimeout(() => { _navLock = false; }, 2000);
+}
+// 锁必须能解开。从工具页返回时这一页可能是从 bfcache 直接还原的，JS 状态原样带回来，
+// 锁还停在 true，两张卡就都点不动、还没有任何反馈。pageshow 在还原和首次加载都会触发。
+// 另外跳转万一没成功（目标页加载失败），2 秒后也把锁放掉，不要把人卡死在首页。
+window.addEventListener('pageshow', () => { _navLock = false; });
+
+function enterDrama() {
+  if (document.getElementById('card-drama').classList.contains('locked')) return;
+  _navAfterJelly('DemoWhite.html');
+}
+
+function enterAdMake() {
+  if (document.getElementById('card-admake').classList.contains('locked')) return;
+  _navAfterJelly('tools/ad-make/index.html');
+}
+
+// ── Avatar menu ──────────────────────────────────────────────
+function toggleAvatarMenu() {
+  document.getElementById('avatar-menu').classList.toggle('show');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#user-avatar')) {
+    document.getElementById('avatar-menu').classList.remove('show');
+  }
+  if (!e.target.closest('#settings-overlay .settings-card') && e.target.id === 'settings-overlay') {
+    closeSettings();
+  }
+});
+
+function logout() {
+  showLoginOverlay();
+}
+
+// ── Settings ─────────────────────────────────────────────────
+async function openSettings() {
+  document.getElementById('avatar-menu').classList.remove('show');
+  if (window.electronAPI?.getConfig) {
+    const cfg = await window.electronAPI.getConfig();
+    document.getElementById('cfg-hh-key').value     = cfg.happyhorseApiKey  || '';
+    document.getElementById('cfg-hh-url').value     = cfg.happyhorseBaseUrl || '';
+    document.getElementById('cfg-gemini-url').value = cfg.geminiProxyUrl    || 'https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze';
+    document.getElementById('cfg-gemini-key').value = cfg.geminiProxyKey    || '';
+    document.getElementById('cfg-qwen-key').value   = cfg.qwenApiKey        || '';
+    document.getElementById('cfg-qwen-url').value   = cfg.qwenBaseUrl       || '';
+    document.getElementById('cfg-oss-cn-id').value     = cfg.ossAccessKeyId     || '';
+    document.getElementById('cfg-oss-cn-secret').value = cfg.ossAccessKeySecret || '';
+    document.getElementById('cfg-oss-cn-bucket').value = cfg.ossBucketName      || '';
+    document.getElementById('cfg-oss-cn-endpoint').value = cfg.ossEndpoint      || 'https://oss-cn-hangzhou.aliyuncs.com';
+    document.getElementById('cfg-oss-us-id').value     = cfg.ossKeyUsWest       || '';
+    document.getElementById('cfg-oss-us-secret').value = cfg.ossSecretUsWest    || '';
+    document.getElementById('cfg-oss-us-bucket').value    = cfg.ossBucketUsWest    || 'saas-dscriptr-dscriptr-develop';
+    document.getElementById('cfg-oss-us-endpoint').value  = cfg.ossEndpointUsWest  || 'https://oss-us-west-1.aliyuncs.com';
+  }
+  document.getElementById('cfg-status').textContent = '';
+  document.getElementById('settings-overlay').classList.add('show');
+}
+
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('show');
+}
+
+async function saveSettings() {
+  const btn = document.getElementById('cfg-save-btn');
+  const status = document.getElementById('cfg-status');
+  btn.disabled = true; btn.textContent = '保存中…';
+  status.style.color = 'var(--text3)'; status.textContent = '正在保存并重启后端…';
+
+  const cfg = {
+    happyhorseApiKey:  document.getElementById('cfg-hh-key').value.trim(),
+    happyhorseBaseUrl: document.getElementById('cfg-hh-url').value.trim() || 'https://dashscope-us.aliyuncs.com/api/v1',
+    geminiProxyUrl:    document.getElementById('cfg-gemini-url').value.trim(),
+    geminiProxyKey:    document.getElementById('cfg-gemini-key').value.trim(),
+    qwenApiKey:        document.getElementById('cfg-qwen-key').value.trim(),
+    qwenBaseUrl:       document.getElementById('cfg-qwen-url').value.trim() || 'https://dashscope.aliyuncs.com/api/v1',
+    ossAccessKeyId:     document.getElementById('cfg-oss-cn-id').value.trim(),
+    ossAccessKeySecret: document.getElementById('cfg-oss-cn-secret').value.trim(),
+    ossBucketName:      document.getElementById('cfg-oss-cn-bucket').value.trim(),
+    ossEndpoint:        document.getElementById('cfg-oss-cn-endpoint').value.trim() || 'https://oss-cn-hangzhou.aliyuncs.com',
+    ossKeyUsWest:       document.getElementById('cfg-oss-us-id').value.trim(),
+    ossSecretUsWest:    document.getElementById('cfg-oss-us-secret').value.trim(),
+    ossBucketUsWest:    document.getElementById('cfg-oss-us-bucket').value.trim() || 'saas-dscriptr-dscriptr-develop',
+    ossEndpointUsWest:  document.getElementById('cfg-oss-us-endpoint').value.trim() || 'https://oss-us-west-1.aliyuncs.com',
+    configured: true,
+  };
+
+  if (window.electronAPI?.saveConfig) {
+    await window.electronAPI.saveConfig(cfg);
+    if (window.electronAPI.restartBackend) {
+      const res = await window.electronAPI.restartBackend();
+      if (!res.ok) {
+        status.style.color = '#ef4444';
+        status.textContent = '后端重启失败：' + (res.error || '');
+        btn.disabled = false; btn.textContent = '保存配置';
+        return;
+      }
+    }
+  }
+  localStorage.setItem('skyart_api_configured', '1');
+  status.style.color = '#059669'; status.textContent = '配置已保存！';
+  setTimeout(() => { btn.disabled = false; btn.textContent = '保存配置'; closeSettings(); }, 1000);
+}
+
+// Escape 关闭设置
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeSettings();
+});
+
+// ── Toast ─────────────────────────────────────────────────────
+function toast(msg, type = 'info', ms = 3000) {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  }, ms);
+}
+
+// ── Listen for settings event from main process ───────────────
+document.addEventListener('open-settings-event', () => {
+  openSettings();
+});
+
+init();
+</script>
+<!-- 系统自检面板：顶栏那颗灯点开 -->
+<div class="sc-panel" id="sc-panel">
+  <div class="sc-head">
+    <b>系统自检</b>
+    <span class="sc-time" id="sc-time"></span>
+    <button class="sc-btn" onclick="runSelfCheck(true)" id="sc-deep">重新检测（含网络）</button>
+    <button class="sc-x" onclick="toggleSelfCheck(false)">✕</button>
+  </div>
+  <div class="sc-body" id="sc-body"></div>
+</div>
+<!-- 玻璃调参：⌥G 开关 -->
+<div class="gl-panel" id="gl-panel">
+  <h4>液态镜片调参 <span>⌥G 开关</span></h4>
+  <div id="gl-rows"></div>
+  <div class="gl-acts">
+    <button class="k" onclick="glPreset('factory')">恢复默认</button>
+    <button onclick="glCopy()">复制参数</button>
+  </div>
+</div>
+</body>
+</html>

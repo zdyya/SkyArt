@@ -1,0 +1,53 @@
+# SkyArt 成片批量后期规范
+
+脚本：`/Users/jimmy/VScode/SkyArt/skyart_batch.py`
+
+## 1. 输入
+
+| 项 | 要求 |
+| --- | --- |
+| 素材目录 | AdMake 导出目录，含成片 `*.mp4` 及同名 `*.log.txt`（SkyArt 导出报告，日志缺失时仅靠自动扫描） |
+| 结尾板 | 任意分辨率 mp4，非 9:16 时自动等比缩放+补黑边（不裁切，防止文字丢失） |
+| 标题图 | 透明底 PNG，宽 1080（由 Pillow 渲染花体，见 §4） |
+
+当前项目示例：
+
+- 素材：`/Users/jimmy/Library/Application Support/SkyArtDemo/skyart-data/AdMake/Export/project_1_Vows_of_a_Vegas_Heiress/20260709_001/`
+- 结尾板：`/Users/jimmy/Downloads/结尾.mp4`
+- 标题图：`/Users/jimmy/Downloads/花体字预览/标题字样_大.png`
+
+## 2. 输出
+
+- 目录：固定 `/Users/jimmy/Desktop/py 贴片自动化`（导出目录嵌套太深，改放桌面；可用第 4 个参数覆盖）
+- 命名：与原文件名一致（不加后缀）
+- 规格：1080×1920 @30fps，H.264（videotoolbox 硬编码）8Mbps，AAC 128k 44.1kHz
+- 交付压缩【2026-07-23 起改为按需，不再默认执行】：用户明确要求时才做，命令为 `libx264 -preset fast -crf 22 -profile:v main -level:v 4.0 -c:a aac -b:a 160k -movflags +faststart`，体积约降 50%~60%，实测约 30-70 秒/条（随片长）；批量覆盖一律"压到临时目录→时长校验→替换"
+- 时长恒等式：`成品 = 原片 − Σ剪除 + 结尾板时长`（用于批后校验）
+- 原始素材只读不改，重跑安全
+
+## 3. 剪辑规则（衔接审美 v3）
+
+1. **分集边界识别**（三信号）：
+   - 全片 6fps 灰度帧差 <1.2 持续 ≥0.8s（仅画面上 75%，避开字幕；容忍 0.33s 毛刺）→ 定格/缓放候选
+   - 候选 ±2s 内音频 1.5–6kHz 能量峰 >5× 底噪（集尾「叮」音效）→ 确认
+   - 并上导出日志的来源视频切换点；相邻 3s 合并
+2. **剪除**：每个边界向前剪到最后一次镜头硬切（帧差 >25），即剪掉整个集尾过渡镜头，上限 6s
+3. **过渡**：剪切点 0.5s 快闪白（0.25s 渐白+0.25s 显出，音频同步）；闪黑仅用于正片→结尾板（0.75s+0.75s）
+4. **标题**：PNG overlay 顶部居中 y=150，正片全程常驻，结尾板不带
+
+## 4. 运行
+
+```bash
+# 全量（4 路并行，约 5 分钟/10 条）
+cd <素材目录> && ls *.mp4 | xargs -P 4 -I {} \
+  python3 /Users/jimmy/VScode/SkyArt/skyart_batch.py <素材目录> <结尾.mp4> <标题.png> <输出目录> --only {}
+
+# 单条
+python3 skyart_batch.py <素材目录> <结尾.mp4> <标题.png> [输出目录] [--only 文件名]
+```
+
+可调参数在脚本顶部：`FADE_W/FADE_B`（闪白/闪黑时长）、`CUT_TH`（硬切阈值）、`DET_MAX`（单次剪除上限）、`TITLE_Y`（标题位置）、`VB`（码率）。
+
+**新项目校准规则（强制）**：边界检测参数按剧校准，不可跨剧迁移——不同剧的集间衔接风格不同（如 Vows 用"定格+叮"，Romance or Revenge 用金色光效），静止对话多的剧会大量误检。新项目先跑 1 条样片、抽帧人工复核所有检出边界，确认有效才允许全量带剪切；未校准时用 `--no-cut` 只做标题+结尾板。
+
+标题 PNG 重新生成：Pillow + `SnellRoundhand.ttc`(index=2) 金色 #FFD700 + 深棕描边 + 黑色光晕投影（本机 ffmpeg 为精简版无 drawtext，文字一律走 PNG overlay）。

@@ -1,0 +1,45 @@
+# Claude 系统目录
+.claude/
+
+# 本地开发规范，不进版本库
+CLAUDE.md
+
+# 解包的 docx 临时目录
+unpacked_req/
+
+# 临时文件
+临时文件/
+
+# macOS
+.DS_Store
+
+# Python 虚拟环境
+backend/.venv/
+backend/.venv_dist/
+
+# PyInstaller 构建产物
+backend/build/
+backend/dist/
+
+# 数据库文件
+*.db
+
+# 用户上传数据
+backend/uploads/
+
+# 本地运行日志
+backend/logs/
+
+# Electron 构建产物
+electron-app/dist/
+electron-app/backend-bin/
+electron-app/node_modules/
+electron-app/skyart.db
+
+# 本地密钥备份与设计草稿，不进版本库
+DE/
+electron-app/logs/
+
+# 运行日志与需求草稿，不进版本库
+logs/
+文档/

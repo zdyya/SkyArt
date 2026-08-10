@@ -1,0 +1,54 @@
+{
+  "name": "SkyArt",
+  "version": "1.0.6",
+  "description": "天工短剧 - AI短剧创作平台",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --mac --dir",
+    "pack": "node scripts/setup-ffmpeg.js arm64 && electron-builder --mac dmg --arm64 && node scripts/verify-build.js arm64",
+    "pack:x64": "node scripts/setup-ffmpeg.js x64 && electron-builder --mac dmg --x64 && node scripts/verify-build.js x64"
+  },
+  "build": {
+    "appId": "com.skyart.app",
+    "productName": "SkyArt",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "icon": "assets/icon.icns",
+      "identity": null,
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-bin-${arch}",
+        "to": "backend-bin"
+      },
+      {
+        "from": "bin/ffmpeg-${arch}",
+        "to": "ffmpeg"
+      }
+    ],
+    "afterPack": "./scripts/afterPack.js"
+  },
+  "devDependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@ffprobe-installer/ffprobe": "^2.1.2",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  }
+}

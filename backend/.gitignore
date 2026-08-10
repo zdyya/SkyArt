@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+skyart.db
+uploads/videos/*
+uploads/images/*
+uploads/exports/*
+!uploads/videos/.gitkeep
+!uploads/images/.gitkeep
+!uploads/exports/.gitkeep

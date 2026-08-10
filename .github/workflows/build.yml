@@ -1,0 +1,143 @@
+name: 打包 macOS DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write   # gh release create 需要，默认 token 可能只读
+
+jobs:
+  build:
+    # 两个架构各出一个 DMG。PyInstaller 不能跨架构编译，Intel 包必须在 Intel 机器上打。
+    # macos-14 已被 GitHub 标记废弃；老的 macos-13 Intel 机器已退役，现存唯一的 Intel
+    # 标签是 macos-15-intel（大型运行器，计费更高）。
+    strategy:
+      fail-fast: false          # Intel 跑挂了不连累 arm64
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            pack: pack
+          - arch: x64
+            runner: macos-15-intel
+            pack: pack:x64
+    runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装 Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 编译 Python 后端
+        run: |
+          cd backend
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          # cryptography 只许装预编译轮子。放任它下源码现编的话，编出来的
+          # _rust.abi3.so 链构建机的 OpenSSL，跟 PyInstaller 收进包的 libssl 对不上，
+          # 装好的应用启动即崩，而打包过程一路绿灯——这种包比编译失败更难查。
+          .venv/bin/pip install --only-binary=cryptography -r requirements.txt
+          .venv/bin/pip install pyinstaller
+          MACOSX_DEPLOYMENT_TARGET=13.0 .venv/bin/pyinstaller skyart-backend.spec
+
+      - name: 复制后端产物
+        run: cp -r backend/dist/skyart-backend electron-app/backend-bin-${{ matrix.arch }}
+
+      - name: 关掉 Spotlight 索引
+        # electron-builder 打完 DMG 要卸载挂载卷，macos-15-intel 上必然报
+        # "couldn't eject - Resource busy"：Spotlight 一挂上卷就开始建索引，
+        # 占着不放。arm64 的 macos-15 镜像没这毛病。
+        run: sudo mdutil -a -i off || true
+
+      - name: 安装前端依赖并打包 DMG
+        # electron-builder 打完 DMG 要 hdiutil detach 卸载挂载卷，runner 上偶发
+        # exit 16（卷还被占用）。它内部已经退避重试 6 次仍会失败，所以整步重来——
+        # 换一次挂载点通常就过了。重试前清掉 dist 并强卸残留卷，否则下一次
+        # electron-builder 会撞上同名产物。
+        run: |
+          cd electron-app
+          npm ci
+          for i in 1 2 3; do
+            if npm run ${{ matrix.pack }}; then exit 0; fi
+            echo "::warning::第 $i 次打包失败，清理后重试"
+            rm -rf dist
+            for v in /Volumes/SkyArt*; do [ -e "$v" ] && hdiutil detach "$v" -force || true; done
+            sleep 10
+          done
+          echo "::error::打包连续 3 次失败"
+          exit 1
+
+      - name: 上传 DMG 供发版作业取用
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: electron-app/dist/SkyArt-*.dmg
+          retention-days: 14
+          if-no-files-found: error
+
+  release:
+    # 发版集中在这里做。放进 build 作业的话两个架构会各自 gh release create，
+    # 后跑的那个会因 Release 已存在而失败。
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 取回两个架构的 DMG
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dmg-*
+          merge-multiple: true
+          path: dist
+
+      - name: 列出产物
+        run: ls -lh dist/
+
+      - name: 提取变更点（tag message）
+        run: |
+          # actions/checkout 会把附注 tag 降级为指向 commit 的轻量 tag，
+          # 不重新拉取真实 tag 对象的话，%(contents) 读到的是最后一条 commit message
+          git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
+          git for-each-ref "refs/tags/${{ github.ref_name }}" --format='%(contents)' > changelog.txt
+          cat changelog.txt
+
+      - name: 创建 GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 重新发同一版本（删 tag 重打）时先清掉旧 Release，否则 create 会因已存在而失败
+          gh release delete "${{ github.ref_name }}" -y || true
+          gh release create "${{ github.ref_name }}" dist/SkyArt-*.dmg \
+            --title "SkyArt ${{ github.ref_name }}" \
+            --notes-file changelog.txt
+
+      - name: 发送飞书发版通知
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_FOLDER_TOKEN: ${{ secrets.FEISHU_FOLDER_TOKEN }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_KEYWORD: ${{ secrets.FEISHU_WEBHOOK_KEYWORD }}
+        run: |
+          ARGS=()
+          for f in dist/SkyArt-*.dmg; do ARGS+=(--dmg-path "$f"); done
+          # 脚本卡片标题自带 [SkyArt] 前缀，这里只传版本号，避免 "[SkyArt] SkyArt v1.0.3" 重复
+          python3 .github/scripts/notify_feishu_release.py \
+            --title "${{ github.ref_name }}" \
+            --changelog-file changelog.txt \
+            "${ARGS[@]}"

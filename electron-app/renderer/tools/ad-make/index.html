@@ -1,0 +1,1309 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SkyArt — 素材制作</title>
+<link rel="stylesheet" href="../../shared/liquid-lens.css">
+<style>
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#eef0f1; --bg4:#e5e7e9;
+  --border:#e0e2e5; --accent:#f97316; --accent2:#ea580c;
+  --btn:#1f2328; --btn-h:#000000;
+  --text:#191b1f; --text2:#565b63; --text3:#9298a1;
+  /* 选中态动效统一：颜色 .18s，位移 .12s，滑块 .28s，都用同一条缓动 */
+  --e:cubic-bezier(.22,1,.36,1); --t-color:.18s ease; --t-move:.12s cubic-bezier(.22,1,.36,1);
+  --green:#059669; --red:#dc2626; --blue:#2563eb; --yellow:#d97706;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+.ic{flex-shrink:0;vertical-align:-2px;}
+body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",sans-serif;min-height:100vh;}
+.hidden{display:none!important;}
+.page{min-height:100vh;display:flex;flex-direction:column;}
+
+/* ── Topbar ── */
+/* 内页顶栏＝返回+我在哪（品牌只在首页）：折角返回 + 页名 */
+.bk{border:none;background:transparent;cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text2);font-size:13px;font-weight:500;padding:6px 12px 6px 6px;border-radius:6px;transition:color .15s,background .15s;-webkit-app-region:no-drag;}
+.bk:hover{color:var(--text);background:var(--bg3);}
+.ptitle{font-weight:600;font-size:14.5px;color:var(--text);-webkit-app-region:no-drag;}
+/* 顶栏是玻璃：卡片从它底下滚过去，边缘会把封面渐变掰弯。
+   backdrop-filter 这条是兜底——liquid-glass.js 会用带 url() 的行内样式盖掉它；
+   万一运行时不认 url()，行内那条被丢弃，这条还在，退化成普通毛玻璃。 */
+.topbar{background:rgba(255,255,255,.42);backdrop-filter:blur(3px) saturate(135%) brightness(108%);border-bottom:1px solid rgba(224,226,229,.7);box-shadow:inset 0 1.4px 0 rgba(255,255,255,.9);height:52px;/* 全站统一 52px，红绿灯居中 */display:flex;align-items:center;padding:0 20px 0 78px;gap:16px;position:sticky;top:0;z-index:100;flex-shrink:0;-webkit-app-region:drag;}
+.logo{font-size:18px;font-weight:700;color:var(--text);cursor:pointer;letter-spacing:.3px;-webkit-app-region:no-drag;}
+.logo span{color:var(--text2);font-size:13px;font-weight:400;margin-left:6px;}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--text2);-webkit-app-region:no-drag;}
+.breadcrumb a{color:var(--text2);cursor:pointer;text-decoration:none;}
+.breadcrumb a:hover{color:var(--accent);}
+.breadcrumb .sep{color:var(--text3);}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:12px;-webkit-app-region:no-drag;}
+/* 头像与首页同规格：橙底、点击弹账号菜单（不再兼职"回首页"，返回交给左上角的返回按钮） */
+.avatar{width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:#fff;cursor:pointer;position:relative;}
+.avatar-menu{position:absolute;top:calc(100% + 8px);right:0;background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:130px;z-index:200;overflow:hidden;}
+.avatar-menu-item{display:flex;align-items:center;gap:8px;padding:10px 14px;font-size:13px;color:var(--text);cursor:pointer;font-weight:400;}
+.avatar-menu-item:hover{background:var(--bg3);}
+.avatar-menu-item.danger{color:var(--red);}
+
+/* ── Buttons ── */
+.btn{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:13px;font-weight:500;transition:all .15s;display:inline-flex;align-items:center;gap:6px;}
+.btn-primary{background:var(--btn);color:#fff;}
+.btn-primary:hover{background:var(--btn-h);}
+.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border);}
+.btn-secondary:hover{background:var(--bg4);}
+.btn-ghost{background:transparent;color:var(--text2);}
+.btn-ghost:hover{background:var(--bg3);color:var(--text);}
+.btn-sm{padding:5px 10px;font-size:12px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+
+/* ── Input ── */
+.input{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:8px 12px;font-size:14px;width:100%;outline:none;transition:border-color .15s;}
+.input:focus{border-color:var(--accent);}
+.input::placeholder{color:var(--text3);}
+select.input{cursor:pointer;}
+textarea.input{resize:vertical;min-height:68px;}
+.form-group{display:flex;flex-direction:column;gap:6px;}
+.form-label{font-size:13px;color:var(--text2);font-weight:500;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+
+/* ── Badges / Chips ── */
+.badge{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;display:inline-flex;align-items:center;gap:4px;}
+.badge-green{background:rgba(5,150,105,.12);color:var(--green);}
+.badge-gray{background:rgba(86,91,99,.12);color:var(--text2);}
+.badge-blue{background:rgba(37,99,235,.12);color:var(--blue);}
+.badge-red{background:rgba(220,38,38,.12);color:var(--red);}
+.badge-orange{background:rgba(249,115,22,.12);color:var(--accent);}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.badge-blue.pulse{animation:pulse 1.5s infinite;}
+.chip{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text2);}
+
+/* ── Modal ── */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;}
+.modal-overlay.hidden{display:none!important;}
+/* 弹窗玻璃外圈：跟编辑器那几个弹窗同一套。玻璃在外面这一圈上，本体仍是实色卡片——
+   半透明卡片压在暗遮罩上，正文会灰成一团，读不清。
+   这一圈不吃点击，点它仍然穿透到遮罩，保持"点空白处关闭"的原行为。 */
+/* 默认模板标记：一个橙点加"默认"两个字。图标再通用也得先猜一下是什么意思，
+   写出来就不用猜。它是状态不是开关——设置动作在右上角 ⋯ 菜单里，跟编辑/复制/删除放一起。 */
+.tpl-default-tag{flex-shrink:0;display:inline-flex;align-items:center;gap:5px;
+  padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:600;
+  background:rgba(249,115,22,.12);color:var(--accent2);margin-left:8px;}
+.tpl-default-tag i{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0;}
+.modal-glass{padding:4px;border-radius:14px;display:flex;max-height:calc(100vh - 24px);
+  background:rgba(255,255,255,.2);
+  backdrop-filter:blur(4px) saturate(150%) brightness(112%);
+  box-shadow:inset 0 1.2px 0 rgba(255,255,255,.85),
+             inset 0 -1px 0 rgba(255,255,255,.25),
+             0 20px 56px rgba(10,13,18,.34),0 4px 12px rgba(10,13,18,.18);
+  pointer-events:none;}
+.modal-glass > *{pointer-events:auto;}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:24px;width:620px;max-width:95vw;max-height:88vh;overflow-y:auto;position:relative;display:flex;flex-direction:column;gap:16px;}
+.modal-header{display:flex;align-items:center;justify-content:space-between;}
+.modal-title{font-size:16px;font-weight:600;}
+.modal-close{background:none;border:none;color:var(--text2);cursor:pointer;font-size:20px;line-height:1;padding:2px;}
+.modal-close:hover{color:var(--text);}
+.modal-footer{display:flex;justify-content:flex-end;gap:10px;padding-top:4px;}
+
+/* ── Upload area ── */
+.upload-area{border:2px dashed var(--border);border-radius:10px;padding:24px;text-align:center;color:var(--text3);cursor:pointer;transition:border-color .15s;}
+.upload-area:hover,.upload-area.drag-over{border-color:var(--accent);color:var(--text2);}
+.upload-icon{font-size:32px;margin-bottom:8px;}
+.upload-hint{font-size:12px;margin-top:4px;}
+
+/* ── Project list ── */
+/* 上边距 16px：工具条自带 12px 外边距，两段加起来是卡片和条之间的呼吸 */
+.main-content{padding:16px 24px 24px;flex:1;overflow-y:auto;display:flex;flex-direction:column;}
+/* 视图撑满内容区，翻页条沉底（见 .pagination 的 margin-top:auto）。
+   不这么写的话，一页只剩一两张卡时网格只有一行高，翻页条就紧跟在卡片下面停在半空中。 */
+#view-projects,#view-templates{flex:1;min-height:0;display:flex;flex-direction:column;}
+.projects-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:20px;}
+
+/* ── Project cards — DramaC style ── */
+/* overflow 必须 visible：⋯下拉菜单要弹出卡片边界（四项的模板菜单曾被裁到只剩两项）；圆角由头图自己的 radius 补 */
+.project-card{cursor:pointer;overflow:visible;border-radius:14px;position:relative;
+  background:rgba(255,255,255,var(--glass-a));backdrop-filter:saturate(150%);
+  transition:transform .15s;}
+.project-card:hover{transform:translateY(-2px);}
+/* 卡片头图：暖杏两档平涂——浅杏=还有任务没完成，深杏=全部任务完成（真实首帧缩略图为长期方案） */
+.project-card-header{height:120px;display:flex;align-items:flex-end;padding:16px;position:relative;background:linear-gradient(140deg,rgba(253,240,227,.62),rgba(249,227,205,.62));
+  border-bottom:1px solid rgba(24,28,36,calc(.06*var(--sh)));border-radius:14px 14px 0 0;z-index:1;}
+.project-card-header .project-card-title{color:#43301d;}
+.project-card-header .three-dots-btn{color:#8a6a4a;}
+.project-card-header .three-dots-btn:hover{color:#43301d;background:rgba(67,48,29,.1);}
+.project-card-header.done{background:linear-gradient(145deg,rgba(232,149,107,.82),rgba(217,119,66,.82));border-bottom-color:transparent;}
+.project-card-header.done .project-card-title{color:#fff;text-shadow:0 1px 6px rgba(80,35,5,.3);}
+.project-card-header.done .three-dots-btn{color:rgba(255,255,255,.85);}
+.project-card-header.done .three-dots-btn:hover{color:#fff;background:rgba(255,255,255,.18);}
+.project-card-menu{position:absolute;top:10px;right:10px;}
+.three-dots-btn{background:transparent;border:none;color:var(--text2);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:16px;position:relative;}
+.three-dots-btn:hover{color:var(--text);background:var(--bg4);}
+.three-dots-btn:hover{background:var(--bg4);color:var(--text);}
+/* 卡片是 14% 白的玻璃，菜单也是白的。只靠一条 #e0e2e5 的细边加一层淡影，两个白面贴在
+   一起读不出上下，菜单里的字和卡片上的日期就糊成一片——看着像菜单是透的。
+   浮层这一档要比面板明显重：外缘一圈实线把两个面切开，贴边接触影读出「浮着」，
+   大散影给高度。菜单本来就是白的，加重的是边界不是底色。 */
+/* 菜单展开期间这张卡整体抬层，见 _liftCardFor */
+.project-card.menu-open{z-index:60;}
+.dropdown-menu{position:absolute;right:0;top:100%;background:var(--bg2);border:none;
+  border-radius:6px;min-width:120px;z-index:50;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(24,28,36,.13),
+             0 1px 2px rgba(24,28,36,.10),
+             0 4px 10px rgba(24,28,36,.10),
+             0 16px 36px rgba(24,28,36,.20);}
+/* 行高压到 26px。模板卡的菜单有五项，按 36px 一行是 180px，而卡片总高才 203px，
+   菜单底会盖到卡片自己的日期上；26px 一行合 130px，正好落在日期上方。
+   macOS 原生菜单也是 22px 一行，26px 不算挤。 */
+.dropdown-menu a{display:block;padding:4px 14px;font-size:12px;line-height:16px;color:var(--text);cursor:pointer;}
+.dropdown-menu a:hover{background:var(--bg4);}
+.dropdown-menu a.danger{color:var(--red);}
+.project-card-title{color:var(--text);font-size:15px;font-weight:600;position:relative;}
+.project-card-body{padding:16px;position:relative;z-index:1;}
+.project-card-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
+.project-card-footer{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text3);}
+
+/* ── Empty state ── */
+/* 一个项目都没有时整块往中部靠，别顶在工具条下面。
+   空态下把网格切成 flex 并撑满剩余高度再居中——死写 52vh 那种和内容区实际高度对不上，
+   窗口一变就偏。 */
+.projects-grid.is-empty{display:flex;flex:1;align-items:center;justify-content:center;}
+.empty-state{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;color:var(--text3);}
+.empty-icon{font-size:48px;margin-bottom:12px;}
+.empty-text{font-size:15px;margin-bottom:6px;color:var(--text2);}
+.empty-sub{font-size:13px;}
+
+/* ── Detail layout ── */
+.detail-layout{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:24px;flex:1;min-height:0;overflow-y:auto;}
+.section-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;}
+.section-header{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--bg3);}
+.section-title{font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px;}
+.section-body{padding:16px 18px;flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+
+/* ── Source / Part items ── */
+.source-item,.part-item{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border-radius:6px;font-size:13px;}
+.source-item-name{flex:1;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.source-item-dur{color:var(--text3);font-size:11px;white-space:nowrap;}
+.part-item-name{flex:1;font-weight:600;}
+.part-item-info{color:var(--text2);font-size:11px;}
+.part-enter-btn{padding:4px 12px;background:var(--btn);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.part-enter-btn:hover{background:var(--btn-h);}
+.part-enter-btn:disabled{background:var(--bg4);color:var(--text3);cursor:not-allowed;}
+
+/* ── File list in modal ── */
+.file-list{display:flex;flex-direction:column;gap:6px;max-height:180px;overflow-y:auto;}
+.file-item{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--bg3);border-radius:4px;font-size:12px;}
+.file-item-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);}
+.file-item-size{color:var(--text3);white-space:nowrap;}
+.file-remove-btn{background:none;border:none;cursor:pointer;color:var(--text3);font-size:14px;padding:1px 4px;border-radius:4px;flex-shrink:0;}
+.file-remove-btn:hover{background:rgba(220,38,38,.1);color:var(--red);}
+
+/* ── Toast — DramaC style (bottom-right, border-left) ── */
+/* 通知在顶栏正中（栏中间是空位,不遮控件） */
+#toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
+.toast{background:#1f2328;color:#fff;border-radius:999px;padding:9px 18px 9px 12px;font-size:12.5px;font-weight:500;max-width:min(46vw,480px);animation:dropIn .25s ease;display:flex;align-items:center;gap:9px;box-shadow:0 10px 30px rgba(15,18,22,.28),0 2px 6px rgba(15,18,22,.16);}
+.toast-dot{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;}
+.toast-dot svg{width:10px;height:10px;stroke:#1f2328;stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.toast-success .toast-dot{background:#34d399;}
+.toast-error .toast-dot{background:#fb7185;}
+.toast-info .toast-dot{background:#60a5fa;}
+@keyframes dropIn{from{transform:translateY(-12px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* ── 悬浮玻璃工具条 ──
+   视图切换、搜索、计数、操作按钮收在同一条里，贴在顶栏下方 12px 不动。
+   卡片从它底下滚过去——不重叠就没有可折射的内容，玻璃也就看不出效果。 */
+.gbar{position:sticky;top:64px;z-index:90;flex-shrink:0;margin:12px 24px 0;height:48px;
+      display:flex;align-items:center;gap:12px;padding:0 8px 0 6px;border-radius:14px;
+      background:rgba(255,255,255,.42);
+      backdrop-filter:blur(3px) saturate(135%) brightness(108%);
+      box-shadow:inset 0 1.4px 0 rgba(255,255,255,1),
+                 inset 0 -1px 0 rgba(255,255,255,.3),
+                 inset 0 0 18px rgba(255,255,255,.35),
+                 0 4px 16px rgba(24,28,36,.13),
+                 0 1px 2px rgba(24,28,36,.08);}
+
+/* 条里的分段控件：凹槽用半透明深色，实色会在玻璃上挖掉一块通透 */
+.gseg{position:relative;display:inline-flex;padding:3px;border-radius:10px;flex-shrink:0;
+      background:rgba(20,24,30,.055);box-shadow:inset 0 1px 2px rgba(20,24,30,.10);}
+.gseg button{position:relative;z-index:1;border:none;background:none;cursor:pointer;
+      padding:7px 15px;border-radius:6px;font:500 13px/1.25 inherit;color:var(--text2);
+      transition:color var(--t-color);white-space:nowrap;}
+.gseg button:not(.on):hover{color:var(--text);}
+.gseg button.on{color:var(--text);font-weight:600;}
+
+/* 搜索框在条里，但底色给到 88% 接近实色：输入的字要一眼可读，不做玻璃 */
+.gsearch{position:relative;flex:1;max-width:280px;min-width:120px;}
+.gsearch svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text3);}
+.gsearch input{width:100%;height:32px;padding:0 12px 0 31px;border-radius:6px;
+      border:1px solid rgba(20,24,30,.1);background:rgba(255,255,255,.88);
+      font-size:12.5px;color:var(--text);outline:none;transition:border-color .15s,background .15s;}
+.gsearch input::placeholder{color:var(--text3);}
+.gsearch input:focus{border-color:var(--accent);background:#fff;}
+.gcount{margin-left:auto;font-size:12px;color:var(--text2);white-space:nowrap;}
+.gacts{display:flex;align-items:center;gap:8px;}
+.gacts .btn{height:32px;padding:0 13px;font-size:12.5px;font-weight:600;border-radius:6px;}
+.gacts .btn-secondary{background:rgba(255,255,255,.85);border-color:rgba(20,24,30,.1);}
+
+/* ── 前端翻页 ── */
+/* margin-top:auto 把翻页条推到内容区底部——这一页装 12 张还是 1 张，它都在同一个位置。
+   间距改用 padding-top，auto 会把 margin 吃掉。 */
+.pagination{display:flex;justify-content:center;align-items:center;gap:6px;
+  margin-top:auto;padding-top:24px;flex-wrap:wrap;}
+.pagination:empty{display:none;}
+/* 翻页＝在一堆里挑一个，跟 Part 列表、导出多选同一套语言。
+   原来的橙色实底是全站唯一一处实底橙，会跟实心炭黑的主按钮抢注意力，翻页是次要导航，不该那么重 */
+.page-btn{min-width:32px;height:32px;padding:0 9px;border:1px solid transparent;background:none;border-radius:6px;cursor:pointer;font-size:13px;color:var(--text2);transition:background var(--t-color),color var(--t-color),border-color var(--t-color);}
+.page-btn:hover:not(:disabled):not(.active){background:var(--bg3);color:var(--text);}
+.page-btn.active{border-color:var(--accent);background:rgba(249,115,22,.07);color:var(--accent);font-weight:600;cursor:default;}
+.page-btn:disabled{opacity:.4;cursor:not-allowed;}
+.page-ellipsis{color:var(--text3);padding:0 2px;}
+
+/* 模板卡内容标签 */
+.tpl-tags{display:flex;flex-wrap:wrap;gap:6px;}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:6px;height:6px;}
+::-webkit-scrollbar-track{background:var(--bg2);}
+::-webkit-scrollbar-thumb{background:#c5c9ce;border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:var(--text3);}
+</style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<!-- ══════════════ PAGE: PROJECTS ══════════════ -->
+<div id="page-projects" class="page">
+  <div class="topbar">
+    <!-- 居中而不是基线对齐：返回按钮 13px、页名 14.5px，共用基线会把大的那段整体压低
+         1.75px，跟红绿灯（中心 y=26）和返回按钮排不到一条中轴线上 -->
+    <div style="display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;">
+      <button class="bk" onclick="goHome()" title="返回首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" style="align-self:center"><path d="m14.5 17-5-5 5-5"/></svg>首页</button>
+      <span class="ptitle">素材制作</span>
+    </div>
+    <div class="topbar-right">
+      <span id="user-display" style="font-size:13px;color:var(--text2)"></span>
+      <div class="avatar" id="user-avatar" onclick="toggleAvatarMenu(event)"><span id="user-avatar-letter">?</span>
+        <div class="avatar-menu hidden" id="avatar-menu">
+          <div class="avatar-menu-item danger" onclick="logoutToHome()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            退出登录
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="gbar" id="gbar">
+    <div class="gseg" data-seg>
+      <span class="seg-thumb"></span>
+      <button class="on" id="vt-projects" onclick="switchView('projects')">我的项目</button>
+      <button id="vt-templates" onclick="switchView('templates')">成片模板</button>
+    </div>
+    <div class="gsearch" id="bar-search-projects">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="search-input" placeholder="搜索项目…" oninput="filterProjects(this.value)">
+    </div>
+    <div class="gsearch hidden" id="bar-search-templates">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="tpl-search-input" placeholder="搜索模板…" oninput="filterTemplates(this.value)">
+    </div>
+    <span class="gcount" id="bar-count"></span>
+    <div class="gacts" id="bar-acts-projects">
+      <button class="btn btn-primary" onclick="openCreateModal()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M5 12h14"/><path d="M12 5v14"/></svg>新建项目</button>
+    </div>
+    <div class="gacts hidden" id="bar-acts-templates">
+      <button class="btn btn-secondary" onclick="importTemplatePackage()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>导入模板包</button>
+      <button class="btn btn-primary" onclick="openNewTemplateModal()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M5 12h14"/><path d="M12 5v14"/></svg>新建模板</button>
+    </div>
+  </div>
+  <div class="main-content">
+    <!-- 我的项目 -->
+    <div id="view-projects">
+      <div id="projects-grid" class="projects-grid">
+        <div class="empty-state" style="grid-column:1/-1">
+          <div class="empty-text">加载中…</div>
+        </div>
+      </div>
+      <div id="projects-pagination" class="pagination"></div>
+    </div>
+    <!-- 成片模板 -->
+    <div id="view-templates" class="hidden">
+      <div id="templates-grid" class="projects-grid">
+        <div class="empty-state" style="grid-column:1/-1">
+          <div class="empty-text">加载中…</div>
+        </div>
+      </div>
+      <div id="templates-pagination" class="pagination"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ MODAL: CREATE PROJECT ══════════════ -->
+<div id="modal-create" class="modal-overlay hidden" onclick="if(event.target===this)closeCreateModal()">
+  <div class="modal-glass">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">新建项目</div>
+      <button class="modal-close" onclick="closeCreateModal()">×</button>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">项目标题 *</label>
+      <input class="input" id="c-title" placeholder="请输入项目标题">
+      <div id="c-title-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">项目描述</label>
+      <textarea class="input" id="c-desc" placeholder="选填，描述内容方向"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">导出文件命名</label>
+      <input class="input" id="c-alias" placeholder="署名" maxlength="20">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">命名规则：项目标题_SkyArt_日期_<span style="color:var(--text)">署名</span>_编号</div>
+      <div id="c-alias-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">导出目录</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input class="input" id="c-export-path" placeholder="默认：应用数据目录" readonly style="flex:1;cursor:pointer;" onclick="pickExportPath('c-export-path')">
+        <button type="button" class="btn btn-secondary" onclick="pickExportPath('c-export-path')">选择文件夹</button>
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('c-export-path').value=''">清除</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">导出的成片保存到此目录下的剧名子文件夹；留空用应用默认目录</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">AI 分析模型</label>
+      <select class="input" id="c-ai-model">
+        <option value="gemini-3.5-flash">Gemini-3.5-Flash（默认）</option>
+        <option value="qwen-vl-max">Qwen 3.7 Plus</option>
+      </select>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">目标平台</label>
+        <select class="input" id="c-platform">
+          <option value="TikTok">TikTok</option>
+          <option value="Meta">Meta</option>
+          <option value="AppLovin">AppLovin</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Prompt 模板</label>
+        <select class="input" id="c-prompt">
+          <option value="默认模板">默认模板</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group" id="drama-link-group" style="display:none">
+      <label class="form-label">关联短剧创作项目（可选）</label>
+      <select class="input" id="c-drama-project">
+        <option value="">— 不关联，独立上传视频 —</option>
+      </select>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">关联后可使用短剧创作里的剧集视频</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">上传短剧视频 *</label>
+      <input type="file" id="modal-file-input" multiple accept="video/mp4,video/quicktime,video/x-msvideo,video/webm,video/x-matroska" style="display:none" onchange="onModalFilesSelected(this.files)">
+      <div class="upload-area" id="modal-upload-area"
+        onclick="document.getElementById('modal-file-input').click()"
+        ondragover="event.preventDefault();this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="event.preventDefault();this.classList.remove('drag-over');onModalFilesSelected(event.dataTransfer.files)">
+        <div class="upload-icon"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="28" height="28"><path d="M12 3v12"/><path d="m17 8-5-5-5 5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></div>
+        <div id="modal-upload-label">点击或拖拽短剧视频文件到此处</div>
+        <div class="upload-hint">支持 MP4、MOV 等格式，可批量上传（每个文件对应一集）</div>
+      </div>
+      <div id="modal-file-list" class="file-list" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeCreateModal()">取消</button>
+      <button class="btn btn-primary" id="create-btn" onclick="createProject()">创建项目</button>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- 编辑项目弹窗 -->
+<div id="modal-edit" class="modal-overlay hidden" onclick="if(event.target===this)closeEditModal()">
+  <div class="modal-glass">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">编辑项目</div>
+      <button class="modal-close" onclick="closeEditModal()">×</button>
+    </div>
+    <input type="hidden" id="e-pid">
+
+    <div class="form-group">
+      <label class="form-label">项目标题 *</label>
+      <input class="input" id="e-title" placeholder="请输入项目标题">
+      <div id="e-title-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">项目描述</label>
+      <textarea class="input" id="e-desc" placeholder="选填，描述内容方向"></textarea>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">导出文件命名</label>
+      <input class="input" id="e-alias" placeholder="署名" maxlength="20">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">命名规则：项目标题_SkyArt_日期_<span style="color:var(--text)">署名</span>_编号</div>
+      <div id="e-alias-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">AI 分析模型</label>
+      <select class="input" id="e-ai-model">
+        <option value="gemini-3.5-flash">Gemini-3.5-Flash（默认）</option>
+        <option value="qwen-vl-max">Qwen 3.7 Plus</option>
+      </select>
+    </div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label class="form-label">目标平台</label>
+        <select class="input" id="e-platform">
+          <option value="TikTok">TikTok</option>
+          <option value="Meta">Meta</option>
+          <option value="AppLovin">AppLovin</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Prompt 模板</label>
+        <select class="input" id="e-prompt">
+          <option value="默认模板">默认模板</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">默认成片模板</label>
+      <select class="input" id="e-template"><option value="">（不套模板）</option></select>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">导出时预填，可当场改</div>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">导出目录</label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input class="input" id="e-export-path" placeholder="默认：应用数据目录" readonly style="flex:1;cursor:pointer;" onclick="pickExportPath('e-export-path')">
+        <button type="button" class="btn btn-secondary" onclick="pickExportPath('e-export-path')">选择文件夹</button>
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('e-export-path').value=''">清除</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">导出的成片保存到此目录下的剧名子文件夹；留空用应用默认目录</div>
+    </div>
+
+    <div class="form-group" id="e-sources-group" style="display:none">
+      <label class="form-label">源视频 <span id="e-sources-cnt" style="color:var(--text3);font-weight:400"></span></label>
+      <div id="e-sources-list" style="max-height:180px;overflow-y:auto;display:flex;flex-direction:column;gap:4px"></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">转场时长为自动检测，当前仅标注</div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeEditModal()">取消</button>
+      <button class="btn btn-primary" id="edit-save-btn" onclick="saveEditProject()">保存</button>
+    </div>
+  </div>
+  </div>
+</div>
+
+<!-- 新建模板弹窗 -->
+<div id="modal-new-tpl" class="modal-overlay hidden" onclick="if(event.target===this)closeNewTemplateModal()">
+  <div class="modal-glass">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">新建成片模板</div>
+      <button class="modal-close" onclick="closeNewTemplateModal()">×</button>
+    </div>
+    <div class="form-group">
+      <label class="form-label">模板名称 *</label>
+      <input class="input" id="nt-name" placeholder="如：Vows-常规投放版" maxlength="100">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeNewTemplateModal()">取消</button>
+      <button class="btn btn-primary" id="nt-create-btn" onclick="createTemplate()">创建</button>
+    </div>
+  </div>
+  </div>
+</div>
+
+<input type="file" id="tpl-import-input" accept=".skytpl,application/zip,application/octet-stream" style="display:none">
+
+<script src="../../shared/liquid-lens.js"></script>
+<script src="ui-kit.js"></script>
+<script>
+const _PORT = (window.electronAPI && window.electronAPI.backendPort) || 8764;
+const API   = `http://127.0.0.1:${_PORT}/api/v1`;
+let authToken   = localStorage.getItem('skyart_token') || '';
+let currentUser = null;
+let currentRole = null;
+let allProjects = [];
+let allTemplates = [];
+let pendingFiles = [];
+let currentView = 'projects';   // projects | templates
+let templatesLoaded = false;
+const PAGE_SIZE = 12;
+let projPage = 1, tplPage = 1;
+let projFilter = '', tplFilter = '';
+
+// ── API ──────────────────────────────────────────────────────
+async function apiFetch(path, opts = {}) {
+  const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+  if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+  const res = await fetch(API + path, { ...opts, headers });
+  if (res.status === 401) { clearAuth(); throw new Error('未授权'); }
+  if (!res.ok) {
+    const txt = await res.text().catch(() => res.statusText);
+    throw new Error(txt || res.statusText);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+async function apiUpload(path, formData) {
+  const res = await fetch(API + path, {
+    method: 'POST',
+    headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+    body: formData,
+  });
+  if (res.status === 401) { clearAuth(); throw new Error('未授权'); }
+  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  return res.json();
+}
+
+function clearAuth() {
+  localStorage.removeItem('skyart_token');
+  window.location.href = '../../home.html';
+}
+
+// ── Init ─────────────────────────────────────────────────────
+async function init() {
+  if (!authToken) { clearAuth(); return; }
+  try {
+    const me = await apiFetch('/auth/me');
+    currentUser = me.username;
+    currentRole = me.role || 'admin';
+    document.getElementById('user-display').textContent = currentUser;
+    document.getElementById('user-avatar-letter').textContent = currentUser[0].toUpperCase();
+    if (currentRole === 'admin') {
+      document.getElementById('drama-link-group').style.display = 'block';
+      loadDramaProjects();
+    }
+    await loadProjects();
+    // 从模板编辑器返回时带 ?view=templates：落到成片模板 tab，而不是我的项目
+    if (new URLSearchParams(location.search).get('view') === 'templates') switchView('templates');
+  } catch { clearAuth(); }
+}
+
+// ── Navigation ───────────────────────────────────────────────
+function goHome() { window.location.href = '../../home.html'; }
+function toggleAvatarMenu(e) {
+  e.stopPropagation();
+  document.getElementById('avatar-menu').classList.toggle('hidden');
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#user-avatar')) document.getElementById('avatar-menu')?.classList.add('hidden');
+});
+function logoutToHome() { clearAuth(); }  // 清 token 后回首页，首页会转到登录态
+
+function enterProject(pid) {
+  window.location.href = `editor.html?projectId=${pid}`;
+}
+
+// ── Projects ─────────────────────────────────────────────────
+async function loadProjects() {
+  try {
+    allProjects = await apiFetch('/admake/projects');
+    renderProjects();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function filterProjects(q) {
+  projFilter = q || '';
+  projPage = 1;
+  renderProjects();
+}
+
+// 通用前端翻页：算出当前页要显示的切片，并渲染页码条。
+// 返回本页数据，页码按钮点了调 gotoFn(n)。
+function paginate(items, page, containerId, gotoFn, setPage) {
+  const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+  const cur = Math.min(page, totalPages);
+  // 钳制结果必须写回状态，只算不写会留下一个越界的页码：
+  // 13 个项目时第 2 页只有 1 个，删掉它就剩 1 页、翻页条自动隐藏，看着一切正常，
+  // 但 projPage 还停在 2；之后新建项目让页数回到 2，这里就拿着旧值把人送到第 2 页，
+  // 那一页只有一个项目——不是用户翻过去的，是它自己跳的。
+  if (cur !== page && typeof setPage === 'function') setPage(cur);
+  const slice = items.slice((cur - 1) * PAGE_SIZE, cur * PAGE_SIZE);
+  renderPagination(containerId, totalPages, cur, gotoFn);
+  return slice;
+}
+
+function renderPagination(containerId, totalPages, cur, gotoFn) {
+  const el = document.getElementById(containerId);
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  // 页码收敛：首页、末页、当前页 ±1，其余用省略号
+  const nums = new Set([1, totalPages, cur, cur - 1, cur + 1]);
+  const pages = [...nums].filter(n => n >= 1 && n <= totalPages).sort((a, b) => a - b);
+  let html = `<button class="page-btn" ${cur === 1 ? 'disabled' : ''} onclick="${gotoFn}(${cur - 1})">‹</button>`;
+  let prev = 0;
+  for (const n of pages) {
+    if (n - prev > 1) html += `<span class="page-ellipsis">…</span>`;
+    html += `<button class="page-btn ${n === cur ? 'active' : ''}" onclick="${gotoFn}(${n})">${n}</button>`;
+    prev = n;
+  }
+  html += `<button class="page-btn" ${cur === totalPages ? 'disabled' : ''} onclick="${gotoFn}(${cur + 1})">›</button>`;
+  el.innerHTML = html;
+}
+
+function gotoProjPage(n) { projPage = n; renderProjects(); window.scrollTo(0, 0); }
+function gotoTplPage(n)  { tplPage  = n; renderTemplates(); window.scrollTo(0, 0); }
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+
+function renderProjects() {
+  syncBarCount();
+  const grid = document.getElementById('projects-grid');
+  const q = projFilter.trim().toLowerCase();
+  const filtered = q ? allProjects.filter(p => p.title.toLowerCase().includes(q)) : allProjects;
+  if (!filtered.length) {
+    document.getElementById('projects-pagination').innerHTML = '';
+    grid.classList.add('is-empty');
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <div class="empty-text">${q ? '没有匹配的项目' : '还没有项目'}</div>
+      <div class="empty-sub">${q ? '换个关键词试试' : '点击「新建项目」开始创作'}</div>
+    </div>`;
+    return;
+  }
+  grid.classList.remove('is-empty');
+  const projects = paginate(filtered, projPage, 'projects-pagination', 'gotoProjPage', n => { projPage = n; });
+  grid.innerHTML = projects.map((p, idx) => {
+    const desc = (p.description || '暂无描述').slice(0, 32);
+    return `
+    <div class="project-card" onclick="enterProject(${p.id})">
+      <div class="project-card-header${p.all_done ? ' done' : ''}">
+        <div class="project-card-title">${esc(p.title)}</div>
+        <div class="project-card-menu" onclick="event.stopPropagation()">
+          <button class="three-dots-btn" onclick="toggleDropdown(event,${p.id})">⋯</button>
+          <div class="dropdown-menu hidden" id="dd-${p.id}">
+            <a onclick="openEditModal(${p.id})">编辑项目</a>
+            <a class="danger" onclick="deleteProject(${p.id})">删除项目</a>
+          </div>
+        </div>
+      </div>
+      <div class="project-card-body">
+        <div class="project-card-meta">
+          <span class="chip">${esc(p.target_platform)}</span>
+          <span class="chip">源视频 ${p.source_count}</span>
+          <span class="chip">Part ${p.part_count}</span>
+        </div>
+        <div class="project-card-footer">
+          <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(desc)}</span>
+          <span>${fmtDate(p.updated_at)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  bindCardGlass();          // 重绘后卡片是新元素，玻璃和液态要重挂
+}
+
+// 菜单一开就把所在卡片抬到最上层。卡片自己带 backdrop-filter，那会生成层叠上下文，
+// 菜单里的 z-index:50 只在这张卡内部有效——同一列下面那张卡在 DOM 里靠后，会盖住
+// 菜单溢出卡底的那一截。模板卡的菜单有五项、180px 高，正好溢出十几像素。
+function _liftCardFor(menu, on) {
+  const card = menu && menu.closest('.project-card');
+  if (card) card.classList.toggle('menu-open', !!on);
+}
+function _closeAllDropdowns() {
+  document.querySelectorAll('.dropdown-menu').forEach(m => {
+    m.classList.add('hidden'); _liftCardFor(m, false);
+  });
+}
+
+function toggleDropdown(event, pid) {
+  event.stopPropagation();
+  const dd = document.getElementById(`dd-${pid}`);
+  const wasHidden = dd.classList.contains('hidden');
+  _closeAllDropdowns();
+  if (wasHidden) { dd.classList.remove('hidden'); _liftCardFor(dd, true); }
+}
+document.addEventListener('click', () => _closeAllDropdowns()
+);
+
+async function deleteProject(pid) {
+  if (!confirm('确认删除该项目？')) return;
+  try {
+    await apiFetch(`/admake/projects/${pid}`, { method: 'DELETE' });
+    toast('已删除', 'success');
+    await loadProjects();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+// ── Edit project modal ────────────────────────────────────────
+// ── 命名字段校验：剧名 / 导出文件命名 共用规则，跟后端 _validate_naming_field 保持一致 ──
+const NAMING_BANNED_RE = /[\/\\*?"<>|_]/;
+
+function checkNamingField(value, label, maxLen, allowMidColon) {
+  if (!value) return '';
+  if (value.length > maxLen) return `${label}不能超过 ${maxLen} 个字符`;
+  const bad = value.match(NAMING_BANNED_RE);
+  if (bad) return `${label}包含不支持的符号「${bad[0]}」，请修改后重试`;
+  const startsColon = value.startsWith(':') || value.startsWith('：');
+  const endsColon   = value.endsWith(':')   || value.endsWith('：');
+  if (allowMidColon) {
+    if (startsColon || endsColon) return `${label}不能以「：」开头或结尾`;
+  } else if (value.includes(':') || value.includes('：')) {
+    return `${label}不能包含「：」`;
+  }
+  return '';
+}
+
+function wireNamingValidation(inputId, errorId, label, maxLen, allowMidColon) {
+  const input = document.getElementById(inputId);
+  const errorEl = document.getElementById(errorId);
+  input.addEventListener('input', () => {
+    errorEl.textContent = checkNamingField(input.value.trim(), label, maxLen, allowMidColon);
+  });
+}
+wireNamingValidation('c-title', 'c-title-error', '项目标题', 40, true);
+wireNamingValidation('c-alias', 'c-alias-error', '导出文件命名', 20, false);
+wireNamingValidation('e-title', 'e-title-error', '项目标题', 40, true);
+wireNamingValidation('e-alias', 'e-alias-error', '导出文件命名', 20, false);
+
+// 选导出目录：优先原生文件夹选择器；浏览器预览态(无 electronAPI)退回手动输入
+async function pickExportPath(inputId) {
+  const inp = document.getElementById(inputId);
+  if (window.electronAPI && window.electronAPI.selectFolder) {
+    const dir = await window.electronAPI.selectFolder();
+    if (dir) inp.value = dir;
+  } else {
+    const v = prompt('输入导出目录的本地绝对路径（留空用默认目录）', inp.value || '');
+    if (v !== null) inp.value = v.trim();
+  }
+}
+
+async function openEditModal(pid) {
+  _closeAllDropdowns();
+  const project = allProjects.find(p => p.id === pid);
+  if (!project) return;
+  document.getElementById('e-pid').value       = pid;
+  document.getElementById('e-title').value     = project.title || '';
+  document.getElementById('e-desc').value      = project.description || '';
+  document.getElementById('e-ai-model').value  = project.ai_model || 'gemini-3.5-flash';
+  document.getElementById('e-platform').value  = project.target_platform || 'TikTok';
+  document.getElementById('e-prompt').value    = project.prompt_template || '默认模板';
+  document.getElementById('e-alias').value     = project.editor_alias || '';
+  document.getElementById('e-export-path').value = project.export_path || '';
+  document.getElementById('e-title-error').textContent = '';
+  document.getElementById('e-alias-error').textContent = '';
+  // 默认模板下拉：拉模板列表填充，选中项目当前默认模板。
+  // 拉取失败时标记 dataset.ok=''：保存会跳过这个字段，不把空白当"清空默认模板"提交
+  {
+    const sel = document.getElementById('e-template');
+    try {
+      const tpls = templatesLoaded ? allTemplates : await apiFetch('/admake/templates');
+      sel.innerHTML = '<option value="">（不套模板）</option>' +
+        tpls.map(t => `<option value="${t.id}">${esc(t.name)}${t.is_default ? ' · 默认' : ''}</option>`).join('');
+      // 这个项目自己没指定过模板时，落到用户的默认模板上。
+      // 「不套模板」仍然选得到——预填只是省一次点击，不是不给选。
+      const fallback = (tpls.find(t => t.is_default) || {}).id;
+      sel.value = project.default_template_id ? String(project.default_template_id)
+                : (fallback ? String(fallback) : '');
+      sel.dataset.ok = '1';
+    } catch (e) {
+      sel.innerHTML = '<option value="">（模板列表加载失败，保存不会改动默认模板）</option>';
+      sel.dataset.ok = '';
+    }
+  }
+  document.getElementById('modal-edit').classList.remove('hidden');
+  setTimeout(() => document.getElementById('e-title').focus(), 50);
+  // 源视频列表（含片头/片尾转场检测标注）异步补上，拉不到就不显示这一节
+  const grp = document.getElementById('e-sources-group');
+  grp.style.display = 'none';
+  try {
+    const detail = await apiFetch(`/admake/projects/${pid}`);
+    const list = detail.sources || [];
+    if (list.length) {
+      document.getElementById('e-sources-cnt').textContent = `(${list.length})`;
+      document.getElementById('e-sources-list').innerHTML = list.map(sv => {
+        const tags = [];
+        if (sv.head_trim > 0) tags.push(`片头转场 ${sv.head_trim}s`);
+        if (sv.tail_trim > 0) tags.push(`片尾转场 ${sv.tail_trim}s`);
+        const tag = tags.length ? `<span style="font-size:10px;color:var(--accent);white-space:nowrap">${tags.join(' · ')}</span>` : '';
+        return `<div class="source-item"><div class="source-item-name" title="${esc(sv.original_filename)}">${esc(sv.original_filename)}</div>${tag}<span class="source-item-dur">${sv.duration_sec ? sv.duration_sec.toFixed(0) + 's' : '—'}</span></div>`;
+      }).join('');
+      grp.style.display = '';
+    }
+  } catch (e) { /* 列表拉不到不拦编辑 */ }
+}
+
+function closeEditModal() {
+  document.getElementById('modal-edit').classList.add('hidden');
+}
+
+async function saveEditProject() {
+  const pid   = parseInt(document.getElementById('e-pid').value);
+  const title = document.getElementById('e-title').value.trim();
+  const alias = document.getElementById('e-alias').value.trim();
+  if (!title) { toast('请填写项目标题', 'error'); return; }
+  const titleErr = checkNamingField(title, '项目标题', 40, true);
+  const aliasErr = checkNamingField(alias, '导出文件命名', 20, false);
+  if (titleErr) { toast(titleErr, 'error'); return; }
+  if (aliasErr) { toast(aliasErr, 'error'); return; }
+  const btn = document.getElementById('edit-save-btn');
+  btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    const body = {
+      title,
+      description:     document.getElementById('e-desc').value.trim() || null,
+      ai_model:        document.getElementById('e-ai-model').value,
+      target_platform: document.getElementById('e-platform').value,
+      prompt_template: document.getElementById('e-prompt').value,
+      editor_alias:    alias,
+      // "" = 清空自定义导出目录（后端把空串当清空哨兵，回默认目录）
+      export_path:     document.getElementById('e-export-path').value.trim(),
+    };
+    // 下拉框成功加载过才提交默认模板（0 = 清空哨兵）；
+    // 加载失败时跳过——否则空白下拉会把项目原有的默认模板静默清掉
+    const tplSel = document.getElementById('e-template');
+    if (tplSel.dataset.ok) body.default_template_id = Number(tplSel.value) || 0;
+    await apiFetch(`/admake/projects/${pid}`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    closeEditModal();
+    toast('已保存', 'success');
+    await loadProjects();
+  } catch (e) { toast(e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = '保存'; }
+}
+
+// ── Create project modal ──────────────────────────────────────
+function openCreateModal() {
+  document.getElementById('c-title').value = '';
+  document.getElementById('c-desc').value  = '';
+  document.getElementById('c-alias').value = '';
+  document.getElementById('c-export-path').value = '';
+  document.getElementById('c-title-error').textContent = '';
+  document.getElementById('c-alias-error').textContent = '';
+  pendingFiles = [];
+  renderModalFileList();
+  document.getElementById('modal-upload-label').textContent = '点击或拖拽短剧视频文件到此处';
+  document.getElementById('modal-create').classList.remove('hidden');
+  setTimeout(() => document.getElementById('c-title').focus(), 50);
+}
+
+function closeCreateModal() {
+  _pendingCreatedPid = null;  // 手动关掉=放弃本次流程，下次创建是全新项目
+  document.getElementById('modal-create').classList.add('hidden');
+}
+
+function onModalFilesSelected(fileList) {
+  const files = Array.from(fileList).filter(f =>
+    f.type.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name)
+  );
+  pendingFiles.push(...files);
+  renderModalFileList();
+  document.getElementById('modal-upload-label').textContent =
+    pendingFiles.length ? `已选择 ${pendingFiles.length} 个文件` : '点击或拖拽短剧视频文件到此处';
+  document.getElementById('modal-file-input').value = '';
+}
+
+function removeModalFile(idx) {
+  pendingFiles.splice(idx, 1);
+  renderModalFileList();
+  document.getElementById('modal-upload-label').textContent =
+    pendingFiles.length ? `已选择 ${pendingFiles.length} 个文件` : '点击或拖拽短剧视频文件到此处';
+}
+
+function fmtFileSize(bytes) {
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function renderModalFileList() {
+  const el = document.getElementById('modal-file-list');
+  if (!pendingFiles.length) { el.innerHTML = ''; return; }
+  el.innerHTML = pendingFiles.map((f, i) => `
+    <div class="file-item">
+      <span class="file-item-name" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="file-item-size">${fmtFileSize(f.size)}</span>
+      <button class="file-remove-btn" onclick="removeModalFile(${i})">✕</button>
+    </div>`).join('');
+}
+
+async function loadDramaProjects() {
+  try {
+    const list = await apiFetch('/projects');
+    const sel = document.getElementById('c-drama-project');
+    sel.innerHTML = '<option value="">— 不关联，独立上传视频 —</option>' +
+      list.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('');
+  } catch {}
+}
+
+// 创建流程分三步（建项目→传视频→合成 Part）；第 2/3 步失败重试时不再重新建项目，
+// 接着已建的项目继续传——否则每点一次"创建"就多出一个重名空项目
+let _pendingCreatedPid = null;
+
+async function createProject() {
+  const title = document.getElementById('c-title').value.trim();
+  const alias = document.getElementById('c-alias').value.trim();
+  if (!title) { toast('请填写项目标题', 'error'); return; }
+  const titleErr = checkNamingField(title, '项目标题', 40, true);
+  const aliasErr = checkNamingField(alias, '导出文件命名', 20, false);
+  if (titleErr) { toast(titleErr, 'error'); return; }
+  if (aliasErr) { toast(aliasErr, 'error'); return; }
+
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true;
+  btn.textContent = '创建中…';
+
+  try {
+    // Step 1: create project（重试时复用上次已建的，并把表单最新值同步过去——
+    // 用户失败后可能顺手改了标题/目录，不能悄悄丢掉）
+    let p;
+    const body = {
+      title,
+      description:      document.getElementById('c-desc').value.trim() || null,
+      ai_model:         document.getElementById('c-ai-model').value,
+      target_platform:  document.getElementById('c-platform').value,
+      prompt_template:  document.getElementById('c-prompt').value,
+      editor_alias:     alias,
+      export_path:      document.getElementById('c-export-path').value.trim() || null,
+      drama_project_id: document.getElementById('c-drama-project').value
+                        ? Number(document.getElementById('c-drama-project').value) : null,
+    };
+    if (_pendingCreatedPid) {
+      p = { id: _pendingCreatedPid };
+      const upd = { ...body };
+      delete upd.drama_project_id;               // 更新接口不改关联
+      upd.export_path = upd.export_path || '';   // 空 = 清空自定义目录
+      await apiFetch(`/admake/projects/${p.id}`, { method: 'PUT', body: JSON.stringify(upd) }).catch(() => {});
+    } else {
+      p = await apiFetch('/admake/projects', { method: 'POST', body: JSON.stringify(body) });
+      _pendingCreatedPid = p.id;
+    }
+
+    // Step 2: upload files
+    if (pendingFiles.length) {
+      btn.textContent = `上传视频 (${pendingFiles.length} 个)…`;
+      const fd = new FormData();
+      pendingFiles.forEach(f => fd.append('files', f));
+      await apiUpload(`/admake/projects/${p.id}/sources`, fd);
+
+      // Step 3: auto build-parts
+      btn.textContent = '合成 Part 中…';
+      await apiFetch(`/admake/projects/${p.id}/build-parts`, { method: 'POST' }).catch(() => {});
+    }
+
+    _pendingCreatedPid = null;  // 全流程成功才清，失败保留供重试续传
+    closeCreateModal();
+    toast('项目已创建' + (pendingFiles.length ? '，Part 视频合成中…' : ''), 'success');
+    enterProject(p.id);
+  } catch (e) {
+    toast(e.message + (_pendingCreatedPid ? '（项目已建好，点"创建项目"重试会继续上传，不会重复建）' : ''), 'error', 6000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '创建项目';
+  }
+}
+
+// ── 视图切换（我的项目 / 成片模板）────────────────────────────
+function switchView(v) {
+  currentView = v;
+  const isProj = v === 'projects';
+  document.getElementById('vt-projects').classList.toggle('on', isProj);
+  document.getElementById('vt-templates').classList.toggle('on', !isProj);
+  if (window.SkyUI) SkyUI.layoutSegs();
+  // 工具条右半边跟着视图换：两个视图的搜索框和操作按钮本来就不是同一套
+  document.getElementById('bar-search-projects').classList.toggle('hidden', !isProj);
+  document.getElementById('bar-search-templates').classList.toggle('hidden', isProj);
+  document.getElementById('bar-acts-projects').classList.toggle('hidden', !isProj);
+  document.getElementById('bar-acts-templates').classList.toggle('hidden', isProj);
+  document.getElementById('view-projects').classList.toggle('hidden', !isProj);
+  document.getElementById('view-templates').classList.toggle('hidden', isProj);
+  syncBarCount();
+  if (v === 'templates' && !templatesLoaded) loadTemplates();
+}
+
+// 工具条右侧的计数：跟着搜索走，不是总数
+function syncBarCount() {
+  const el = document.getElementById('bar-count');
+  if (!el) return;
+  if (currentView === 'projects') {
+    const q = projFilter.trim().toLowerCase();
+    const n = q ? allProjects.filter(p => p.title.toLowerCase().includes(q)).length : allProjects.length;
+    el.textContent = allProjects.length ? `${n} 个项目` : '';
+  } else {
+    const q = tplFilter.trim().toLowerCase();
+    const n = q ? allTemplates.filter(t => t.name.toLowerCase().includes(q)).length : allTemplates.length;
+    el.textContent = allTemplates.length ? `${n} 个模板` : '';
+  }
+}
+
+// ── 成片模板 ───────────────────────────────────────────────────
+async function loadTemplates() {
+  try {
+    allTemplates = await apiFetch('/admake/templates');
+    templatesLoaded = true;
+    renderTemplates();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function filterTemplates(q) {
+  tplFilter = q || '';
+  tplPage = 1;
+  renderTemplates();
+}
+
+// 从 config 提炼卡片上的内容标签（前贴/后贴/文字/贴纸/特效/闪白）
+function templateTags(config) {
+  const c = config || {};
+  const tags = [];
+  if (c.intro && c.intro.asset) tags.push('前贴');
+  if (c.outro && c.outro.asset) tags.push('后贴');
+  if (Array.isArray(c.texts) && c.texts.length) tags.push(`文字 ${c.texts.length}`);
+  if (Array.isArray(c.pngs)  && c.pngs.length)  tags.push(`贴纸 ${c.pngs.length}`);
+  if (Array.isArray(c.dyns)  && c.dyns.length)  tags.push(`特效 ${c.dyns.length}`);
+  if (c.transition === 'white') tags.push('闪白');
+  if (c.transition === 'black') tags.push('渐黑');
+  return tags.length ? tags : ['空模板'];
+}
+
+function renderTemplates() {
+  syncBarCount();
+  const grid = document.getElementById('templates-grid');
+  const q = tplFilter.trim().toLowerCase();
+  const filtered = q ? allTemplates.filter(t => t.name.toLowerCase().includes(q)) : allTemplates;
+  if (!filtered.length) {
+    document.getElementById('templates-pagination').innerHTML = '';
+    grid.classList.add('is-empty');
+    grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">
+      <div class="empty-text">${q ? '没有匹配的模板' : '还没有成片模板'}</div>
+      <div class="empty-sub">${q ? '换个关键词试试' : '新建一个模板开始'}</div>
+    </div>`;
+    return;
+  }
+  grid.classList.remove('is-empty');
+  const list = paginate(filtered, tplPage, 'templates-pagination', 'gotoTplPage', n => { tplPage = n; });
+  grid.innerHTML = list.map((t, idx) => {
+    const tags = templateTags(t.config).map(x => `<span class="chip">${esc(x)}</span>`).join('');
+    return `
+    <div class="project-card" onclick="editTemplate(${t.id})">
+      <div class="project-card-header">
+        <div class="project-card-title">${esc(t.name)}</div>
+        ${t.is_default ? '<span class="tpl-default-tag" title="新建项目和导出时会自动选中这个模板"><i></i>默认</span>' : ''}
+        <div class="project-card-menu" onclick="event.stopPropagation()">
+          <button class="three-dots-btn" onclick="toggleDropdownById(event,'dd-t${t.id}')">⋯</button>
+          <div class="dropdown-menu hidden" id="dd-t${t.id}">
+            <a onclick="editTemplate(${t.id})">编辑</a>
+            <a onclick="toggleDefaultTemplate(${t.id},${!t.is_default})">${t.is_default ? '取消默认模板' : '设为默认模板'}</a>
+            <a onclick="duplicateTemplate(${t.id})">复制</a>
+            <a onclick="exportTemplatePackage(${t.id})">导出分享</a>
+            <a class="danger" onclick="deleteTemplate(${t.id})">删除</a>
+          </div>
+        </div>
+      </div>
+      <div class="project-card-body">
+        <div class="project-card-meta tpl-tags">${tags}</div>
+        <div class="project-card-footer">
+          <span>${t.is_default ? '默认模板' : '成片模板'}</span>
+          <span>${fmtDate(t.updated_at)}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  bindCardGlass();          // 重绘后卡片是新元素，玻璃和液态要重挂
+}
+
+// 设为/取消默认模板。默认模板只影响"新建项目和导出面板的预填值"，
+// 不改任何已存在的项目——「不使用任何模板」仍然是可选项，预填不等于强制。
+async function toggleDefaultTemplate(tid, on) {
+  try {
+    await apiFetch(`/admake/templates/${tid}/default?on=${on ? 'true' : 'false'}`, { method: 'POST' });
+    // 同时只能有一个默认，本地整份跟着翻，不重新拉列表（拉一次要等一个来回）
+    allTemplates.forEach(t => { t.is_default = on && t.id === tid; });
+    renderTemplates();
+    const name = (allTemplates.find(t => t.id === tid) || {}).name || '';
+    toast(on ? `已设为默认模板：${name}。新建项目和导出时会自动选中它` : '已取消默认模板', 'success', 3500);
+  } catch (e) { toast('设置失败：' + e.message, 'error'); }
+}
+
+function toggleDropdownById(event, menuId) {
+  event.stopPropagation();
+  const dd = document.getElementById(menuId);
+  const wasHidden = dd.classList.contains('hidden');
+  _closeAllDropdowns();
+  if (wasHidden) { dd.classList.remove('hidden'); _liftCardFor(dd, true); }
+}
+
+function openNewTemplateModal() {
+  document.getElementById('nt-name').value = '';
+  document.getElementById('modal-new-tpl').classList.remove('hidden');
+  setTimeout(() => document.getElementById('nt-name').focus(), 50);
+}
+function closeNewTemplateModal() {
+  document.getElementById('modal-new-tpl').classList.add('hidden');
+}
+
+async function createTemplate() {
+  const name = document.getElementById('nt-name').value.trim();
+  if (!name) { toast('请填写模板名称', 'error'); return; }
+  const btn = document.getElementById('nt-create-btn');
+  btn.disabled = true; btn.textContent = '创建中…';
+  try {
+    const t = await apiFetch('/admake/templates', {
+      method: 'POST',
+      body: JSON.stringify({ name, config: {} }),
+    });
+    closeNewTemplateModal();
+    // 创建后直接进编辑页配置内容
+    window.location.href = `template-editor.html?templateId=${t.id}`;
+  } catch (e) { toast(e.message, 'error'); btn.disabled = false; btn.textContent = '创建'; }
+}
+
+function editTemplate(tid) {
+  _closeAllDropdowns();
+  window.location.href = `template-editor.html?templateId=${tid}`;
+}
+
+async function duplicateTemplate(tid) {
+  _closeAllDropdowns();
+  try {
+    await apiFetch(`/admake/templates/${tid}/duplicate`, { method: 'POST' });
+    toast('已复制', 'success');
+    await loadTemplates();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteTemplate(tid) {
+  _closeAllDropdowns();
+  if (!confirm('确认删除该模板？素材文件会一并删除，不可恢复。')) return;
+  try {
+    await apiFetch(`/admake/templates/${tid}`, { method: 'DELETE' });
+    toast('已删除', 'success');
+    await loadTemplates();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function downloadTemplatePackage(tid, name) {
+  try {
+    const res = await fetch(`${API}/admake/templates/${tid}/package`, {
+      headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+    });
+    if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${name || 'template'}.skytpl`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    toast('已导出模板包', 'success');
+  } catch (e) { toast('导出失败：' + e.message, 'error'); }
+}
+
+function exportTemplatePackage(tid) {
+  _closeAllDropdowns();
+  const t = allTemplates.find(x => x.id === tid);
+  downloadTemplatePackage(tid, t ? t.name : 'template');
+}
+
+function importTemplatePackage() {
+  const inp = document.getElementById('tpl-import-input');
+  inp.value = '';
+  inp.onchange = async () => {
+    const file = inp.files[0];
+    if (!file) return;
+    toast('导入中…', 'info');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      await apiUpload('/admake/templates/import', fd);
+      toast('模板包已导入', 'success');
+      switchView('templates');
+      templatesLoaded = false;
+      await loadTemplates();
+      templatesLoaded = true;
+    } catch (e) { toast('导入失败：' + e.message, 'error'); }
+  };
+  inp.click();
+}
+
+// ── Utils ─────────────────────────────────────────────────────
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// 深色胶囊＋图标圆点：浅色界面上一眼能认出是临时浮层，不会被当成顶栏的一部分
+const TOAST_ICON = {
+  success: '<path d="M4 12l6 6L20 6"/>',
+  error:   '<path d="M6 6l12 12M18 6L6 18"/>',
+  info:    '<path d="M12 8v5M12 16.5v.5"/>',
+};
+
+function toast(msg, type = 'info', ms = 3500) {
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  const dot = document.createElement('span');
+  dot.className = 'toast-dot';
+  dot.innerHTML = `<svg viewBox="0 0 24 24">${TOAST_ICON[type] || TOAST_ICON.info}</svg>`;
+  const text = document.createElement('span');
+  text.textContent = msg;          // 文本走 textContent，消息里含 < > 也不会被当标签解析
+  el.append(dot, text);
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), ms + 400);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeCreateModal(); closeEditModal(); closeNewTemplateModal(); }
+});
+
+// 卡片翻页、搜索、切视图都会重绘，玻璃和液态得跟着重挂。
+// LiquidLens.glass 内部按元素去重，重复调用只会更新参数，不会挂两遍。
+function bindCardGlass() {
+  if (!window.LiquidLens) return;
+  document.querySelectorAll('.project-card').forEach(c => c.classList.add('ll-raise'));
+  LiquidLens.glass('.project-card', { jelly: true });   // 参数走 liquid-lens 的 DEFAULTS，跟首页一致
+}
+
+// 顶栏和工具条上液态玻璃。等字体加载完再摆分段控件的滑块——字体没就位时字宽是错的。
+function initGlass() {
+  if (window.SkyUI) SkyUI.layoutSegs();
+  if (!window.LiquidLens) return;
+  LiquidLens.setJellyGain(2);
+  LiquidLens.mountBackdrop();                       // 工作台定位线（列表页内容稀疏，铺得住）
+  LiquidLens.glass('.topbar');
+  LiquidLens.glass('#gbar');
+  bindCardGlass();
+  // 按钮全部上液态。三点菜单不绑——它一点就弹菜单，形变会带着菜单一起抖
+  document.querySelectorAll('.btn, .page-btn').forEach(b =>
+    LiquidLens.bindJelly(b, { amp: 1.2, freq: 3.6, dur: 520 }));
+  // 弹窗关着时量不到尺寸，位移图等它显示出来再算。按玻璃圈的父节点盯 class 变化，
+  // 以后新加弹窗只要套上玻璃圈就自动生效。玻璃圈自己已经有内缘高光，不再叠一层 6D 镜边。
+  document.querySelectorAll('.modal-glass').forEach(g => {
+    LiquidLens.glass(g, { band: 6, sat: 150, bright: 106, rim: false });
+    const shell = g.parentElement;
+    if (!shell) return;
+    new MutationObserver(() => {
+      if (!shell.classList.contains('hidden')) LiquidLens.refresh();
+    }).observe(shell, { attributeFilter: ['class'] });
+  });
+
+}
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(initGlass);
+else window.addEventListener('load', initGlass);
+initGlass();
+
+init();
+</script>
+<script src="task-float.js"></script>
+</body>
+</html>
