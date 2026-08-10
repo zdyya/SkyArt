@@ -11,19 +11,18 @@ permissions:
 
 jobs:
   build:
-    # 两个架构各出一个 DMG。PyInstaller 不能跨架构编译，Intel 包必须在 Intel 机器上打。
-    # macos-14 已被 GitHub 标记废弃；老的 macos-13 Intel 机器已退役，现存唯一的 Intel
-    # 标签是 macos-15-intel（大型运行器，计费更高）。
+    # 只出 Apple 芯片包（2026-08-10 起）：业务同事已全部换到 M 芯片机器，而 Intel 包只能在
+    # Intel 机器上打（PyInstaller 不能跨架构编译），现存唯一的 Intel 标签 macos-15-intel 是
+    # 大型运行器、计费更高。要恢复双架构就在 matrix 里加回
+    # `- arch: x64 / runner: macos-15-intel / pack: pack:x64`，本地打 Intel 包的
+    # `npm run pack:x64` 一直留着没删。
     strategy:
-      fail-fast: false          # Intel 跑挂了不连累 arm64
+      fail-fast: false
       matrix:
         include:
           - arch: arm64
             runner: macos-15
             pack: pack
-          - arch: x64
-            runner: macos-15-intel
-            pack: pack:x64
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: '13.0'

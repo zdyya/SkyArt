@@ -211,6 +211,8 @@ body.dirty #savebar{transform:translateX(-50%) translateY(0);opacity:1;pointer-e
 .strip{position:absolute;left:0;right:0;height:26px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:rgba(255,255,255,.92);background:rgba(0,0,0,.45);z-index:6;pointer-events:none;}
 .strip.pre{top:0;}.strip.post{bottom:0;}
 .film{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.28);font-size:12px;pointer-events:none;}
+/* 垫了样例视频就不用再提示"这里是正片画面"——画面自己就在那儿，字压在上面像水印 */
+.canvas:has(.sample-bg) .film{display:none;}
 .flash{position:absolute;inset:0;background:#fff;z-index:9;pointer-events:none;opacity:0;}
 .layer{position:absolute;z-index:4;cursor:grab;}
 .layer.dragging{cursor:grabbing;}
@@ -870,8 +872,10 @@ function fitText(raw, baseFs, fam) {
 function elInner(o, k) {
   if (k === 't') {
     const raw = resolveVars(o.content);
-    // 拉丁字体遇中文自动换中文字体，和后端一致，不出方框
-    const useCJK = EN_FONTS.includes(o.style) && /[一-鿿]/.test(raw);
+    // 拉丁字体遇中文自动换中文字体，和后端一致，不出方框。判据除了汉字还要含 CJK 标点
+    // （《》「」）和全角符号（！？）——英文展示体的字库里同样没有这些字形。
+    // 另一份在 backend/app/services/postprocess.py::_has_cjk。
+    const useCJK = EN_FONTS.includes(o.style) && /[一-鿿㐀-䶿　-〿＀-￯]/.test(raw);
     const famKey = useCJK ? '黑体' : (FONT_CSS[o.style] ? o.style : '黑体');
     const fam = FONT_CSS[famKey];
     // 字号按后端导出字号等比换算 + 超宽先缩后换行（所见即所得）
@@ -948,7 +952,7 @@ function renderPreview() {
   c.style.background = FRAMES[frameIdx];
   c.querySelectorAll('.layer, .strip, .clip-preview:not(.sample-bg)').forEach(e => e.remove());
   const v = projVars();
-  document.getElementById('foot-name').textContent = `《${v.剧名}》`;
+  document.getElementById('foot-name').textContent = v.剧名;
   updateSampleVisibility();
   // 片头/片尾画面：直接播上传的贴片视频（看传对了没有）。贴纸/文字只叠在正片上，
   // 不会出现在贴片里，所以这两个画面不渲染叠加层。
@@ -1134,7 +1138,9 @@ function addText() {
   const firstStyle = titleIsCJK ? '宋体' : 'Playfair';
   cfg.texts.push({
     id, label: first ? '剧名' : '文字',
-    content: first ? '《{剧名}》' : '新文字',
+    // 不给剧名套书名号：《》是中文标点，八个英文展示体（Anton/Lobster 等）字库里都没有
+    // 这个字形，英文剧名配英文字体时会渲成占位方框。要书名号自己在内容框里打。
+    content: first ? '{剧名}' : '新文字',
     style: first ? firstStyle : (titleIsCJK ? '黑体' : 'Poppins'),
     color: first ? '金' : '白',
     effect: first ? '立体' : '平面',

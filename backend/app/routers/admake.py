@@ -434,40 +434,119 @@ def _cluster_marks(items: list[dict], kind: str) -> None:
                 reps.append(m)
 
 
-def _plan_shunjian_combos(
-    combos: list[tuple[dict, dict]],
-    count: int,
-) -> list[tuple[dict, dict]]:
-    """为高光顺剪规划 count 条导出的 (高光, 钩子) 配对：组合去重 + 素材均衡 + 超额错开。
+# 双高光枚举上限：组合数是候选配对数的平方，配对多了接口会卡住。按分数取前 60 个配对
+# 参与组合，最多约 1770 种，足够覆盖各档时长；被截掉的部分打日志，不静默丢。
+_DOUBLE_POOL_MAX = 60
 
-    combos 已按质量排序（贴合时长区间 > 接近中点 > 分数和）。规则：
-    - 每条在"未用过的组合"里，选累计出镜最少的高光/钩子（均衡），
-      权重相同时保持质量顺序（高分先出）；
-    - 合法组合全部用尽（count 超过配对数）才重置，超出部分继续按均衡轮转，
+
+def _pair_is_legal(mode: str, hl: dict, hk: dict, parts_ordered: list[dict]) -> bool:
+    """这一对高光/钩子在该模式下能不能出片。高光顺剪要求钩子排在高光之后（同 Part 看时间、
+    跨 Part 看 part_index）；悬疑倒置是把钩子放到高光前面拼，只要求同 Part 时两段不重叠，
+    否则重叠那截会在成片里播两遍。"""
+    if mode == "highlight_shunjian":
+        return _estimate_pair_duration(hl, hk, parts_ordered) is not None
+    return hl["part_id"] != hk["part_id"] or hk["start"] > hl["end"]
+
+
+def _double_combo_ok(first: tuple[dict, dict], second: tuple[dict, dict]) -> bool:
+    """双高光的两组配对能不能凑成一条成片。三个条件：两段高光不能是同一段、不能同 Part
+    重叠超过较短段一半（两段几乎一样的画面拼一起，观众等于连看两遍）、两个钩子也不能是
+    同一段（否则同一截钩子在一条成片里播两遍）。钩子这条对齐改造前逐条挑选时
+    used_hk_keys 的去重效果，别在换成组合枚举后丢掉。"""
+    hl_first, hk_first = first
+    hl_second, hk_second = second
+    if _mark_key(hl_first) == _mark_key(hl_second):
+        return False
+    if _mark_key(hk_first) == _mark_key(hk_second):
+        return False
+    inter = _overlap_len(hl_first, hl_second)
+    shorter = min(hl_first["end"] - hl_first["start"], hl_second["end"] - hl_second["start"])
+    return inter <= 0.5 * shorter
+
+
+def _estimate_plan_duration(mode: str, pairs: list[tuple[dict, dict]],
+                            parts_ordered: list[dict]) -> float:
+    """这套配对最终会出多长的成片，按 _plan_export 真实产出的段落累加。
+
+    选材的估算口径必须和最终成片同源。2026-08-10 那次 3 分钟目标导出 6 分 12 秒，
+    根子就在估算和实际各算一套，所以这里直接调用产出 plan 的那个函数，不另写公式。
+    """
+    return sum(seg["end"] - seg["start"]
+               for seg in _plan_export(mode, pairs, parts_ordered)
+               if seg["end"] > seg["start"])
+
+
+def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
+                 parts_ordered: list[dict], target_sec: float) -> list[list[tuple[dict, dict]]]:
+    """把所有能出片的素材组合按「成片时长离目标多近」排序，贴合度相同时分数高的在前。
+
+    返回的每一项是一条成片要用的全部配对：高光顺剪和悬疑倒置各 1 对，双高光 2 对。
+    三种模式共用这一个排序口径，界面上的目标时长因此对全部模式生效。
+    """
+    singles = [(hl, hk) for hl in highlights for hk in hooks
+               if _pair_is_legal(mode, hl, hk, parts_ordered)]
+    if mode != "shuanggaoguang":
+        scored = [([pair], _estimate_plan_duration(mode, [pair], parts_ordered))
+                  for pair in singles]
+    else:
+        singles.sort(key=lambda p: -(p[0]["score"] + p[1]["score"]))
+        if len(singles) > _DOUBLE_POOL_MAX:
+            log_event("admake.export.double_pool_capped",
+                      total_pairs=len(singles), capped_to=_DOUBLE_POOL_MAX)
+            singles = singles[:_DOUBLE_POOL_MAX]
+        scored = []
+        for i, first in enumerate(singles):
+            for second in singles[i + 1:]:
+                if not _double_combo_ok(first, second):
+                    continue
+                combo = [first, second]
+                scored.append((combo, _estimate_plan_duration(mode, combo, parts_ordered)))
+    scored.sort(key=lambda item: (
+        abs(item[1] - target_sec),
+        -sum(mark["score"] for pair in item[0] for mark in pair),
+    ))
+    return [combo for combo, _ in scored]
+
+
+def _plan_combos(
+    combos: list[list[tuple[dict, dict]]],
+    count: int,
+) -> list[list[tuple[dict, dict]]]:
+    """规划 count 条导出各用哪套配对：组合去重 + 素材均衡 + 超额错开。
+
+    combos 已按 _rank_combos 排好序（离目标时长越近越靠前，同样贴合时分数高的在前）。
+    每一项是一条成片要用的全部配对，所以三种模式共用这一套规划。规则：
+    - 每条在"未用过的组合"里，选累计出镜最少的素材（均衡），
+      权重相同时保持排序顺序（更贴合目标、分数更高的先出）；
+    - 合法组合全部用尽（count 超过组合数）才重置，超出部分继续按均衡轮转，
       不像旧实现那样从头复制导致连续重复。
 
-    不重复上限 = 合法配对数 len(combos)（不再是 min(高光数, 钩子数)）。
+    不重复上限 = 组合数 len(combos)。
     """
     if not combos:
         return []
-    planned: list[tuple[dict, dict]] = []
+    planned: list[list[tuple[dict, dict]]] = []
     used: set[tuple] = set()
-    hl_use: dict[tuple, int] = {}
-    hk_use: dict[tuple, int] = {}
+    use_count: dict[tuple, int] = {}
     for _ in range(count):
-        pool = [(hl, hk) for hl, hk in combos
-                if (_mark_key(hl), _mark_key(hk)) not in used]
+        pool = [c for c in combos if _combo_key(c) not in used]
         if not pool:          # 组合用尽，重置后继续均衡轮转
             used.clear()
             pool = list(combos)
-        # min 稳定：权重相同取 pool 中靠前者（质量更高）
-        hl, hk = min(pool, key=lambda p: hl_use.get(_mark_key(p[0]), 0)
-                     + hk_use.get(_mark_key(p[1]), 0))
-        used.add((_mark_key(hl), _mark_key(hk)))
-        hl_use[_mark_key(hl)] = hl_use.get(_mark_key(hl), 0) + 1
-        hk_use[_mark_key(hk)] = hk_use.get(_mark_key(hk), 0) + 1
-        planned.append((hl, hk))
+        # min 稳定：权重相同取 pool 中靠前者（更贴合目标）
+        chosen = min(pool, key=lambda c: sum(
+            use_count.get(_mark_key(mark), 0) for pair in c for mark in pair))
+        used.add(_combo_key(chosen))
+        for pair in chosen:
+            for mark in pair:
+                use_count[_mark_key(mark)] = use_count.get(_mark_key(mark), 0) + 1
+        planned.append(chosen)
     return planned
+
+
+def _combo_key(combo: list[tuple[dict, dict]]) -> tuple:
+    """一套配对的去重标识：按顺序取每对的高光/钩子标识。"""
+    return tuple((_mark_key(hl), _mark_key(hk)) for hl, hk in combo)
 
 
 def _pick_diverse(items: list[dict], used: set[tuple]) -> dict:
@@ -567,11 +646,11 @@ def _write_export_log(
         lines.append(f"批次序号：{batch_info['index']}/{batch_info['count']}")
         pool_line = f"候选池：高光 {batch_info['n_hl']} 个 / 钩子 {batch_info['n_hk']} 个"
         if batch_info.get("n_combos") is not None:
-            pool_line += f" / 合法配对 {batch_info['n_combos']} 个"
+            pool_line += f" / 可用组合 {batch_info['n_combos']} 个"
         lines.append(pool_line)
-        # 高光顺剪走组合级去重（方案二），不重复上限 = 合法配对数；
-        # 其他模式每条同时消耗一高光一钩子，上限仍是 min(高光数, 钩子数)。
-        if batch_info.get("n_combos") is not None:
+        # 三种模式都走组合级去重，不重复上限就是可用组合数。没有任何合法组合时（走单点
+        # 降级挑选）才退回 min(高光数, 钩子数)。
+        if batch_info.get("n_combos"):
             pool_size = batch_info["n_combos"]
         else:
             pool_size = min(batch_info['n_hl'], batch_info['n_hk'])
@@ -2195,47 +2274,32 @@ async def create_project_export(
                   clamped_to=_MIN_BODY_SEC)
         body_target = _MIN_BODY_SEC
 
-    # 对 highlight_shunjian 模式：预计算所有合法配对，按离目标时长的距离排序。
+    # 三种模式统一按「成片时长离目标多近」排候选，界面上的目标时长因此对全部模式生效。
     #
-    # 早先这里是"先看落没落在 [min,max] 区间内，再比离区间中点的距离"。两个毛病：
-    # 界面上三档区间（2-4/5-7/9-12 分）之间留着 4-5 分和 7-9 分两段缝，落在缝里的
-    # 配对任何一档都选不中——拿真实项目算过，38 种配对里有 14 种（37%）永远轮不上；
-    # 而且"在区间内"是个硬门槛，会让一个刚好卡在中点、评分平平的配对，赢过只差
-    # 半分钟但两段都是高分的配对。
-    #
-    # 现在只留一个目标值，每种配对归到离它最近的那一档，天然不重不漏。
-    hl_shunjian_combos: list[tuple[dict, dict]] = []
-    if body.mode == "highlight_shunjian":
-        raw_combos: list[tuple[dict, dict, float]] = []
-        for hl in all_highlights:
-            for hk in all_hooks:
-                est = _estimate_pair_duration(hl, hk, parts_ordered)
-                if est is not None:
-                    raw_combos.append((hl, hk, est))
-        raw_combos.sort(key=lambda c: (
-            abs(c[2] - body_target),
-            -(c[0]["score"] + c[1]["score"]),
-        ))
-        hl_shunjian_combos = [(hl, hk) for hl, hk, _ in raw_combos]
-
-    n_combos = len(hl_shunjian_combos) if body.mode == "highlight_shunjian" else None
+    # 早先只有高光顺剪吃这个值，而且判据是"先看落没落在 [min,max] 区间内，再比离中点的
+    # 距离"。两个毛病：界面上三档区间（2-4/5-7/9-12 分）之间留着 4-5 分和 7-9 分两段缝，
+    # 落在缝里的配对任何一档都选不中——拿真实项目算过，38 种配对里有 14 种（37%）永远
+    # 轮不上；而且"在区间内"是个硬门槛，会让一个刚好卡在中点、评分平平的配对，赢过只差
+    # 半分钟但两段都是高分的配对。现在只留一个目标值，每种组合归到离它最近的那一档，
+    # 天然不重不漏。
+    combos = _rank_combos(body.mode, all_highlights, all_hooks, parts_ordered, body_target)
+    n_combos = len(combos)
     submitted_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     part_names = [p["part_name"] for p in parts_ordered] if body.part_ids else None
 
     # 本批已用过的高光/钩子（按 part_id+时间区间标识），保证同一批优先不复用同一段素材，
     # 素材池用尽才允许复用——避免像取模索引那样一超出池子大小就立刻重复。
+    # 只在没有任何合法组合、降级到单点挑选时才用得上。
     used_hl_keys: set[tuple] = set()
     used_hk_keys: set[tuple] = set()
 
     exports_created: list[tuple[AdmakeExport, list[dict], dict]] = []
-    # 高光顺剪预规划：组合去重 + 素材均衡 + 超额错开（方案二）
-    shunjian_plan = (
-        _plan_shunjian_combos(hl_shunjian_combos, body.count)
-        if body.mode == "highlight_shunjian" and hl_shunjian_combos else None
-    )
+    combo_plan = _plan_combos(combos, body.count)
     for i in range(body.count):
-        if body.mode == "shuanggaoguang":
-            # 第二段高光避开与第一段同集大面积重叠的候选——同片内连播两段几乎一样的画面
+        if combo_plan:
+            pairs = combo_plan[i]
+        elif body.mode == "shuanggaoguang":
+            # 无合法组合时降级：第二段高光仍要避开与第一段同集大面积重叠的候选
             hl1 = _pick_diverse(all_highlights, used_hl_keys)
             hl2 = _pick_hl_avoiding(hl1, all_highlights, used_hl_keys)
             pairs = [
@@ -2243,11 +2307,8 @@ async def create_project_export(
                 (hl2, _pick_diverse(all_hooks, used_hk_keys)),
             ]
         elif body.mode == "highlight_shunjian":
-            if shunjian_plan is not None:
-                pairs = [shunjian_plan[i]]
-            else:
-                # 无合法配对时降级：高光钩子分别去重挑选
-                pairs = [(_pick_diverse(all_highlights, used_hl_keys), _pick_diverse(all_hooks, used_hk_keys))]
+            pairs = [(_pick_diverse(all_highlights, used_hl_keys),
+                      _pick_diverse(all_hooks, used_hk_keys))]
         else:
             # 悬疑倒置：钩子避开与所选高光同集重叠（重叠段会在成片里播两遍）
             hl = _pick_diverse(all_highlights, used_hl_keys)

@@ -141,7 +141,9 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 /* 悬停说明：图标与浮层，写法与模板编辑器一致 */
 .info-ic{cursor:help;color:var(--text3);margin-left:6px;display:inline-flex;align-items:center;position:relative;}
 .info-ic:hover{color:var(--text2);}
-#tip-pop{position:fixed;z-index:9500;display:none;background:rgba(25,27,31,.94);color:#fff;
+/* 层级必须高过所有弹窗：说明 icon 大多长在弹窗里（导出面板 .ai-modal-backdrop 是 9999，
+   顶层弹窗 10000），tooltip 原来的 9500 会被遮罩压在底下，鼠标悬停什么都看不见 */
+#tip-pop{position:fixed;z-index:10001;display:none;background:rgba(25,27,31,.94);color:#fff;
   padding:7px 10px;border-radius:6px;font-size:11px;font-weight:400;line-height:1.65;
   width:max-content;max-width:230px;white-space:pre-line;pointer-events:none;
   box-shadow:0 4px 14px rgba(0,0,0,.22);}
@@ -668,14 +670,17 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 
         <div class="exp-row">
           <div class="exp-label">目标时长</div>
-          <div style="display:flex;align-items:center;">
-            <div class="seg" data-seg>
-              <span class="seg-thumb"></span>
-              <label><input type="radio" name="clip-dur" value="180">3 分钟</label>
-              <label><input type="radio" name="clip-dur" value="360" checked>6 分钟</label>
-              <label><input type="radio" name="clip-dur" value="600">10 分钟</label>
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;">
+              <div class="seg" data-seg>
+                <span class="seg-thumb"></span>
+                <label><input type="radio" name="clip-dur" value="180">3 分钟</label>
+                <label><input type="radio" name="clip-dur" value="360" checked>6 分钟</label>
+                <label><input type="radio" name="clip-dur" value="600">10 分钟</label>
+              </div>
+              <span class="info-ic" data-tip="三种导出模式都按这个值选材：在所有可用组合里挑总长最接近目标的那些。&#10;这里指成片总长，套了模板的话前后贴片也算在内。&#10;成片长度由素材本身决定，只能挑最接近的，不会正好等于目标值。"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
             </div>
-            <span class="info-ic" data-tip="系统在所有可用的高光与钩子组合里，挑总长最接近目标的那些。&#10;成片时长是高光起点到钩子终点的跨度，随素材浮动，不会正好等于目标值。"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
+            <div class="exp-hint" id="dur-mode-note" style="display:none;"></div>
           </div>
         </div>
 
@@ -2527,8 +2532,24 @@ function setupModeListeners() {
     radio.addEventListener('change', () => {
       document.querySelectorAll('.mode-option').forEach(el => el.classList.remove('selected'));
       radio.closest('.mode-option').classList.add('selected');
+      updateDurModeNote();
     });
   });
+  updateDurModeNote();
+}
+
+// 悬疑倒置的成片只有钩子段和高光段两段，长度就是两个标记的长度之和，做不出长片。
+// 目标时长对它照样生效（挑最接近的组合），但选 3 分钟以上时基本都会落在一分钟上下，
+// 不说明的话用户会以为目标时长没起作用。
+function updateDurModeNote() {
+  const note = document.getElementById('dur-mode-note');
+  if (!note) return;
+  if (getMode() === 'xuanyi_daozhi') {
+    note.textContent = '悬疑倒置只拼钩子段和高光段两段，成片通常一分钟上下。选更长的目标也只能挑到最接近的那条。';
+    note.style.display = '';
+  } else {
+    note.style.display = 'none';
+  }
 }
 
 function getMode() {

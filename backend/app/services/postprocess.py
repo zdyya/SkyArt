@@ -100,9 +100,14 @@ def _ramp(c: tuple) -> tuple:
 
 def _render_bevel(text: str, font: ImageFont.FreeTypeFont, fill: tuple) -> Image.Image:
     """立体金属特效：金属渐变填充 + 立体挤出 + 细描边 + 投影。支持 \\n 多行（居中）。
-    2× 超采样渲染后缩回目标尺寸——按目标字号 1:1 直渲边缘会糊；厚描边/大发光的旧配方
-    会把字腔（a/e/o 的洞）糊死，改成细描边 + 短投影，小字号也保持清晰。"""
+
+    2026-08-10 调薄挤出与描边：原来 3px 挤出配 7px 描边，两层加起来把 Playfair 这类
+    细笔画衬线体的笔画间隙填满了，成片过 3000k 编码后字腔（a/e/o 的洞）糊成一片。
+    改成 1px 挤出 + 5px 描边，立体感保留、清晰度明显回来。实测同时排除了另两个嫌疑：
+    超采样从 2× 提到 4× 几乎没有差别，投影那层高斯模糊去掉也没差别，都不是主因。"""
     S = 2  # 超采样倍数
+    extrude_px = 1   # 右下挤出厚度（成品像素），2× 下实际循环 2 层
+    outline_k = 5    # 描边 MaxFilter 核，2× 下 5 ≈ 成品 1px
     big = font.font_variant(size=font.size * S)
     sp = int(big.size * 0.15)
     probe = ImageDraw.Draw(Image.new("RGBA", (4, 4)))
@@ -127,10 +132,10 @@ def _render_bevel(text: str, font: ImageFont.FreeTypeFont, fill: tuple) -> Image
     sh = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sh.paste((0, 0, 0, 110), (0, 3 * S), mask)
     canvas = Image.alpha_composite(canvas, sh.filter(ImageFilter.GaussianBlur(2 * S)))
-    # ② 细描边（旧 11px MaxFilter 会填死字腔；2×下 7 ≈ 成品 1.5px）
-    canvas = _stamp(outline + (255,), mask.filter(ImageFilter.MaxFilter(7)))
-    # ③ 立体挤出（右下短斜切，2×下 6 ≈ 成品 3px）
-    for d in range(3 * S, 0, -1):
+    # ② 细描边
+    canvas = _stamp(outline + (255,), mask.filter(ImageFilter.MaxFilter(outline_k)))
+    # ③ 立体挤出（右下短斜切）
+    for d in range(extrude_px * S, 0, -1):
         canvas = _stamp(extr + (255,), mask, (d, d))
 
     # ④ 竖向金属渐变填充：上亮下深，高光带压窄到上 35% 更有金属感
@@ -154,7 +159,18 @@ _LATIN_FONTS = {"Anton", "Bebas", "Poppins", "Alfa Slab", "Bangers", "Lobster", 
 
 
 def _has_cjk(s: str) -> bool:
-    return any("一" <= c <= "鿿" or "㐀" <= c <= "䶿" for c in s or "")
+    """文本里有没有拉丁展示体渲不出来的中日韩字符。八个英文展示体的字库只覆盖 ASCII，
+    汉字、《》「」这类 CJK 标点、全角！？（）都会渲成占位方框，三类都要算进来。
+    2026-08-10 之前只查汉字，`《Vows of a Vegas Heiress》` 这种标点是中文、正文是英文的
+    写法逃过检查，书名号渲成了方框。
+    另一份在 electron-app/renderer/tools/ad-make/template-editor.html::elInner。"""
+    return any(
+        "一" <= c <= "鿿"      # CJK 统一汉字
+        or "㐀" <= c <= "䶿"   # CJK 扩展 A
+        or "　" <= c <= "〿"   # CJK 符号和标点：《》「」、。
+        or "＀" <= c <= "￯"   # 全角 ASCII 变体：！？（）：
+        for c in s or ""
+    )
 
 
 # 文字安全宽度：成片宽 720 的 90%。超出先缩字号（到 70% 底线），再折两行（到 50% 底线），
