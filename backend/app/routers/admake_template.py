@@ -51,9 +51,15 @@ _ASSET_KINDS = {"clip", "png", "mov"}
 
 # 素材大小上限：整文件读进内存/无限写盘都会拖垮后端，超限当场拒收并给明确文案。
 # clip 是普通压缩视频给宽些；mov 是 qtrle 无损、正常几十 MB 内；png 静态图。
-_ASSET_MAX_MB = {"clip": 300, "png": 20, "mov": 100}
+# 另一份在 electron-app/renderer/tools/ad-make/template-editor.html 的前后贴片提示文案。
+_ASSET_MAX_MB = {"clip": 200, "png": 20, "mov": 100}
 _PKG_MAX_MB = 500          # .skytpl 分享包上限
 _UPLOAD_CHUNK = 1024 * 1024
+
+# 前后贴片时长上限。贴片会整段接在每条成片的头尾，长度直接加进成片总时长。
+# 2026-08-10：一条 188 秒的正片被当片尾存进模板，3 分钟目标的四条成片全导成 6 分 12 秒。
+# 片头/片尾实际都是几秒的引导或结尾板，60 秒足够宽松，只挡明显选错文件的情况。
+_CLIP_MAX_SEC = 60
 
 
 async def _save_upload_capped(file: UploadFile, dest: str, max_mb: int, label: str) -> None:
@@ -277,7 +283,15 @@ def _validate_asset(kind: str, meta: dict, path: str | None = None) -> None:
             raise HTTPException(400, "动态贴纸素材没有透明通道，请在剪映重新导出：格式选 MOV、编码选 RLE")
         if path and _mov_all_transparent(path):
             raise HTTPException(400, "动态贴纸内容全空（全透明），请检查剪映导出时贴纸/特效是否在导出范围内")
-    # clip（前后贴片）：可解码即可，不要求透明
+    else:
+        # clip（前后贴片）不要求透明，只卡时长——超过上限基本是把整条正片当贴片选了
+        clip_dur = float(meta.get("duration") or 0.0)
+        if clip_dur > _CLIP_MAX_SEC:
+            raise HTTPException(
+                400,
+                f"这条贴片有 {clip_dur:.0f} 秒，超过上限 {_CLIP_MAX_SEC} 秒。"
+                f"前后贴片会整段接在每条成片的头尾，请确认没有把整条正片选成片头/片尾。",
+            )
 
 
 def _to_out(t: AdmakeTemplate) -> AdmakeTemplateOut:

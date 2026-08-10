@@ -366,6 +366,38 @@ def _estimate_pair_duration(hl: dict, hk: dict, parts_ordered: list[dict]) -> fl
     return (hl["part_duration"] - hl["start"]) + intermediate_dur + hk["end"]
 
 
+# 扣掉模板贴片后留给正片的最短目标。历史模板里存过 188 秒的"片尾"，直接相减会得到
+# 负数目标，选材会一路挑到最短的那个配对上，成片只剩几秒的高光。
+_MIN_BODY_SEC = 30.0
+
+
+async def _template_sticker_duration(template_id: int | None, db: AsyncSession) -> float:
+    """模板前后贴片的总时长（秒）。用户在界面上选的目标时长指成片总长，而贴片是整段
+    接在头尾的，选材时得先把这部分让出来。模板已删或 config 是脏数据时按 0 算——
+    选材偏长好过导出直接失败。"""
+    if not template_id:
+        return 0.0
+    template = (await db.execute(
+        select(AdmakeTemplate).where(AdmakeTemplate.id == template_id)
+    )).scalar_one_or_none()
+    if not template:
+        return 0.0
+    try:
+        config = json.loads(template.config or "{}")
+    except (ValueError, TypeError):
+        return 0.0
+    total = 0.0
+    for key in ("intro", "outro"):
+        clip = config.get(key)
+        if not isinstance(clip, dict):
+            continue
+        try:
+            total += float(clip.get("duration") or 0.0)
+        except (ValueError, TypeError):
+            continue
+    return total
+
+
 def _mark_key(m: dict) -> tuple:
     """标识一段素材，供批次内去重/均衡使用。同类段重叠超一半（IoU>0.5）会被
     _cluster_marks 归入同簇（共享 _ckey）——近似相同的两段在配对里视为同一素材，
@@ -502,8 +534,12 @@ def _write_export_log(
     mode: str,
     submitted_at: str | None = None,
     batch_info: dict | None = None,
+    sticker_dur: float = 0.0,
 ):
     """
+    sticker_dur：模板前后贴片总时长。plan 里只有正片段落，贴片是成片阶段才接上去的，
+    不单独列出来的话"片段详情合计"和"总时长"会差出贴片那一段，读报告的人无从解释。
+
     batch_info（可选，缺失时对应行不写）：
       {"index": 本条在批次中的序号(从1开始), "count": 批次总数,
        "n_hl": 候选高光数, "n_hk": 候选钩子数, "n_combos": 合法配对数(仅 highlight_shunjian),
@@ -547,9 +583,11 @@ def _write_export_log(
     # 系统只能在现有素材里挑最接近的那个。所以这里报差值，不判达标。
     delta = actual_dur - target_dur
     lines += [
-        f"目标时长：{fmt(target_dur)}",
+        f"目标时长：{fmt(target_dur)}" + ("（成片总长，含模板贴片）" if sticker_dur > 0 else ""),
         f"实际时长：{fmt(actual_dur)}（{'长' if delta >= 0 else '短'} {fmt(abs(delta))}）",
     ]
+    if sticker_dur > 0:
+        lines.append(f"  其中模板贴片 {fmt(sticker_dur)}，正片 {fmt(max(0.0, actual_dur - sticker_dur))}")
 
     lines += ["", "-" * 44, "片段详情", "-" * 44]
     for seg in plan:
@@ -567,6 +605,8 @@ def _write_export_log(
         if seg.get("score") is not None:
             detail.append(f"  评分：{seg['score']}")
         lines += detail + [""]
+    if sticker_dur > 0:
+        lines += ["[模板贴片]", f"  片头+片尾合计：{fmt(sticker_dur)}", ""]
     lines += ["-" * 44, f"总时长：{fmt(actual_dur)}", "-" * 44]
 
     with open(log_path, "w", encoding="utf-8") as f:
@@ -827,6 +867,7 @@ async def _run_export_multi(
     submitted_at: str | None = None,
     batch_info: dict | None = None,
     template_id: int | None = None,
+    sticker_dur: float = 0.0,
 ):
     """跨 Part 导出：根据 plan 裁剪并合并各段，同时生成 log 文件。"""
     from app.database import AsyncSessionLocal
@@ -858,7 +899,8 @@ async def _run_export_multi(
 
             log_path = out_path[:-4] + ".log.txt"
             _write_export_log(log_path, out_name, plan, actual_dur, target_dur, mode,
-                               submitted_at=submitted_at, batch_info=batch_info)
+                               submitted_at=submitted_at, batch_info=batch_info,
+                               sticker_dur=sticker_dur)
 
             async with AsyncSessionLocal() as db:
                 res = await db.execute(select(AdmakeExport).where(AdmakeExport.id == export_id))
@@ -2142,6 +2184,17 @@ async def create_project_export(
 
     batch_dir = _get_batch_dir(pid, project.title, project.export_path)
 
+    # 界面上的目标时长指成片总长，模板前后贴片也占在里面，所以选材要用扣掉贴片之后的
+    # 长度当靠拢点。不扣的话贴片有多长、成片就超出多长（2026-08-10：188 秒的片尾让
+    # 3 分钟目标的成片全部导成 6 分 12 秒）。
+    sticker_dur = await _template_sticker_duration(body.template_id, db)
+    body_target = body.target_duration - sticker_dur
+    if body_target < _MIN_BODY_SEC:
+        log_event("admake.export.target_clamped", project_id=pid, template_id=body.template_id,
+                  target_duration=body.target_duration, sticker_sec=round(sticker_dur, 2),
+                  clamped_to=_MIN_BODY_SEC)
+        body_target = _MIN_BODY_SEC
+
     # 对 highlight_shunjian 模式：预计算所有合法配对，按离目标时长的距离排序。
     #
     # 早先这里是"先看落没落在 [min,max] 区间内，再比离区间中点的距离"。两个毛病：
@@ -2160,7 +2213,7 @@ async def create_project_export(
                 if est is not None:
                     raw_combos.append((hl, hk, est))
         raw_combos.sort(key=lambda c: (
-            abs(c[2] - body.target_duration),
+            abs(c[2] - body_target),
             -(c[0]["score"] + c[1]["score"]),
         ))
         hl_shunjian_combos = [(hl, hk) for hl, hk, _ in raw_combos]
@@ -2230,7 +2283,7 @@ async def create_project_export(
             _run_export_multi,
             export.id, plan, project.id, project.title,
             body.target_duration, body.mode, filename_stem, batch_dir,
-            submitted_at, batch_info, body.template_id,
+            submitted_at, batch_info, body.template_id, sticker_dur,
         )
 
     return [AdmakeExportOut.model_validate(e) for e, _, _, _ in exports_created]
