@@ -691,15 +691,19 @@ async function runSelfCheck(deep) {
   }
 }
 
+let _scLastAt = 0;   // 上次自检渲染时刻，供打开面板时判断结果新旧
 function renderSelfCheck(d) {
+  _scLastAt = Date.now();
   const dot = document.getElementById('sc-dot');
   const label = document.getElementById('sc-label');
   dot.className = 'sc-dot ' + d.level;
   label.textContent = { ok: '正常', warn: '有提醒', fail: '异常' }[d.level] || '未知';
   const n = (d.items || []).filter(i => i.level !== 'ok').length;
   if (n) label.textContent += ' ' + n;
+  // 标注"检测于"：这是上次体检跑完的时刻（本机时区），不是当前时间。
+  // 不标的话应用开一上午后点开面板，一个光秃秃的早晨时间看着像时钟坏了。
   document.getElementById('sc-time').textContent =
-    new Date().toTimeString().slice(0, 8) + (d.deep ? ' · 含网络' : '');
+    '检测于 ' + new Date().toTimeString().slice(0, 8) + (d.deep ? ' · 含网络' : '');
   document.getElementById('sc-body').innerHTML = (d.items || []).map(i => `
     <div class="sc-row">
       <span class="d ${i.level}"></span>
@@ -717,7 +721,12 @@ function renderSelfCheck(d) {
 
 function toggleSelfCheck(force) {
   const p = document.getElementById('sc-panel');
-  p.classList.toggle('show', force === undefined ? !p.classList.contains('show') : !!force);
+  const show = force === undefined ? !p.classList.contains('show') : !!force;
+  p.classList.toggle('show', show);
+  // 结果超过一分钟就重跑一次浅检（本地检查，实测 52ms）：自检只在进页面时自动跑，
+  // 应用挂了几小时后点开面板，不刷新的话看到的是几小时前的旧结果和旧时间。
+  // 一分钟内不重跑，免得把刚做完的深检结果（含网络那行）刷掉。
+  if (show && Date.now() - _scLastAt > 60000) runSelfCheck(false);
 }
 document.addEventListener('click', e => {
   const p = document.getElementById('sc-panel');

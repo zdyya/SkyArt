@@ -258,6 +258,31 @@ textarea.input{resize:vertical;min-height:68px;}
 /* 模板卡内容标签 */
 .tpl-tags{display:flex;flex-wrap:wrap;gap:6px;}
 
+/* ── 批量管理（选择模式） ── */
+/* 删除按钮：全站唯一红色实底，只在选择模式的工具条里出现 */
+.btn-danger{background:var(--red);color:#fff;}
+.btn-danger:hover{background:#b91c1c;}
+/* 选择模式下 ⋯ 菜单藏起来——这时点卡片的语义是"选中"，菜单留着会抢语义 */
+body.selecting .project-card-menu{display:none;}
+body.selecting .project-card.busy{opacity:.5;cursor:not-allowed;}
+body.selecting .project-card.busy:hover{transform:none;}
+/* 勾选圈：空心=未选，橙实底=已选，沿用全站的橙色选中语言 */
+.sel-tick{position:absolute;top:10px;right:10px;width:22px;height:22px;border-radius:50%;z-index:2;
+  border:1.5px solid rgba(67,48,29,.45);background:rgba(255,255,255,.55);
+  display:none;align-items:center;justify-content:center;transition:background .15s,border-color .15s;}
+.sel-tick svg{width:12px;height:12px;stroke:#fff;stroke-width:3;fill:none;stroke-linecap:round;stroke-linejoin:round;opacity:0;}
+body.selecting .project-card:not(.busy) .sel-tick{display:flex;}
+.project-card.sel .sel-tick{background:var(--accent);border-color:var(--accent);}
+.project-card.sel .sel-tick svg{opacity:1;}
+.project-card.sel{box-shadow:0 0 0 2px var(--accent);}
+/* 进行中标签：解释这张卡为什么选不了 */
+.busy-tag{position:absolute;top:12px;right:12px;z-index:2;font-size:10.5px;font-weight:600;
+  color:var(--yellow);background:rgba(217,119,6,.12);border-radius:999px;padding:2px 9px;display:none;}
+body.selecting .project-card.busy .busy-tag{display:block;}
+/* 确认弹窗里的项目名列表 */
+.del-list{background:var(--bg3);border-radius:8px;padding:10px 14px;font-size:12.5px;color:var(--text2);line-height:1.9;max-height:150px;overflow-y:auto;}
+.del-warn{color:var(--red);font-size:12.5px;line-height:1.6;}
+
 /* Scrollbar */
 ::-webkit-scrollbar{width:6px;height:6px;}
 ::-webkit-scrollbar-track{background:var(--bg2);}
@@ -306,7 +331,13 @@ textarea.input{resize:vertical;min-height:68px;}
     </div>
     <span class="gcount" id="bar-count"></span>
     <div class="gacts" id="bar-acts-projects">
+      <button class="btn btn-secondary" onclick="enterSelectMode()">批量管理</button>
       <button class="btn btn-primary" onclick="openCreateModal()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M5 12h14"/><path d="M12 5v14"/></svg>新建项目</button>
+    </div>
+    <div class="gacts hidden" id="bar-acts-select">
+      <button class="btn btn-secondary" onclick="selectAllFiltered()">全选</button>
+      <button class="btn btn-danger" id="batch-del-btn" disabled onclick="openBatchDeleteConfirm()">删除 0 个</button>
+      <button class="btn btn-secondary" onclick="exitSelectMode()">完成</button>
     </div>
     <div class="gacts hidden" id="bar-acts-templates">
       <button class="btn btn-secondary" onclick="importTemplatePackage()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>导入模板包</button>
@@ -511,6 +542,24 @@ textarea.input{resize:vertical;min-height:68px;}
   </div>
 </div>
 
+<!-- 批量删除确认弹窗 -->
+<div id="modal-batch-del" class="modal-overlay hidden" onclick="if(event.target===this)closeBatchDeleteConfirm()">
+  <div class="modal-glass">
+  <div class="modal" style="width:440px" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">删除 <span id="batch-del-count"></span> 个项目</div>
+      <button class="modal-close" onclick="closeBatchDeleteConfirm()">×</button>
+    </div>
+    <div class="del-list" id="batch-del-names"></div>
+    <div class="del-warn">项目的源视频、Part、导出成片和整个项目目录会一并删除。没有回收站，删了就找不回来。</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeBatchDeleteConfirm()">取消</button>
+      <button class="btn btn-danger" id="batch-del-run" onclick="runBatchDelete()">删除</button>
+    </div>
+  </div>
+  </div>
+</div>
+
 <!-- 新建模板弹窗 -->
 <div id="modal-new-tpl" class="modal-overlay hidden" onclick="if(event.target===this)closeNewTemplateModal()">
   <div class="modal-glass">
@@ -687,8 +736,11 @@ function renderProjects() {
   const projects = paginate(filtered, projPage, 'projects-pagination', 'gotoProjPage', n => { projPage = n; });
   grid.innerHTML = projects.map((p, idx) => {
     const desc = (p.description || '暂无描述').slice(0, 32);
+    const busy = selBusyIds.has(p.id);
     return `
-    <div class="project-card" onclick="enterProject(${p.id})">
+    <div class="project-card${selIds.has(p.id) ? ' sel' : ''}${busy ? ' busy' : ''}" onclick="cardClick(${p.id})">
+      <span class="sel-tick"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
+      <span class="busy-tag">任务进行中</span>
       <div class="project-card-header${p.all_done ? ' done' : ''}">
         <div class="project-card-title">${esc(p.title)}</div>
         <div class="project-card-menu" onclick="event.stopPropagation()">
@@ -745,6 +797,94 @@ async function deleteProject(pid) {
     toast('已删除', 'success');
     await loadProjects();
   } catch (e) { toast(e.message, 'error'); }
+}
+
+// ── 批量删除（选择模式） ─────────────────────────────────────
+// 任务跑完的项目成批清理用。点「批量管理」进入选择模式：点卡片=选中，
+// 有任务进行中的项目置灰选不了（后端删除时还有一道 409 闸兜底）。
+const selIds = new Set();       // 已选项目 id，跨页保留
+let selBusyIds = new Set();     // 有任务进行中的项目 id，进选择模式时从任务中心拉一次
+
+async function enterSelectMode() {
+  // 先拉任务中心再切模式：置灰信息和勾选圈要同帧出现，不然会闪一下"全部可选"
+  try {
+    const tasks = await apiFetch('/admake/tasks');
+    selBusyIds = new Set(tasks.map(t => t.project_id));
+  } catch { selBusyIds = new Set(); }   // 拉不到就全可选，后端 409 兜底
+  document.body.classList.add('selecting');
+  document.getElementById('bar-acts-projects').classList.add('hidden');
+  document.getElementById('bar-acts-select').classList.remove('hidden');
+  renderProjects();
+}
+
+function exitSelectMode() {
+  document.body.classList.remove('selecting');
+  selIds.clear();
+  document.getElementById('bar-acts-projects').classList.remove('hidden');
+  document.getElementById('bar-acts-select').classList.add('hidden');
+  renderProjects();
+}
+
+function cardClick(pid) {
+  if (!document.body.classList.contains('selecting')) { enterProject(pid); return; }
+  if (selBusyIds.has(pid)) return;
+  selIds.has(pid) ? selIds.delete(pid) : selIds.add(pid);
+  _syncSelBar();
+  renderProjects();
+}
+
+// 全选 = 当前搜索筛选出来的全部项目（跨页），不只本页——场景就是"跑完的一把清掉"
+function selectAllFiltered() {
+  const q = projFilter.trim().toLowerCase();
+  const filtered = q ? allProjects.filter(p => p.title.toLowerCase().includes(q)) : allProjects;
+  filtered.forEach(p => { if (!selBusyIds.has(p.id)) selIds.add(p.id); });
+  _syncSelBar();
+  renderProjects();
+}
+
+function _syncSelBar() {
+  const btn = document.getElementById('batch-del-btn');
+  btn.textContent = `删除 ${selIds.size} 个`;
+  btn.disabled = !selIds.size;
+}
+
+function openBatchDeleteConfirm() {
+  if (!selIds.size) return;
+  const names = allProjects.filter(p => selIds.has(p.id)).map(p => p.title);
+  document.getElementById('batch-del-count').textContent = names.length;
+  document.getElementById('batch-del-names').innerHTML =
+    names.slice(0, 5).map(n => '· ' + esc(n)).join('<br>')
+    + (names.length > 5 ? `<br>…等 ${names.length} 个` : '');
+  document.getElementById('modal-batch-del').classList.remove('hidden');
+}
+
+function closeBatchDeleteConfirm() {
+  document.getElementById('modal-batch-del').classList.add('hidden');
+}
+
+// 逐个调现有单删接口：进度可显示，单个失败（比如刚好有任务启动被 409 挡下）跳过不中断
+async function runBatchDelete() {
+  const btn = document.getElementById('batch-del-run');
+  const ids = [...selIds];
+  btn.disabled = true;
+  let done = 0, failed = 0, firstErr = '';
+  for (let i = 0; i < ids.length; i++) {
+    btn.textContent = `删除中 ${i + 1}/${ids.length}`;
+    try {
+      await apiFetch(`/admake/projects/${ids[i]}`, { method: 'DELETE' });
+      done++;
+    } catch (e) {
+      failed++;
+      if (!firstErr) firstErr = e.message;
+    }
+  }
+  btn.disabled = false;
+  btn.textContent = '删除';
+  closeBatchDeleteConfirm();
+  exitSelectMode();
+  await loadProjects();
+  if (failed) toast(`已删除 ${done} 个，${failed} 个没删掉（${firstErr}）`, 'error', 6000);
+  else toast(`已删除 ${done} 个项目`, 'success');
 }
 
 // ── Edit project modal ────────────────────────────────────────
@@ -1020,6 +1160,8 @@ async function createProject() {
 function switchView(v) {
   currentView = v;
   const isProj = v === 'projects';
+  // 切到模板视图就退出批量选择：选择状态跨视图留着，回来时工具条和卡片会对不上
+  if (!isProj && document.body.classList.contains('selecting')) exitSelectMode();
   document.getElementById('vt-projects').classList.toggle('on', isProj);
   document.getElementById('vt-templates').classList.toggle('on', !isProj);
   if (window.SkyUI) SkyUI.layoutSegs();

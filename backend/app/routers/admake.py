@@ -13,7 +13,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, update
+from sqlalchemy import select, delete, func, update, or_, false
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
@@ -294,8 +294,14 @@ def _plan_export(
     label: "highlight" | "whitespace" | "hook"（白场没有 score）
 
     parts_ordered: 全部 ready Part 的有序列表，用于填充跨 Part 时的中间 Part 白场。
+
+    双高光有两组配对，成片里先播哪一组按高光在剧里的先后定。不排的话顺序取决于配对
+    枚举时的评分高低，第 10 集的高光会拼在第 1 集前面，"顺剪"就不顺了。
     """
     segments: list[dict] = []
+
+    if len(pairs) > 1:
+        pairs = sorted(pairs, key=lambda pr: (pr[0].get("part_index", 0), pr[0]["start"]))
 
     for hl, hk in pairs:
         same = hl["part_id"] == hk["part_id"]
@@ -370,6 +376,9 @@ def _estimate_pair_duration(hl: dict, hk: dict, parts_ordered: list[dict]) -> fl
 # 负数目标，选材会一路挑到最短的那个配对上，成片只剩几秒的高光。
 _MIN_BODY_SEC = 30.0
 
+_EXPORT_MODES = ("highlight_shunjian", "xuanyi_daozhi", "shuanggaoguang")
+_MAX_EXPORT_COUNT = 30   # 与导出面板里"最多 30"一致
+
 
 async def _template_sticker_duration(template_id: int | None, db: AsyncSession) -> float:
     """模板前后贴片的总时长（秒）。用户在界面上选的目标时长指成片总长，而贴片是整段
@@ -440,19 +449,48 @@ _DOUBLE_POOL_MAX = 60
 
 
 def _pair_is_legal(mode: str, hl: dict, hk: dict, parts_ordered: list[dict]) -> bool:
-    """这一对高光/钩子在该模式下能不能出片。高光顺剪要求钩子排在高光之后（同 Part 看时间、
-    跨 Part 看 part_index）；悬疑倒置是把钩子放到高光前面拼，只要求同 Part 时两段不重叠，
-    否则重叠那截会在成片里播两遍。"""
-    if mode == "highlight_shunjian":
-        return _estimate_pair_duration(hl, hk, parts_ordered) is not None
-    return hl["part_id"] != hk["part_id"] or hk["start"] > hl["end"]
+    """这一对高光/钩子在该模式下能不能出片。
+
+    高光顺剪和双高光顺剪都是顺剪，钩子必须排在高光之后（同 Part 看时间、跨 Part 看
+    part_index）。双高光过去漏了这条判定：钩子取自更早的一集时，白场会先播完高光那集的
+    尾巴、再跳回前面某集的开头，画面时间倒着走，而且两集的大段白场都算进了成片长度。
+    真实项目「132」上 352 种双高光组合里有 120 种（34%）是这种逆序配对。
+
+    悬疑倒置是把钩子放到高光前面拼，要求钩子取自高光结束之后——钩子本来就是后文的悬念，
+    同 Part 里排在高光之前的那些段不算钩子素材。"""
+    if mode == "xuanyi_daozhi":
+        return hl["part_id"] != hk["part_id"] or hk["start"] > hl["end"]
+    return _estimate_pair_duration(hl, hk, parts_ordered) is not None
 
 
-def _double_combo_ok(first: tuple[dict, dict], second: tuple[dict, dict]) -> bool:
-    """双高光的两组配对能不能凑成一条成片。三个条件：两段高光不能是同一段、不能同 Part
-    重叠超过较短段一半（两段几乎一样的画面拼一起，观众等于连看两遍）、两个钩子也不能是
-    同一段（否则同一截钩子在一条成片里播两遍）。钩子这条对齐改造前逐条挑选时
-    used_hk_keys 的去重效果，别在换成组合枚举后丢掉。"""
+def _part_offsets(parts_ordered: list[dict]) -> dict[int, float]:
+    """每个 Part 在"整部剧"时间轴上的起点偏移，用于把跨 Part 的两段时间放在一起比较。"""
+    offsets: dict[int, float] = {}
+    acc = 0.0
+    for p in sorted(parts_ordered, key=lambda x: x["part_index"]):
+        offsets[p["part_id"]] = acc
+        acc += p["part_duration"] or 0.0
+    return offsets
+
+
+def _pair_span(pair: tuple[dict, dict], offsets: dict[int, float]) -> tuple[float, float]:
+    """一组配对在成片里实际覆盖的剧内时间跨度：高光起点 → 钩子终点（中间全是白场）。"""
+    hl, hk = pair
+    return (offsets.get(hl["part_id"], 0.0) + hl["start"],
+            offsets.get(hk["part_id"], 0.0) + hk["end"])
+
+
+def _double_combo_ok(first: tuple[dict, dict], second: tuple[dict, dict],
+                     offsets: dict[int, float]) -> bool:
+    """双高光的两组配对能不能凑成一条成片。四个条件：
+
+    - 两段高光不能是同一段；
+    - 两个钩子也不能是同一段（否则同一截钩子在一条成片里播两遍）。这条对齐改造前逐条
+      挑选时 used_hk_keys 的去重效果，别在换成组合枚举后丢掉；
+    - 两段高光不能同 Part 重叠超过较短段一半（两段几乎一样的画面拼一起，观众等于连看两遍）；
+    - 两组配对的剧内跨度不能相交。每组是"高光 → 白场 → 钩子"一整条连续的时间，跨度相交
+      时后一组的画面已经在前一组的白场里播过一遍。真实项目「132」上有 42 种组合命中。
+    """
     hl_first, hk_first = first
     hl_second, hk_second = second
     if _mark_key(hl_first) == _mark_key(hl_second):
@@ -461,7 +499,11 @@ def _double_combo_ok(first: tuple[dict, dict], second: tuple[dict, dict]) -> boo
         return False
     inter = _overlap_len(hl_first, hl_second)
     shorter = min(hl_first["end"] - hl_first["start"], hl_second["end"] - hl_second["start"])
-    return inter <= 0.5 * shorter
+    if inter > 0.5 * shorter:
+        return False
+    a0, a1 = _pair_span(first, offsets)
+    b0, b1 = _pair_span(second, offsets)
+    return min(a1, b1) <= max(a0, b0)
 
 
 def _estimate_plan_duration(mode: str, pairs: list[tuple[dict, dict]],
@@ -477,11 +519,13 @@ def _estimate_plan_duration(mode: str, pairs: list[tuple[dict, dict]],
 
 
 def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
-                 parts_ordered: list[dict], target_sec: float) -> list[list[tuple[dict, dict]]]:
+                 parts_ordered: list[dict],
+                 target_sec: float) -> list[tuple[list[tuple[dict, dict]], float]]:
     """把所有能出片的素材组合按「成片时长离目标多近」排序，贴合度相同时分数高的在前。
 
-    返回的每一项是一条成片要用的全部配对：高光顺剪和悬疑倒置各 1 对，双高光 2 对。
-    三种模式共用这一个排序口径，界面上的目标时长因此对全部模式生效。
+    返回 [(配对列表, 成片时长秒), ...]。配对列表是一条成片要用的全部配对：高光顺剪和
+    悬疑倒置各 1 对，双高光 2 对。三种模式共用这一个排序口径，界面上的目标时长因此对
+    全部模式生效。时长跟着一起返回，_plan_combos 排每条用哪套时还要拿它把关。
     """
     singles = [(hl, hk) for hl in highlights for hk in hooks
                if _pair_is_legal(mode, hl, hk, parts_ordered)]
@@ -489,6 +533,7 @@ def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
         scored = [([pair], _estimate_plan_duration(mode, [pair], parts_ordered))
                   for pair in singles]
     else:
+        offsets = _part_offsets(parts_ordered)
         singles.sort(key=lambda p: -(p[0]["score"] + p[1]["score"]))
         if len(singles) > _DOUBLE_POOL_MAX:
             log_event("admake.export.double_pool_capped",
@@ -497,7 +542,7 @@ def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
         scored = []
         for i, first in enumerate(singles):
             for second in singles[i + 1:]:
-                if not _double_combo_ok(first, second):
+                if not _double_combo_ok(first, second, offsets):
                     continue
                 combo = [first, second]
                 scored.append((combo, _estimate_plan_duration(mode, combo, parts_ordered)))
@@ -505,39 +550,78 @@ def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
         abs(item[1] - target_sec),
         -sum(mark["score"] for pair in item[0] for mark in pair),
     ))
-    return [combo for combo, _ in scored]
+    return scored
+
+
+# 批量导出里每条都得贴着目标时长走。让更多素材出镜（均衡）只能在时长差不多的组合之间挑，
+# 不能拿时长去换：双高光一条成片要用 4 段素材，可达时长又能从 3 分钟横跨到 50 分钟，纯按
+# 出镜次数挑，第 2 条起就会为了让没露过面的素材上场跳到极长的组合上。
+# 实测（10 集 × 6 分钟、每集 3 高光 1 钩子，双高光，目标 3 分钟，导 5 条）：
+#   修前 2分56 / 6分46 / 46分36 / 44分36 / 6分36
+#   修后 2分56 / 3分16 / 3分16 / 3分26 / 3分26
+_DUR_TOL_RATIO = 0.15   # 允许偏离目标的比例
+_DUR_TOL_MIN = 15.0     # 目标很短时的兜底容差（秒）
+_DUR_TOL_RELAX = 3      # 贴合档内的组合用完后，最多再放宽几档
+
+
+def _dur_limit(scored: list[tuple[list[tuple[dict, dict]], float]], target_sec: float) -> float:
+    """时长贴合门槛：最贴合那条的偏差再加一档容差。素材均衡只在门槛内挑。"""
+    return abs(scored[0][1] - target_sec) + max(target_sec * _DUR_TOL_RATIO, _DUR_TOL_MIN)
+
+
+def _dur_pool_size(scored: list[tuple[list[tuple[dict, dict]], float]], target_sec: float) -> int:
+    """这批导出能做到互不重复的条数上限。
+
+    口径必须和 _plan_combos 的实际行为一致：贴合档用完后它还能放宽 _DUR_TOL_RELAX 档
+    继续拿没用过的组合，所以上限按放宽到头的门槛数，只数贴合档会把上限报小——报告里
+    「超出部分会复用素材」的警告会在实际不复用时就出现。"""
+    if not scored:
+        return 0
+    tol_step = max(target_sec * _DUR_TOL_RATIO, _DUR_TOL_MIN)
+    limit = _dur_limit(scored, target_sec) + _DUR_TOL_RELAX * tol_step
+    return sum(1 for _, d in scored if abs(d - target_sec) <= limit)
 
 
 def _plan_combos(
-    combos: list[list[tuple[dict, dict]]],
+    scored: list[tuple[list[tuple[dict, dict]], float]],
     count: int,
-) -> list[list[tuple[dict, dict]]]:
-    """规划 count 条导出各用哪套配对：组合去重 + 素材均衡 + 超额错开。
+    target_sec: float,
+) -> list[tuple[list[tuple[dict, dict]], float]]:
+    """规划 count 条导出各用哪套配对：先按时长贴合度圈定候选，再在候选里做素材均衡。
 
-    combos 已按 _rank_combos 排好序（离目标时长越近越靠前，同样贴合时分数高的在前）。
-    每一项是一条成片要用的全部配对，所以三种模式共用这一套规划。规则：
-    - 每条在"未用过的组合"里，选累计出镜最少的素材（均衡），
-      权重相同时保持排序顺序（更贴合目标、分数更高的先出）；
-    - 合法组合全部用尽（count 超过组合数）才重置，超出部分继续按均衡轮转，
-      不像旧实现那样从头复制导致连续重复。
+    scored 已按 _rank_combos 排好序（离目标时长越近越靠前，同样贴合时分数高的在前），
+    每一项是 (配对列表, 成片时长)，三种模式共用这一套规划。规则：
+    - 候选门槛 = 最贴合那条的偏差 + 容差。素材再怎么均衡也不许跨出这个门槛；
+    - 门槛内选累计出镜最少的素材，权重相同时保持排序顺序（更贴合目标、分数更高的先出）；
+    - 门槛内的组合全用过了就放宽门槛（最多 _DUR_TOL_RELAX 档），仍然没有才清空重来
+      按均衡轮转，不像旧实现那样从头复制导致连续重复。
 
-    不重复上限 = 组合数 len(combos)。
+    不重复上限 = 放宽到头的门槛内的组合数（_dur_pool_size 按同一口径计算）。
     """
-    if not combos:
+    if not scored:
         return []
-    planned: list[list[tuple[dict, dict]]] = []
+    base_limit = _dur_limit(scored, target_sec)
+    tol_step = max(target_sec * _DUR_TOL_RATIO, _DUR_TOL_MIN)
+    planned: list[tuple[list[tuple[dict, dict]], float]] = []
     used: set[tuple] = set()
     use_count: dict[tuple, int] = {}
     for _ in range(count):
-        pool = [c for c in combos if _combo_key(c) not in used]
-        if not pool:          # 组合用尽，重置后继续均衡轮转
+        pool: list[tuple[list[tuple[dict, dict]], float]] = []
+        limit = base_limit
+        for _ in range(_DUR_TOL_RELAX + 1):   # 第一轮是贴合档本身，之后每轮放宽一档
+            pool = [item for item in scored
+                    if abs(item[1] - target_sec) <= limit and _combo_key(item[0]) not in used]
+            if pool:
+                break
+            limit += tol_step
+        if not pool:          # 组合用尽，重置后回到最贴合的那一档继续均衡轮转
             used.clear()
-            pool = list(combos)
+            pool = [item for item in scored if abs(item[1] - target_sec) <= base_limit] or list(scored)
         # min 稳定：权重相同取 pool 中靠前者（更贴合目标）
-        chosen = min(pool, key=lambda c: sum(
-            use_count.get(_mark_key(mark), 0) for pair in c for mark in pair))
-        used.add(_combo_key(chosen))
-        for pair in chosen:
+        chosen = min(pool, key=lambda item: sum(
+            use_count.get(_mark_key(mark), 0) for pair in item[0] for mark in pair))
+        used.add(_combo_key(chosen[0]))
+        for pair in chosen[0]:
             for mark in pair:
                 use_count[_mark_key(mark)] = use_count.get(_mark_key(mark), 0) + 1
         planned.append(chosen)
@@ -549,43 +633,19 @@ def _combo_key(combo: list[tuple[dict, dict]]) -> tuple:
     return tuple((_mark_key(hl), _mark_key(hk)) for hl, hk in combo)
 
 
-def _pick_diverse(items: list[dict], used: set[tuple]) -> dict:
-    """按分数顺序取第一个本批未用过的素材；用尽则清空重置，从分数最高的开始复用。"""
-    for m in items:
-        if _mark_key(m) not in used:
-            used.add(_mark_key(m))
-            return m
-    used.clear()
-    used.add(_mark_key(items[0]))
-    return items[0]
+def _no_combo_reason(mode: str, n_hk: int) -> str:
+    """凑不出任何合法组合时给用户的报错文案，按模式说清缺什么、怎么补。
 
-
-def _pick_hook_for(hl: dict, hooks: list[dict], used: set[tuple]) -> dict:
-    """悬疑倒置选钩子：同集时要求钩子在高光结束之后（与高光顺剪
-    _estimate_pair_duration 的同集判定一致），否则重叠段会在成片里播两遍。
-    候选穷尽（都重叠）时退回 _pick_diverse——素材不足时出片优先于规则。"""
-    for m in hooks:
-        if _mark_key(m) in used:
-            continue
-        if m["part_id"] != hl["part_id"] or m["start"] > hl["end"]:
-            used.add(_mark_key(m))
-            return m
-    return _pick_diverse(hooks, used)
-
-
-def _pick_hl_avoiding(first: dict, items: list[dict], used: set[tuple]) -> dict:
-    """双高光选第二段：跳过与第一段同集且重叠超过较短段一半的候选——
-    两段几乎一样的高光拼进同一条成片，观众等于连看两遍。穷尽则降级。"""
-    for m in items:
-        if _mark_key(m) in used:
-            continue
-        inter = _overlap_len(m, first)
-        shorter = min(m["end"] - m["start"], first["end"] - first["start"])
-        if inter > 0.5 * shorter:
-            continue
-        used.add(_mark_key(m))
-        return m
-    return _pick_diverse(items, used)
+    以前这种情况会降级成逐段硬拼，产出违反模式定义的成片（双高光只有 1 个钩子时，
+    同一段钩子在一条成片里播两遍；顺剪配不出先后关系时画面时间倒着走）。烂片流进
+    投放的代价比导出失败大，所以改成报错并提示补标记。"""
+    if mode == "shuanggaoguang":
+        if n_hk < 2:
+            return "双高光顺剪需要至少 2 个不同的钩子标记，当前不足，请补充钩子后再导出"
+        return "现有标记凑不出双高光组合：需要两组「高光在前、钩子在后」且画面互不重叠的配对，请调整标记位置"
+    if mode == "xuanyi_daozhi":
+        return "现有标记凑不出悬疑倒置组合：同一 Part 里钩子要在高光结束之后，请调整标记位置"
+    return "现有标记凑不出高光顺剪组合：钩子要在高光之后（跨 Part 按 Part 顺序），请调整标记位置"
 
 
 def _sanitize_naming_field(value: str, max_len: int, fallback: str) -> str:
@@ -621,7 +681,8 @@ def _write_export_log(
 
     batch_info（可选，缺失时对应行不写）：
       {"index": 本条在批次中的序号(从1开始), "count": 批次总数,
-       "n_hl": 候选高光数, "n_hk": 候选钩子数, "n_combos": 合法配对数(仅 highlight_shunjian),
+       "n_hl": 候选高光数, "n_hk": 候选钩子数, "n_combos": 合法组合数(三种模式都有),
+       "n_pool": 时长门槛（放宽到头）内的组合数，也就是互不重复的条数上限,
        "part_names": 本次导出范围内的 Part 名称列表}
     """
     def fmt(s: float) -> str:
@@ -647,13 +708,13 @@ def _write_export_log(
         pool_line = f"候选池：高光 {batch_info['n_hl']} 个 / 钩子 {batch_info['n_hk']} 个"
         if batch_info.get("n_combos") is not None:
             pool_line += f" / 可用组合 {batch_info['n_combos']} 个"
+        if batch_info.get("n_pool"):
+            # 本批只在这些组合里轮换：其余组合的时长离目标太远，让素材多露脸也不值得换。
+            pool_line += f"（本批可轮换 {batch_info['n_pool']} 个）"
         lines.append(pool_line)
-        # 三种模式都走组合级去重，不重复上限就是可用组合数。没有任何合法组合时（走单点
-        # 降级挑选）才退回 min(高光数, 钩子数)。
-        if batch_info.get("n_combos"):
-            pool_size = batch_info["n_combos"]
-        else:
-            pool_size = min(batch_info['n_hl'], batch_info['n_hk'])
+        # 每条成片都要贴着目标时长走，所以能互不重复的只有时长门槛内那部分组合。
+        pool_size = batch_info.get("n_pool") or batch_info.get("n_combos") \
+            or min(batch_info['n_hl'], batch_info['n_hk'])
         if batch_info['count'] > pool_size:
             lines.append(f"⚠ 请求 {batch_info['count']} 条超过不重复上限 {pool_size} 条，超出部分会复用素材")
         if batch_info.get("part_names"):
@@ -988,7 +1049,13 @@ async def _run_export_multi(
                     ex.status = "ready"; ex.file_path = rel; ex.duration_sec = actual_dur
                     ex.template_error = tpl_err
                     await db.commit()
+            # mode 与 target_duration 必须落在这条里：成片长度不符时要能一眼看出用户选的是
+            # 哪个模式、目标多少，不然只能去翻数据库（业务同学的机器上翻不到）。
             log_event("admake.export_multi", export_id=export_id, status="ready", duration_sec=round(actual_dur, 1),
+                      mode=mode, target_duration=round(target_dur, 1),
+                      sticker_sec=round(sticker_dur, 2),
+                      body_sec=round(max(0.0, actual_dur - sticker_dur), 1),
+                      delta_sec=round(actual_dur - target_dur, 1),
                       template_id=template_id, template_error=tpl_err,
                       custom_dir=bool(batch_dir and not batch_dir.startswith(settings.UPLOAD_DIR)),
                       file=out_name, attempt=attempt + 1)
@@ -1809,11 +1876,29 @@ async def delete_project(
     user: User = Depends(get_current_user),
 ):
     p = await _get_project(pid, user, db)
+
+    # 有任务进行中的项目不能删：后台任务正拿着这个项目的文件在写，删表+删目录会让它
+    # 中途报错，还可能把半成品留在导出目录。判定口径与任务中心 GET /tasks 一致。
+    part_ids_res = await db.execute(select(AdmakePart.id).where(AdmakePart.project_id == pid))
+    part_ids = [r[0] for r in part_ids_res.all()]
+    busy_checks = [
+        ("导出", select(func.count(AdmakeExport.id)).where(
+            AdmakeExport.status.in_(("pending", "processing")),
+            or_(AdmakeExport.project_id == pid,
+                AdmakeExport.part_id.in_(part_ids) if part_ids else false()))),
+        ("Part 合成", select(func.count(AdmakePart.id)).where(
+            AdmakePart.project_id == pid, AdmakePart.status.in_(("pending", "processing")))),
+        ("AI 分析", select(func.count(AdmakePart.id)).where(
+            AdmakePart.project_id == pid, AdmakePart.ai_status == "analyzing")),
+    ]
+    for label, q in busy_checks:
+        if (await db.execute(q)).scalar_one():
+            raise HTTPException(409, f"「{p.title}」有{label}任务进行中，等它完成后再删除")
+    if _ai_tasks.get(pid, {}).get("status") == "processing":
+        raise HTTPException(409, f"「{p.title}」有 AI 分析任务进行中，等它完成后再删除")
+
     proj_slug = f"project_{p.id}_{_slug(p.title)}"
     # Explicit bulk deletes — avoids async lazy-load cascade (MissingGreenlet)
-    part_ids = [r[0] for r in (
-        await db.execute(select(AdmakePart.id).where(AdmakePart.project_id == pid))
-    ).all()]
     if part_ids:
         await db.execute(delete(AdmakeMark).where(AdmakeMark.part_id.in_(part_ids)))
         await db.execute(delete(AdmakeExport).where(AdmakeExport.part_id.in_(part_ids)))
@@ -2154,6 +2239,9 @@ async def create_export(
     user: User = Depends(get_current_user),
 ):
     part = await _get_part(part_id, user, db)
+    # 未知模式在 _build_segments 里只会得到空片段，报出来的是"标记点不完整"，把人引去查标记。
+    if body.mode not in _EXPORT_MODES:
+        raise HTTPException(400, f"未知的导出模式：{body.mode}")
     if part.status != "ready" or not part.file_path:
         raise HTTPException(400, "Part 尚未就绪，请先等待 Part 视频合并完成")
 
@@ -2208,6 +2296,16 @@ async def create_project_export(
 ):
     project = await _get_project(pid, user, db)
 
+    # 参数在这里就拦住。模式名拼错的话选材会一路走到后台任务里才因为"没有有效片段"失败，
+    # 界面上只看到一条导出失败；条数没有上限的话，界面 max=30 挡不住手输的 500——
+    # number 输入框允许输入超出 max 的值，而导出开始后不能中途取消。
+    if body.mode not in _EXPORT_MODES:
+        raise HTTPException(400, f"未知的导出模式：{body.mode}")
+    if not 1 <= body.count <= _MAX_EXPORT_COUNT:
+        raise HTTPException(400, f"素材数量需在 1~{_MAX_EXPORT_COUNT} 条之间")
+    if body.target_duration <= 0:
+        raise HTTPException(400, "目标时长必须大于 0")
+
     all_highlights, all_hooks = await _collect_all_marks(pid, db)
 
     # 如果前端传了 part_ids（视频轨上的 Part），只使用这些 Part 的标记和白场。
@@ -2231,8 +2329,9 @@ async def create_project_export(
     if not all_hooks:
         raise HTTPException(400, "没有找到钩子标记，请先为分 Part 添加钩子标记")
 
-    # 查询有序 Part 列表，供 _plan_export 填充中间 Part 白场
-    # 使用前端传入的顺序（视频轨顺序），否则按 part_index 排序
+    # 查询有序 Part 列表，供 _plan_export 填充中间 Part 白场。
+    # part_ids 只用来圈定范围，顺序语义一律按 part_index：白场要接的是剧里真实的前后关系，
+    # 前端也是按 part_index 排好再传的（_checkedPartsOrdered）。
     parts_res = await db.execute(
         select(AdmakePart)
         .where(AdmakePart.project_id == pid, AdmakePart.status == "ready")
@@ -2264,8 +2363,6 @@ async def create_project_export(
     n_hl = len({_mark_key(h) for h in all_highlights})
     n_hk = len({_mark_key(h) for h in all_hooks})
 
-    batch_dir = _get_batch_dir(pid, project.title, project.export_path)
-
     # 界面上的目标时长指成片总长，模板前后贴片也占在里面，所以选材要用扣掉贴片之后的
     # 长度当靠拢点。不扣的话贴片有多长、成片就超出多长（2026-08-10：188 秒的片尾让
     # 3 分钟目标的成片全部导成 6 分 12 秒）。
@@ -2285,38 +2382,34 @@ async def create_project_export(
     # 轮不上；而且"在区间内"是个硬门槛，会让一个刚好卡在中点、评分平平的配对，赢过只差
     # 半分钟但两段都是高分的配对。现在只留一个目标值，每种组合归到离它最近的那一档，
     # 天然不重不漏。
-    combos = _rank_combos(body.mode, all_highlights, all_hooks, parts_ordered, body_target)
-    n_combos = len(combos)
+    scored_combos = _rank_combos(body.mode, all_highlights, all_hooks, parts_ordered, body_target)
+    n_combos = len(scored_combos)
     submitted_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     part_names = [p["part_name"] for p in parts_ordered] if body.part_ids else None
 
-    # 本批已用过的高光/钩子（按 part_id+时间区间标识），保证同一批优先不复用同一段素材，
-    # 素材池用尽才允许复用——避免像取模索引那样一超出池子大小就立刻重复。
-    # 只在没有任何合法组合、降级到单点挑选时才用得上。
-    used_hl_keys: set[tuple] = set()
-    used_hk_keys: set[tuple] = set()
+    exports_created: list[tuple[AdmakeExport, list[dict], dict, str]] = []
+    combo_plan = _plan_combos(scored_combos, body.count, body_target)
 
-    exports_created: list[tuple[AdmakeExport, list[dict], dict]] = []
-    combo_plan = _plan_combos(combos, body.count)
+    # 选材决策整条记一遍。只记最终时长的话，成片长度不对时分不清是选材挑错了、目标时长没
+    # 生效、还是素材本身够不着——业务同学的机器上没法查数据库，只能靠日志。
+    # reachable 是全部候选组合的可达区间：目标落在区间外时，再怎么挑也只能取最接近的一端。
+    combo_durs = sorted(d for _, d in scored_combos)
+    n_pool = _dur_pool_size(scored_combos, body_target)
+    log_event("admake.export.planned", project_id=pid, mode=body.mode, count=body.count,
+              target_duration=body.target_duration, sticker_sec=round(sticker_dur, 2),
+              body_target=round(body_target, 2), n_combos=n_combos, n_pool=n_pool,
+              n_hl=n_hl, n_hk=n_hk,
+              reachable_min=round(combo_durs[0], 1) if combo_durs else None,
+              reachable_max=round(combo_durs[-1], 1) if combo_durs else None,
+              planned_body_sec=[round(d, 1) for _, d in combo_plan] or None,
+              fallback=not combo_plan)
+    if not combo_plan:
+        raise HTTPException(400, _no_combo_reason(body.mode, n_hk))
+
+    # 建批次目录放在组合检查之后：报 400 的请求不该在导出目录里留下空批次文件夹
+    batch_dir = _get_batch_dir(pid, project.title, project.export_path)
     for i in range(body.count):
-        if combo_plan:
-            pairs = combo_plan[i]
-        elif body.mode == "shuanggaoguang":
-            # 无合法组合时降级：第二段高光仍要避开与第一段同集大面积重叠的候选
-            hl1 = _pick_diverse(all_highlights, used_hl_keys)
-            hl2 = _pick_hl_avoiding(hl1, all_highlights, used_hl_keys)
-            pairs = [
-                (hl1, _pick_diverse(all_hooks, used_hk_keys)),
-                (hl2, _pick_diverse(all_hooks, used_hk_keys)),
-            ]
-        elif body.mode == "highlight_shunjian":
-            pairs = [(_pick_diverse(all_highlights, used_hl_keys),
-                      _pick_diverse(all_hooks, used_hk_keys))]
-        else:
-            # 悬疑倒置：钩子避开与所选高光同集重叠（重叠段会在成片里播两遍）
-            hl = _pick_diverse(all_highlights, used_hl_keys)
-            pairs = [(hl, _pick_hook_for(hl, all_hooks, used_hk_keys))]
-
+        pairs = combo_plan[i][0]
         plan = _plan_export(body.mode, pairs, parts_ordered)
         anchor_part_id = pairs[0][0]["part_id"]
 
@@ -2337,7 +2430,7 @@ async def create_project_export(
         )
         db.add(export)
         batch_info = {"index": i + 1, "count": body.count, "n_hl": n_hl, "n_hk": n_hk,
-                       "n_combos": n_combos, "part_names": part_names}
+                       "n_combos": n_combos, "n_pool": n_pool, "part_names": part_names}
         exports_created.append((export, plan, batch_info, filename_stem))
 
     await db.flush()

@@ -20,7 +20,7 @@ from app.core.logs import setup_logging, log_event, machine_profile
 
 # 版本号只写这一处。之前散在 FastAPI(version=)、/、自检接口三个地方，
 # 改版号漏掉一处就会出现「首页显示 beta.4、自检里还写着 beta.3」
-APP_VERSION = "1.0.7-beta.2"
+APP_VERSION = "1.0.7-beta.3"
 
 # 尽早安装日志 tee（捕获含 uvicorn 在内的全部 stdout/stderr → 按天滚动日志文件）
 setup_logging()
