@@ -17,8 +17,13 @@
 - 径向冲击变焦模糊（亮度几乎不变，亮度法完全失效）
 
 三者的共同点是**相邻帧之间出现一次远超正常剪辑的巨变**：闪光处的帧间残差是窗口
-中位数的 13~24 倍，而正常的镜头硬切才 3~5 倍。所以拿"最大的那次跳变"当锚点，
-跳变之后到结尾的全部内容一律算片尾板——不管它后面是定格、Zoom 还是粒子动效。
+中位数的 13~24 倍，而正常的镜头硬切才 3~5 倍。所以拿跳变当锚点，跳变之后到结尾的
+全部内容一律算片尾板——不管它后面是定格、Zoom 还是粒子动效。
+
+锚点取的是**"剩余时长合格的跳变里最强的那个"**，不是全局最强的那个。剧情结尾的爆闪
+可以比片尾转场更强（实测有 19.6 倍 vs 11.9 倍的例子），先取最强就会锚到剧情上，
+算出的片尾板长度超上限后整段放弃，那一集就一点没剪。也不能改成取最靠后的合格跳变
+——片尾板内部的粒子飘动同样会产生合格跳变，会少剪一截。
 
 ## 切点落在闪光之后，不是之前
 
@@ -88,19 +93,37 @@ def _detect_one(path: str, ss: float, win: float, from_tail: bool) -> float:
     if not res:
         return 0.0
     med = _median(res) or 0.01
+
+    if from_tail:
+        # 先按"强度达标 + 跳变之后只剩 _MIN_TAIL~_MAX_TAIL 秒"筛出候选，再在候选里取最强的
+        # 那个。顺序很要紧：原来是反的——先取全局最强、再检查剩余时长，一旦最强的那个跳变
+        # 不是片尾转场，整段就返回 0 放弃。
+        #
+        # 2026-08-11 运营反馈某一集的定格结尾一点没剪掉。查出来那集 48.82 秒处有个剧情
+        # 爆闪（亮度 27→122，残差 19.6 倍中位数），盖过了 58.02 秒处真正的片尾转场
+        # （11.9 倍）。先取最强就取到爆闪上，算出片尾板 11.8 秒、超过 3.5 秒上限后放弃。
+        # 同一批另外四集之所以没事，只是它们的最强跳变恰好就是片尾转场。
+        #
+        # 也不能改成"取最靠后的合格跳变"——片尾板内部的粒子飘动、缓放同样会产生合格跳变，
+        # 实测那四集会各自少剪 0.1~0.4 秒，片尾板留下一截。
+        #
+        # res[i] 是第 i 帧与第 i+1 帧之间的差。跳变在 i，意味着第 i 帧还是闪光、
+        # 第 i+1 帧已经是片尾板的头一帧——切点取 i+1，闪光整个留在 Part 里。
+        cands = [i for i in range(len(res))
+                 if res[i] >= med * _SPIKE_K
+                 and _MIN_TAIL <= win - (i + 1) * _STEP <= _MAX_TAIL]
+        if not cands:
+            return 0.0
+        best = max(cands, key=lambda i: res[i])
+        return win - (best + 1) * _STEP
+
+    # 片头：窗口开始到跳变之前都是片头板。片头板后面接的是剧情，所以切点取跳变本身
+    # （闪光属于片头板，剧情从跳变后的第一帧起）。这条路径 detect_transitions 里恒不启用，
+    # 判据对片头不成立，保留是为了 probe_detail 复核时能看到中间量。
     peak_i = max(range(len(res)), key=lambda i: res[i])
     if res[peak_i] < med * _SPIKE_K:
         return 0.0
-
-    if from_tail:
-        # res[i] 是第 i 帧与第 i+1 帧之间的差。峰值在 i，意味着第 i 帧还是闪光、
-        # 第 i+1 帧已经是片尾板的头一帧——切点就取 i+1，闪光整个留在 Part 里。
-        seg = win - (peak_i + 1) * _STEP
-    else:
-        # 片头：窗口开始到跳变之前都是片头板。片头板后面接的是剧情，
-        # 所以切点取跳变本身（闪光属于片头板，剧情从跳变后的第一帧起）
-        seg = (peak_i + 1) * _STEP
-
+    seg = (peak_i + 1) * _STEP
     return seg if _MIN_TAIL <= seg <= _MAX_TAIL else 0.0
 
 
@@ -130,6 +153,14 @@ def probe_detail(path: str, duration: float) -> dict:
             continue
         med = _median(res) or 0.01
         peak_i = max(range(len(res)), key=lambda i: res[i])
+        # 片尾按线上逻辑取"合格候选里最强的那个"，同时把全局最大那个也报出来——两者不是
+        # 同一个跳变时，正说明有更强的剧情爆闪盖在后面（2026-08-11 的漏剪就是这么查出来的）。
+        chosen_i = peak_i
+        if from_tail:
+            cands = [i for i in range(len(res))
+                     if res[i] >= med * _SPIKE_K
+                     and _MIN_TAIL <= _WIN - (i + 1) * _STEP <= _MAX_TAIL]
+            chosen_i = max(cands, key=lambda i: res[i]) if cands else None
         d = {
             "peak_sec": round(max(0.0, ss) + peak_i * _STEP, 2),
             "peak_residual": round(res[peak_i], 1),
@@ -138,12 +169,20 @@ def probe_detail(path: str, duration: float) -> dict:
             "baseline_lum": round(_median(lum), 1),
             "peak_lum": round(lum[peak_i], 1),
         }
+        if chosen_i is None:
+            d.update({"seg": 0.0, "accepted": False, "why": "没有跳变同时满足强度与剩余时长"})
+            out[label] = d
+            continue
+        if chosen_i != peak_i:
+            d["chosen_sec"] = round(max(0.0, ss) + chosen_i * _STEP, 2)
+            d["chosen_ratio"] = round(res[chosen_i] / med, 1)
+            d["why"] = "全局最大跳变的剩余时长越界，改取合格候选里最强的那个"
         if from_tail:
-            d["cut_sec"] = round(max(0.0, ss) + (peak_i + 1) * _STEP, 2)
-            d["seg"] = round(_WIN - (peak_i + 1) * _STEP, 2)
+            d["cut_sec"] = round(max(0.0, ss) + (chosen_i + 1) * _STEP, 2)
+            d["seg"] = round(_WIN - (chosen_i + 1) * _STEP, 2)
         else:
-            d["seg"] = round((peak_i + 1) * _STEP, 2)
-        d["accepted"] = bool(res[peak_i] >= med * _SPIKE_K and _MIN_TAIL <= d["seg"] <= _MAX_TAIL)
+            d["seg"] = round((chosen_i + 1) * _STEP, 2)
+        d["accepted"] = bool(res[chosen_i] >= med * _SPIKE_K and _MIN_TAIL <= d["seg"] <= _MAX_TAIL)
         out[label] = d
     return out
 

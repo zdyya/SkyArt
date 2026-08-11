@@ -400,6 +400,42 @@ def _at_normalize_target(i: dict) -> bool:
     )
 
 
+def _strip_edit_list(path: str) -> None:
+    """抹掉 mp4 里的 edit list（elst），让视频流真正从 0 开始。
+
+    concat demuxer 的 `-c copy` 会给输出写一条 edit list，视频流起始时间变成 0.023 秒
+    （实测 start_pts=353）。播放器按它跳过开头那一小段，第一帧就显示黑屏——运营反馈的
+    「导出视频应用模板，第一帧还是黑的」就是这个。
+
+    2026-08-11 实测确认了三件事：① 偏移是 copy 拼接这一步产生的，拼接前的两个输入
+    start_pts 都是 0；② 在编码参数上加 setpts=PTS-STARTPTS 或 bf=0 完全无效——阶段①的
+    产物本来就没有偏移，之前几轮修在这上面，所以怎么改都还是黑的；③ 输出侧的
+    -avoid_negative_ts make_zero / -muxdelay 0 / -movflags +negative_cts_offsets /
+    -start_at_zero / -fflags +genpts 等八种组合全部无效。唯一有效的是重新 remux 一遍、
+    读取时用 -ignore_editlist 忽略输入的 edit list，纯封装操作，不重新编码。
+
+    remux 失败不抛错：最坏结果是首帧黑，不值得让整条导出失败。
+    """
+    tmp = path + ".noelst.mp4"
+    try:
+        (
+            ffmpeg
+            .input(path, ignore_editlist=1)
+            .output(tmp, c="copy", movflags="+faststart")
+            .overwrite_output()
+            .run(quiet=True)
+        )
+        os.replace(tmp, path)
+    except (ffmpeg.Error, OSError) as e:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        log_event("video.strip_edit_list.failed", path=os.path.basename(path),
+                  error=str(e)[:200])
+
+
 async def merge_videos(input_paths: list[str], out_path: str | None = None,
                        limits: list[float | None] | None = None) -> str:
     """Merge clips into one file.
@@ -450,6 +486,7 @@ async def merge_videos(input_paths: list[str], out_path: str | None = None,
                     pass
 
         await loop.run_in_executor(None, _run_copy)
+        await loop.run_in_executor(None, _strip_edit_list, out_path)
         return out_path
 
     log_event(

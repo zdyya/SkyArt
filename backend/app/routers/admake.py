@@ -1888,9 +1888,12 @@ async def upload_sources(
                         s2.width, s2.height, s2.fps = info["width"], info["height"], info["fps"]
                         s2.head_trim, s2.tail_trim = head_t, tail_t
                         await db2.commit()
-                if head_t or tail_t:
-                    log_event("admake.transition_detected", source_id=src.id,
-                              file=src.original_filename, head_trim=head_t, tail_trim=tail_t)
+                # 检出 0 也要留痕。原来只在检出非零时打日志，排查漏剪时看不出这条素材是
+                # "检测没跑"还是"跑了但判定不剪"——2026-08-11 查一集定格没剪掉，日志里
+                # 那条素材干净得像没处理过，只能靠翻数据库的 tail_trim 才确认检测跑过。
+                log_event("admake.transition_detected", source_id=src.id,
+                          file=src.original_filename, head_trim=head_t, tail_trim=tail_t,
+                          detected=bool(head_t or tail_t))
             except Exception as e:
                 # 探测失败时 duration_sec 保持列默认值 0——build_parts 的 needs_probe
                 # 会按 duration_sec<=0 重新探测一次并在再次失败时明确报错中断，

@@ -1095,17 +1095,30 @@ function _applyTransform(o) {
   l.style.left = o.x + '%'; l.style.top = o.y + '%';
   l.style.transform = _layerCss(o); _syncHandles(l, o);
 }
+// 内容类改动（字体/颜色/特效/文字内容）就地更新：只换被改的这一个图层的内容，
+// 不整画布重建。renderPreview 会把所有 .layer 删掉重建，画布上其它贴纸的 <img> 和
+// 动效 APNG 跟着一起销毁重建、重新解码，表现就是「选个字体贴纸闪一下」，
+// 连续敲文字内容时每个字闪一次。手柄要原样搬过去，否则正在拖的手柄会消失。
+function _applyContent(o) {
+  const layer = document.querySelector(`#canvas .layer[data-id="${o.id}"]`);
+  const inner = layer && layer.querySelector('.inner');
+  const kind = kindOf(o.id);
+  if (!inner || !kind) { renderPreview(); return; }   // 图层还没渲染出来，退回全量
+  const handles = [...inner.querySelectorAll('.handle')].map(h => h.outerHTML).join('');
+  inner.innerHTML = elInner(o, kind) + handles;
+  _syncHandles(layer, o);   // 手柄的反向缩放跟着当前 scale/flip 重算一遍
+}
 function setF(key, val) {
   const o = findEl(selected); if (!o) return;
   o[key] = val;
   if (key === 'flip' || key === 'rot' || key === 'scale') _applyTransform(o);      // 只动变换
-  else if (key !== 'period') renderPreview();                                      // 字体/颜色/特效等影响内容
+  else if (key !== 'period') _applyContent(o);                                     // 字体/颜色/特效等影响内容
   renderConfig(); renderProp(); _pushHist();
 }
 // 文字内容连续输入：只更新画布和左栏，别重建属性面板的输入框（否则每敲一字丢焦点）
-function updateContent(v) { const o = findEl(selected); if (!o) return; o.content = v; renderConfig(); renderPreview(); _pushHist(); }
+function updateContent(v) { const o = findEl(selected); if (!o) return; o.content = v; renderConfig(); _applyContent(o); _pushHist(); }
 function resetTransform() { const o = findEl(selected); if (!o) return; o.rot = 0; o.scale = 1; o.flip = false; _applyTransform(o); renderConfig(); renderProp(); _pushHist(); }
-function insVar(v) { const o = findEl(selected); if (!o) return; o.content += v; const box = document.getElementById('p-content'); if (box) box.value = o.content; renderConfig(); renderPreview(); _pushHist(); }
+function insVar(v) { const o = findEl(selected); if (!o) return; o.content += v; const box = document.getElementById('p-content'); if (box) box.value = o.content; renderConfig(); _applyContent(o); _pushHist(); }
 let _seq = 0;
 function nid(p) { return p + Date.now() + '_' + (_seq++); }
 // 置灰的三个叠加区各自接一次点击提示。绑在区块上而不是每颗按钮上：
