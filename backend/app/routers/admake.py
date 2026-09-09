@@ -57,6 +57,14 @@ def _slug(text: str) -> str:
 # 不能出现在字段内容里，否则解析/展示会跟分隔符混淆）。
 _NAMING_BANNED_RE = re.compile(r'[\/\\*?"<>|_]')
 
+# 项目标题进文件名时的上限。另一份在 electron-app/renderer/tools/ad-make/index.html
+# 的 TITLE_MAX_LEN（输入框校验），改要一起改，否则界面放进来的标题会在导出时被悄悄截短。
+# 100 是按文件系统余量定的：成片旁边还有一个同名 .log.txt，整个文件名是
+# {剧名}_SkyArt_{月.日}_{署名}_{序号}.log.txt，固定部分最多占 47 个字符，
+# 而 APFS 单个文件名上限是 255 个字符（按字符数算，中文英文一样，实测确认）。
+_TITLE_MAX_LEN = 100
+
+
 def _validate_naming_field(value: str, field_label: str, max_len: int, allow_mid_colon: bool) -> None:
     """校验剧名 / 导出文件命名：非法字符全位置禁止；冒号规则按字段区分（剧名允许中间出现）。"""
     if len(value) > max_len:
@@ -283,6 +291,39 @@ async def _collect_all_marks(project_id: int, db: AsyncSession) -> tuple[list[di
     return all_highlights, all_hooks
 
 
+def _between_segments(hl: dict, hk: dict, parts_ordered: list[dict] | None) -> list[dict]:
+    """高光结束到钩子开始之间的原片内容，按 Part 边界切成若干段。
+
+    代码里管这些段叫 whitespace（白场），但它们不是空白，是原片连续播放的剧情——
+    一条 5 分钟的高光顺剪里这部分占到八九成时长。高光顺剪、双高光、悬疑倒置三种模式
+    都要接这一段，写在一处，改规则时不会漏掉某个模式。
+    """
+    out: list[dict] = []
+    if hl["part_id"] == hk["part_id"]:
+        if hk["start"] > hl["end"]:
+            out.append({"file_path": hl["file_path"], "start": hl["end"],
+                        "end": hk["start"], "label": "whitespace", "part_name": hl["part_name"]})
+        return out
+    # 高光结束 → 高光所在 Part 末尾
+    if hl["part_duration"] > hl["end"]:
+        out.append({"file_path": hl["file_path"], "start": hl["end"],
+                    "end": hl["part_duration"], "label": "whitespace", "part_name": hl["part_name"]})
+    # 两个 Part 之间的整集
+    if parts_ordered:
+        hl_idx = hl.get("part_index", -1)
+        hk_idx = hk.get("part_index", -1)
+        for p in parts_ordered:
+            if hl_idx < p["part_index"] < hk_idx and p["part_duration"] > 0:
+                out.append({"file_path": p["file_path"], "start": 0.0,
+                            "end": p["part_duration"], "label": "whitespace",
+                            "part_name": p["part_name"]})
+    # 钩子所在 Part 开头 → 钩子开始
+    if hk["start"] > 0:
+        out.append({"file_path": hk["file_path"], "start": 0.0,
+                    "end": hk["start"], "label": "whitespace", "part_name": hk["part_name"]})
+    return out
+
+
 def _plan_export(
     mode: str,
     pairs: list[tuple[dict, dict]],
@@ -303,46 +344,35 @@ def _plan_export(
     if len(pairs) > 1:
         pairs = sorted(pairs, key=lambda pr: (pr[0].get("part_index", 0), pr[0]["start"]))
 
-    for hl, hk in pairs:
+    for pair in pairs:
+        # 顺剪类一组两个标记，悬疑倒置一组三个（多一个开场悬念）
+        hl, hk = (pair[1], pair[2]) if len(pair) == 3 else pair
         same = hl["part_id"] == hk["part_id"]
 
         if mode in ("highlight_shunjian", "shuanggaoguang"):
             segments.append({"file_path": hl["file_path"], "start": hl["start"],
                               "end": hl["end"], "label": "highlight", "part_name": hl["part_name"],
                               "score": hl["score"]})
-            if same:
-                if hk["start"] > hl["end"]:
-                    segments.append({"file_path": hl["file_path"], "start": hl["end"],
-                                     "end": hk["start"], "label": "whitespace", "part_name": hl["part_name"]})
-            else:
-                # 白场：高光结束 → 高光所在 Part 末尾
-                if hl["part_duration"] > hl["end"]:
-                    segments.append({"file_path": hl["file_path"], "start": hl["end"],
-                                     "end": hl["part_duration"], "label": "whitespace", "part_name": hl["part_name"]})
-                # 白场：高光 Part 与钩子 Part 之间的所有中间 Part（完整）
-                if parts_ordered:
-                    hl_idx = hl.get("part_index", -1)
-                    hk_idx = hk.get("part_index", -1)
-                    for p in parts_ordered:
-                        if hl_idx < p["part_index"] < hk_idx and p["part_duration"] > 0:
-                            segments.append({"file_path": p["file_path"], "start": 0.0,
-                                             "end": p["part_duration"], "label": "whitespace",
-                                             "part_name": p["part_name"]})
-                # 白场：钩子所在 Part 开头 → 钩子开始
-                if hk["start"] > 0:
-                    segments.append({"file_path": hk["file_path"], "start": 0.0,
-                                     "end": hk["start"], "label": "whitespace", "part_name": hk["part_name"]})
+            segments.extend(_between_segments(hl, hk, parts_ordered))
             segments.append({"file_path": hk["file_path"], "start": hk["start"],
                               "end": hk["end"], "label": "hook", "part_name": hk["part_name"],
                               "score": hk["score"]})
 
         elif mode == "xuanyi_daozhi":
-            segments.append({"file_path": hk["file_path"], "start": hk["start"],
-                              "end": hk["end"], "label": "hook", "part_name": hk["part_name"],
-                              "score": hk["score"]})
+            # 一组是三个标记：开场悬念（取自更晚的剧情）→ 高光 → 中间剧情 → 收尾钩子。
+            # 老实现只有「悬念 + 一个高光」两段，成片物理上做不过一分十几秒，目标时长
+            # 填 3 分还是 10 分都撞在同一个天花板上。补上中间剧情之后长度连续可调。
+            hk_open, hl, hk_end = pair
+            segments.append({"file_path": hk_open["file_path"], "start": hk_open["start"],
+                              "end": hk_open["end"], "label": "hook", "part_name": hk_open["part_name"],
+                              "score": hk_open["score"]})
             segments.append({"file_path": hl["file_path"], "start": hl["start"],
                               "end": hl["end"], "label": "highlight", "part_name": hl["part_name"],
                               "score": hl["score"]})
+            segments.extend(_between_segments(hl, hk_end, parts_ordered))
+            segments.append({"file_path": hk_end["file_path"], "start": hk_end["start"],
+                              "end": hk_end["end"], "label": "hook", "part_name": hk_end["part_name"],
+                              "score": hk_end["score"]})
 
     return segments
 
@@ -456,10 +486,7 @@ def _pair_is_legal(mode: str, hl: dict, hk: dict, parts_ordered: list[dict]) -> 
     尾巴、再跳回前面某集的开头，画面时间倒着走，而且两集的大段白场都算进了成片长度。
     真实项目「132」上 352 种双高光组合里有 120 种（34%）是这种逆序配对。
 
-    悬疑倒置是把钩子放到高光前面拼，要求钩子取自高光结束之后——钩子本来就是后文的悬念，
-    同 Part 里排在高光之前的那些段不算钩子素材。"""
-    if mode == "xuanyi_daozhi":
-        return hl["part_id"] != hk["part_id"] or hk["start"] > hl["end"]
+    悬疑倒置不走这里，它一组是三个标记，合法性判断见 _xuanyi_triples。"""
     return _estimate_pair_duration(hl, hk, parts_ordered) is not None
 
 
@@ -506,6 +533,47 @@ def _double_combo_ok(first: tuple[dict, dict], second: tuple[dict, dict],
     return min(a1, b1) <= max(a0, b0)
 
 
+# 悬疑倒置的候选是三元组，数量是 高光数 × 钩子数²，比配对多一个量级。
+# 超过这个数按开场悬念的分数截断，防止大项目上枚举把导出接口拖住。
+_XUANYI_POOL_MAX = 3000
+
+
+def _xuanyi_triples(highlights: list[dict], hooks: list[dict],
+                    parts_ordered: list[dict]) -> list[tuple[dict, dict, dict]]:
+    """悬疑倒置的合法组合：(开场悬念, 高光, 收尾钩子)。
+
+    三条约束，都来自「倒叙」这个语义本身：
+    - 开场悬念取自最晚的位置——它是后文的悬念，提到片头来才叫倒置；
+    - 高光排在开场悬念之前，收尾钩子排在高光之后，这样中间那段剧情是顺着走的；
+    - 收尾钩子不能越过开场悬念，否则中间剧情会把片头那段悬念再播一遍
+      （双高光的「跨度不能相交」防的是同一件事）。
+    """
+    offsets = _part_offsets(parts_ordered)
+    def at(mark: dict, key: str) -> float:
+        return offsets.get(mark["part_id"], 0.0) + mark[key]
+
+    out: list[tuple[dict, dict, dict]] = []
+    for opener in hooks:
+        op_start = at(opener, "start")
+        for hl in highlights:
+            if at(hl, "end") >= op_start:
+                continue
+            for closer in hooks:
+                if _mark_key(closer) == _mark_key(opener):
+                    continue
+                if at(closer, "start") <= at(hl, "end"):
+                    continue
+                if at(closer, "end") > op_start:
+                    continue
+                out.append((opener, hl, closer))
+    if len(out) > _XUANYI_POOL_MAX:
+        out.sort(key=lambda t: -(t[0]["score"] + t[1]["score"] + t[2]["score"]))
+        log_event("admake.export.xuanyi_pool_capped",
+                  total=len(out), capped_to=_XUANYI_POOL_MAX)
+        out = out[:_XUANYI_POOL_MAX]
+    return out
+
+
 def _estimate_plan_duration(mode: str, pairs: list[tuple[dict, dict]],
                             parts_ordered: list[dict]) -> float:
     """这套配对最终会出多长的成片，按 _plan_export 真实产出的段落累加。
@@ -527,6 +595,15 @@ def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
     悬疑倒置各 1 对，双高光 2 对。三种模式共用这一个排序口径，界面上的目标时长因此对
     全部模式生效。时长跟着一起返回，_plan_combos 排每条用哪套时还要拿它把关。
     """
+    if mode == "xuanyi_daozhi":
+        scored = [([t], _estimate_plan_duration(mode, [t], parts_ordered))
+                  for t in _xuanyi_triples(highlights, hooks, parts_ordered)]
+        scored.sort(key=lambda item: (
+            abs(item[1] - target_sec),
+            -sum(mark["score"] for group in item[0] for mark in group),
+        ))
+        return scored
+
     singles = [(hl, hk) for hl in highlights for hk in hooks
                if _pair_is_legal(mode, hl, hk, parts_ordered)]
     if mode != "shuanggaoguang":
@@ -548,7 +625,7 @@ def _rank_combos(mode: str, highlights: list[dict], hooks: list[dict],
                 scored.append((combo, _estimate_plan_duration(mode, combo, parts_ordered)))
     scored.sort(key=lambda item: (
         abs(item[1] - target_sec),
-        -sum(mark["score"] for pair in item[0] for mark in pair),
+        -sum(mark["score"] for group in item[0] for mark in group),
     ))
     return scored
 
@@ -617,20 +694,28 @@ def _plan_combos(
         if not pool:          # 组合用尽，重置后回到最贴合的那一档继续均衡轮转
             used.clear()
             pool = [item for item in scored if abs(item[1] - target_sec) <= base_limit] or list(scored)
-        # min 稳定：权重相同取 pool 中靠前者（更贴合目标）
-        chosen = min(pool, key=lambda item: sum(
-            use_count.get(_mark_key(mark), 0) for pair in item[0] for mark in pair))
+        # 先比出镜次数，平手再比分数高的。分数只能当平手裁判，不能当主键——
+        # 实测真实标记的分数几乎只落在 8 和 9 两档（提示词要 1~10，模型只用中间两档），
+        # 拿它当主键排序，平均分只涨 0.05，成片离目标时长却要多偏 20 秒，不划算。
+        # 而两档分布让平手频繁发生，这里正是分数唯一派得上用场的位置。
+        chosen = min(pool, key=lambda item: (
+            sum(use_count.get(_mark_key(mark), 0) for group in item[0] for mark in group),
+            -sum(mark["score"] for group in item[0] for mark in group),
+        ))
         used.add(_combo_key(chosen[0]))
-        for pair in chosen[0]:
-            for mark in pair:
+        for group in chosen[0]:
+            for mark in group:
                 use_count[_mark_key(mark)] = use_count.get(_mark_key(mark), 0) + 1
         planned.append(chosen)
     return planned
 
 
-def _combo_key(combo: list[tuple[dict, dict]]) -> tuple:
-    """一套配对的去重标识：按顺序取每对的高光/钩子标识。"""
-    return tuple((_mark_key(hl), _mark_key(hk)) for hl, hk in combo)
+def _combo_key(combo: list[tuple]) -> tuple:
+    """一套配对的去重标识：按顺序取每组里每个标记的标识。
+
+    不写死二元：悬疑倒置一组是三个标记（开场钩子、高光、收尾钩子），
+    顺剪类仍是两个。这里按实际长度取，两种形状共用。"""
+    return tuple(tuple(_mark_key(m) for m in group) for group in combo)
 
 
 def _no_combo_reason(mode: str, n_hk: int) -> str:
@@ -643,6 +728,11 @@ def _no_combo_reason(mode: str, n_hk: int) -> str:
         if n_hk < 2:
             return "双高光顺剪需要至少 2 个不同的钩子标记，当前不足，请补充钩子后再导出"
         return "现有标记凑不出双高光组合：需要两组「高光在前、钩子在后」且画面互不重叠的配对，请调整标记位置"
+    if mode == "xuanyi_daozhi":
+        if n_hk < 2:
+            return "悬疑倒置需要至少 2 个不同的钩子标记：一个放片头做悬念，一个收尾，当前不足"
+        return ("现有标记凑不出悬疑倒置组合：片头那个悬念要取自最靠后的剧情，"
+                "高光和收尾钩子都得排在它前面，请调整标记位置")
     if mode == "xuanyi_daozhi":
         return "现有标记凑不出悬疑倒置组合：同一 Part 里钩子要在高光结束之后，请调整标记位置"
     return "现有标记凑不出高光顺剪组合：钩子要在高光之后（跨 Part 按 Part 顺序），请调整标记位置"
@@ -659,7 +749,7 @@ def _sanitize_naming_field(value: str, max_len: int, fallback: str) -> str:
 def _build_export_filename(title: str, editor_alias: str, seq: int) -> str:
     """{项目标题}_SkyArt_{M.D}_{导出文件命名}_{编号}，编号由调用方保证项目内唯一。"""
     now = datetime.now()
-    clean_title = _sanitize_naming_field(title, 40, "未命名项目")
+    clean_title = _sanitize_naming_field(title, _TITLE_MAX_LEN, "未命名项目")
     clean_alias = _sanitize_naming_field(editor_alias, 20, "未署名")
     return f"{clean_title}_SkyArt_{now.month}.{now.day}_{clean_alias}_{seq}"
 
@@ -995,6 +1085,18 @@ async def _run_export(export_id: int, part_file_path: str, segments: list[tuple[
             except Exception: pass
 
 
+def _clip_tmp_dir() -> str:
+    """裁切片的落脚处。放在应用自己的目录里，不放用户的导出目录。
+
+    导出中途被打死时（Electron 退出会把后端 os._exit 掉），清理代码不执行，
+    切片就留在原地。写在导出目录里，用户打开交付文件夹看到的是一堆几十兆的
+    _clip_*.mp4 混在成片中间。
+    """
+    d = os.path.join(settings.UPLOAD_DIR, "AdMake", "_export_tmp")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 async def _run_export_multi(
     export_id: int,
     plan: list[dict],
@@ -1023,7 +1125,7 @@ async def _run_export_multi(
                     continue
                 abs_src = (seg["file_path"] if os.path.isabs(seg["file_path"])
                            else os.path.join(settings.UPLOAD_DIR, seg["file_path"]))
-                clip_out = os.path.join(out_dir, f"_clip_{export_id}_{i}_{uuid.uuid4().hex[:6]}.mp4")
+                clip_out = os.path.join(_clip_tmp_dir(), f"_clip_{export_id}_{i}_{uuid.uuid4().hex[:6]}.mp4")
                 await vid_svc.cut_video_copy(abs_src, seg["start"], seg["end"], clip_out, normalize=True)
                 clip_paths.append(clip_out)
 
@@ -1038,9 +1140,15 @@ async def _run_export_multi(
             rel = _export_rel(final)
 
             log_path = out_path[:-4] + ".log.txt"
-            _write_export_log(log_path, out_name, plan, actual_dur, target_dur, mode,
-                               submitted_at=submitted_at, batch_info=batch_info,
-                               sticker_dur=sticker_dur)
+            # 诊断报告写失败绝不能牵连成片：成片这时已经编完并套好模板了，
+            # 而外层 except 会先把它删掉再重试，两次都失败就整条置成 failed。
+            # 磁盘满、导出目录被改名都会走到这里。与 AI 分析那条链路的 _wlog 同一道防护。
+            try:
+                _write_export_log(log_path, out_name, plan, actual_dur, target_dur, mode,
+                                   submitted_at=submitted_at, batch_info=batch_info,
+                                   sticker_dur=sticker_dur)
+            except Exception as _e:
+                log_failure("admake.export_multi.log", _e, export_id=export_id)
 
             async with AsyncSessionLocal() as db:
                 res = await db.execute(select(AdmakeExport).where(AdmakeExport.id == export_id))
@@ -1105,7 +1213,17 @@ def _load_prompt() -> str:
 AI_ANALYSIS_PROMPT: str = _load_prompt()
 
 
-QWEN_VL_MODEL = "qwen3.7-plus"  # 视频剪辑（AdMake）侧指定的通义模型（2026-07-10 评测验证可用）
+# 视频剪辑（AdMake）侧指定的通义模型。白名单通道 2026-08-26 复扫确认已授权，
+# 敏感剧情梗概分析不被拦截；视觉输入走 OpenAI 兼容端点即可（DE/key.md 实测）。
+# 2026-08-29 在白名单通道上用真实短剧素材横评三个可用模型（同一段 90 秒素材、
+# 同一条提示词）：qwen3-vl-plus 13.2 秒出 13 段高光，每段 2~10 秒；qwen3.7-plus
+# 27.4 秒只出 3 段，每段 15~37 秒，等于把整集切成三大块，剪辑还得自己找点；
+# qwen3.8-max 92.1 秒、输出 4562 token，结果与 3.7-plus 相当。vl-plus 是唯一
+# 专做视觉理解的一档，快一倍、便宜一半、颗粒度可用，选它。
+# 通道内还能调的：qwen3.7-plus、qwen3.7-flash、qwen3.8-max。其余（含 qwen3-vl-flash、
+# qwen3.8-flash、各种 -us 后缀变体）实测全报 access_denied——换模型前先确认它在
+# 这条通道的授权名单里，否则不是代码问题。
+QWEN_VL_MODEL = "qwen3-vl-plus"
 
 
 async def _analyze_one_part(part: AdmakePart, on_stage=None) -> dict:
@@ -1114,7 +1232,7 @@ async def _analyze_one_part(part: AdmakePart, on_stage=None) -> dict:
     on_stage: 可选回调，在 compressing/uploading/analyzing 三个阶段切换时上报（进度展示用）。
 
     链路取舍（2026-07-10 评测验证，历史坑见 KNOWLEDGE #15）：
-    - key/端点必须用 QWEN_API_KEY + QWEN_BASE_URL（国内）：HAPPYHORSE 美区 key 对
+    - key/端点必须用 QWEN_API_KEY + QWEN_BASE_URL（阿里云白名单通道，美国 us-east-1）：HAPPYHORSE key 对
       chat 接口无任何模型授权，用它这条分支从未跑通过；
     - 视频经 OSS 签名 URL + video_url 传入：国内端点不接受 Files API 的
       video: file_id 传法（要求 list）；美区 OSS 签名 URL 国内端点可正常拉取。"""
@@ -1158,7 +1276,11 @@ async def _analyze_one_part(part: AdmakePart, on_stage=None) -> dict:
         async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
             ai_resp = await client.post(
                 f"{compat_base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "X-DashScope-DataInspection": '{"input":"disable","output":"disable"}',
+                },
                 json=payload,
             )
         if not ai_resp.is_success:
@@ -1333,6 +1455,9 @@ async def _precheck_ai_credentials(ai_model: str) -> None:
                     headers={
                         "Authorization": f"Bearer {settings.QWEN_API_KEY}",
                         "Accept-Encoding": "identity",
+                        # 白名单通道每个请求都要关绿网，漏了这里会拿到 access_denied，
+                        # 预检把它当成 key 无效上报，用户换多少次 key 都过不了
+                        "X-DashScope-DataInspection": '{"input":"disable","output":"disable"}',
                     },
                 )
         except httpx.DecodingError as e:
@@ -1527,7 +1652,10 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
         f"Project  : {project_title} (id={project_id})\n"
         f"Batch    : {batch_name}\n"
         f"Started  : {started_str}\n"
-        f"AI Model : {ai_model}\n"
+        # ai_model 是分支开关（gemini 走代理 / 其余走通义），不是实际型号：Gemini 分支
+        # 的请求体不带 model 字段，跑哪个版本由 Dscript 代理定。照抄它会让日志读起来
+        # 像实测记录，所以这里写实际能确定的那部分。
+        f"AI Model : {'Gemini（Dscript 代理，版本以代理为准）' if ai_model.startswith('gemini') else QWEN_VL_MODEL}\n"
         f"Parts    : {len(part_ids)}\n"
         f"{'=' * 80}\n\n"
     )
@@ -1783,7 +1911,7 @@ async def create_project(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    _validate_naming_field(body.title, "项目标题", 40, allow_mid_colon=True)
+    _validate_naming_field(body.title, "项目标题", _TITLE_MAX_LEN, allow_mid_colon=True)
     if body.editor_alias:
         _validate_naming_field(body.editor_alias, "导出文件命名", 20, allow_mid_colon=False)
     p = AdmakeProject(**body.model_dump(), user_id=user.id)
@@ -1851,7 +1979,7 @@ async def update_project(
     if not p:
         raise HTTPException(404, "项目不存在或无权限")
     if body.title is not None:
-        _validate_naming_field(body.title, "项目标题", 40, allow_mid_colon=True)
+        _validate_naming_field(body.title, "项目标题", _TITLE_MAX_LEN, allow_mid_colon=True)
     if body.editor_alias:
         _validate_naming_field(body.editor_alias, "导出文件命名", 20, allow_mid_colon=False)
     for k, v in body.model_dump(exclude_none=True).items():
@@ -2076,6 +2204,11 @@ async def build_parts(
     # A failed probe must NOT silently leave duration_sec at 0 — a 0-duration source
     # defeats _group_into_parts' MAX_SEC cap (0 always fits), letting unrelated sources
     # pile into one unbounded group. Abort instead so the bad upload gets fixed/re-uploaded.
+    # duration_sec 同时也是"探测跑完了没有"的标记：上传接口的后台任务把时长、
+    # 分辨率、片头片尾裁剪点写在同一次提交里，duration_sec>0 就说明这三样都齐了。
+    # 前端上传成功后立刻发 build-parts，而转场检测每条源要抽 120 帧、耗时以秒计，
+    # 稳定输给这个请求——所以这里读到的 tail_trim 必然是 0，片尾定格板一段都截不掉。
+    # 探测没跑完就自己补一遍，包括转场检测，不再指望后台任务先到。
     needs_probe = [s for s in p.sources if s.duration_sec <= 0]
     for src in needs_probe:
         try:
@@ -2083,6 +2216,16 @@ async def build_parts(
             info = await vid_svc.get_video_info(abs_p)
             src.duration_sec = info["duration"]
             src.width, src.height, src.fps = info["width"], info["height"], info["fps"]
+            try:
+                head_t, tail_t = await asyncio.to_thread(
+                    detect_transitions, abs_p, info["duration"])
+                src.head_trim, src.tail_trim = head_t, tail_t
+                log_event("admake.transition_detected", source_id=src.id,
+                          file=src.original_filename, head_trim=head_t, tail_trim=tail_t,
+                          detected=bool(head_t or tail_t), where="build_parts")
+            except Exception as e2:
+                # 检测失败只是不裁片尾，不该拖垮建 Part
+                log_failure("admake.transition_detect", e2, source_id=src.id)
         except Exception as e:
             log_failure("admake.probe_duration", e, source_id=src.id, file_path=src.file_path)
             raise HTTPException(400, f"素材时长探测失败，文件可能已损坏：{src.file_path}")
@@ -2286,36 +2429,22 @@ async def list_exports(
     return [AdmakeExportOut.model_validate(e) for e in res.scalars().all()]
 
 
-@router.post("/projects/{pid}/export", response_model=list[AdmakeExportOut], status_code=201)
-async def create_project_export(
-    pid: int,
-    body: AdmakeExportRequest,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    user: User = Depends(get_current_user),
-):
-    project = await _get_project(pid, user, db)
+async def _load_selection_inputs(pid: int, part_ids: list[int] | None, db: AsyncSession):
+    """读出这次选材要用的标记和有序 Part。导出接口和导出前预检共用这一份。
 
-    # 参数在这里就拦住。模式名拼错的话选材会一路走到后台任务里才因为"没有有效片段"失败，
-    # 界面上只看到一条导出失败；条数没有上限的话，界面 max=30 挡不住手输的 500——
-    # number 输入框允许输入超出 max 的值，而导出开始后不能中途取消。
-    if body.mode not in _EXPORT_MODES:
-        raise HTTPException(400, f"未知的导出模式：{body.mode}")
-    if not 1 <= body.count <= _MAX_EXPORT_COUNT:
-        raise HTTPException(400, f"素材数量需在 1~{_MAX_EXPORT_COUNT} 条之间")
-    if body.target_duration <= 0:
-        raise HTTPException(400, "目标时长必须大于 0")
-
+    两个入口各写一遍的话，预检报的「建议条数」会和真正导出时的口径对不上——
+    用户照着建议填，导出报告里却出现「超过不重复上限」（KNOWLEDGE #4 的同类问题）。
+    """
     all_highlights, all_hooks = await _collect_all_marks(pid, db)
 
     # 如果前端传了 part_ids（视频轨上的 Part），只使用这些 Part 的标记和白场。
     # 先校验归属：项目 id 会被复用（删项目→新项目同 id），前端 localStorage 里的
     # 轨道可能残留旧项目/已重建 Part 的失效 id，直接拿去过滤会把标记筛成空集，
     # 再报"没有标记"就是误导（2026-07-10 实际发生）
-    if body.part_ids:
+    if part_ids:
         own_res = await db.execute(
             select(AdmakePart.id).where(
-                AdmakePart.project_id == pid, AdmakePart.id.in_(body.part_ids)
+                AdmakePart.project_id == pid, AdmakePart.id.in_(part_ids)
             )
         )
         allowed = set(own_res.scalars().all())
@@ -2339,12 +2468,12 @@ async def create_project_export(
     )
     all_ready = {p.id: p for p in parts_res.scalars().all() if p.file_path}
 
-    if body.part_ids:
+    if part_ids:
         # 按视频轨顺序排列，过滤不在轨道上的 Part
         parts_ordered = [
             {"part_id": p.id, "part_name": p.name, "part_index": p.part_index,
              "file_path": p.file_path, "part_duration": p.duration_sec}
-            for pid_item in body.part_ids
+            for pid_item in part_ids
             if (p := all_ready.get(pid_item))
         ]
     else:
@@ -2353,6 +2482,131 @@ async def create_project_export(
              "file_path": p.file_path, "part_duration": p.duration_sec}
             for p in sorted(all_ready.values(), key=lambda x: x.part_index)
         ]
+    return all_highlights, all_hooks, parts_ordered
+
+
+@router.get("/projects/{pid}/export-preflight")
+async def export_preflight(
+    pid: int,
+    mode: str,
+    target_duration: float,
+    part_ids: str | None = None,
+    template_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """导出前算一次：这个模式加这个目标时长，最多能出几条互不重复的成片。
+
+    以前这个数只写进导出完成后的 .log.txt，用户得先花几十分钟导完 20 条，
+    才在报告里看到「其实只有 9 条不重样」。口径与真正导出完全一致（同一个
+    _load_selection_inputs 和 _dur_pool_size），不会出现照着建议填还被判超限。
+
+    reachable_min / reachable_max 是现有素材能做出的成片长度范围。目标落在范围外时
+    suggested 会虚高——窗口会一路撑大到把所有组合都圈进来，而那些成片长度全挤在一处，
+    互不重复也没有意义，所以这种情况直接不给建议值，由 target_in_range 标出来。
+    """
+    await _get_project(pid, user, db)
+    if mode not in _EXPORT_MODES:
+        raise HTTPException(400, f"未知的导出模式：{mode}")
+    if target_duration <= 0:
+        raise HTTPException(400, "目标时长必须大于 0")
+
+    ids = [int(x) for x in part_ids.split(",") if x.strip().isdigit()] if part_ids else None
+    try:
+        highlights, hooks, parts_ordered = await _load_selection_inputs(pid, ids, db)
+    except HTTPException as e:
+        # 缺标记之类的前置问题，预检不该弹错误，如实回报让界面提示补标记
+        return {"combos": 0, "suggested": 0, "reason": e.detail,
+                "reachable_min": None, "reachable_max": None, "target_in_range": False}
+
+    sticker = await _template_sticker_duration(template_id, db)
+    body_target = max(target_duration - sticker, _MIN_BODY_SEC)
+    scored = _rank_combos(mode, highlights, hooks, parts_ordered, body_target)
+    if not scored:
+        return {"combos": 0, "suggested": 0, "reason": _no_combo_reason(mode, len(hooks)),
+                "reachable_min": None, "reachable_max": None, "target_in_range": False}
+
+    durs = sorted(d for _, d in scored)
+    lo, hi = durs[0], durs[-1]
+    # 二元判断「目标在不在 lo~hi 之间」太狠：可达范围窄的时候差几秒就把建议值一刀切掉。
+    # 改看最贴合的那条离目标多远，超过容差才算错配。
+    nearest = min(abs(d - body_target) for d in durs)
+    in_range = nearest <= max(body_target * _MISMATCH_RATIO, _MISMATCH_MIN_SEC)
+    return {
+        "combos": len(scored),
+        "suggested": _dur_pool_size(scored, body_target) if in_range else 0,
+        "reason": None,
+        "reachable_min": round(lo + sticker, 1),
+        "reachable_max": round(hi + sticker, 1),
+        "target_in_range": in_range,
+        "sticker_sec": round(sticker, 1),
+    }
+
+
+# 目标和素材算不算错配：最贴合的那条离目标超过「目标的一半」或 60 秒（取大者）才算。
+_MISMATCH_RATIO = 0.5
+_MISMATCH_MIN_SEC = 60.0
+
+# 「常用」快捷值取最近多少次导出。太少会被一次异常操作带偏，太多跟不上习惯变化。
+_HABIT_RECENT_EXPORTS = 30
+_HABIT_MAX_VALUES = 4
+
+
+@router.get("/export-habits")
+async def export_habits(
+    mode: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """这个人在这个模式下最常用的几档目标时长，给导出面板做快捷值。
+
+    按人统计不按项目：同一个运营的投放习惯跨剧是稳定的，按项目统计新建项目永远是空的。
+    分模式各算各的——悬疑倒置的成片只有几十秒，和顺剪类不是一个量级，混在一起统计
+    会给出谁都用不上的值。
+    """
+    res = await db.execute(
+        select(AdmakeExport.target_duration)
+        .join(AdmakeProject, AdmakeExport.project_id == AdmakeProject.id)
+        .where(AdmakeProject.user_id == user.id,
+               AdmakeExport.mode == mode,
+               AdmakeExport.target_duration.isnot(None))
+        .order_by(AdmakeExport.id.desc())
+        .limit(_HABIT_RECENT_EXPORTS)
+    )
+    # 按分钟归档，不足一分钟的算作 1 分——界面上目标时长的下限就是 1 分钟。
+    # 原来写的是 int(round(sec/60)) 且丢掉 0，30 秒的记录会被整个抹掉。
+    tally: dict[int, int] = {}
+    for (sec,) in res.all():
+        minutes = max(1, int(round((sec or 0) / 60)))
+        tally[minutes] = tally.get(minutes, 0) + 1
+    if len(tally) < 2:          # 记录太少，给默认档位而不是一个孤零零的值
+        return {"values": [], "from": "default"}
+    top = sorted(tally, key=lambda m: (-tally[m], m))[:_HABIT_MAX_VALUES]
+    return {"values": sorted(top), "counts": {str(m): tally[m] for m in top}, "from": "history"}
+
+
+@router.post("/projects/{pid}/export", response_model=list[AdmakeExportOut], status_code=201)
+async def create_project_export(
+    pid: int,
+    body: AdmakeExportRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(pid, user, db)
+
+    # 参数在这里就拦住。模式名拼错的话选材会一路走到后台任务里才因为"没有有效片段"失败，
+    # 界面上只看到一条导出失败；条数没有上限的话，界面 max=30 挡不住手输的 500——
+    # number 输入框允许输入超出 max 的值，而导出开始后不能中途取消。
+    if body.mode not in _EXPORT_MODES:
+        raise HTTPException(400, f"未知的导出模式：{body.mode}")
+    if not 1 <= body.count <= _MAX_EXPORT_COUNT:
+        raise HTTPException(400, f"素材数量需在 1~{_MAX_EXPORT_COUNT} 条之间")
+    if body.target_duration <= 0:
+        raise HTTPException(400, "目标时长必须大于 0")
+
+    all_highlights, all_hooks, parts_ordered = await _load_selection_inputs(
+        pid, body.part_ids, db)
 
     all_highlights.sort(key=lambda h: h["score"], reverse=True)
     all_hooks.sort(key=lambda h: h["score"], reverse=True)
@@ -2427,6 +2681,7 @@ async def create_project_export(
             project_id=pid,
             mode=body.mode,
             status="pending",
+            target_duration=body.target_duration,
         )
         db.add(export)
         batch_info = {"index": i + 1, "count": body.count, "n_hl": n_hl, "n_hk": n_hk,

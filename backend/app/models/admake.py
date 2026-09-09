@@ -130,6 +130,8 @@ class AdmakeExport(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending")
     file_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     duration_sec: Mapped[float] = mapped_column(Float, default=0.0)
+    # 这批导出提交时填的目标时长（秒）。用来统计每个人常用哪几档，导出面板拿它做快捷值。
+    target_duration: Mapped[float | None] = mapped_column(Float, nullable=True)
     # 模板套用失败原因（成片本体成功、只有模板没套上时非空）——历史里要标出来，
     # 否则批量导出全是"没套模板的白片"也显示就绪，运营不知情
     template_error: Mapped[str | None] = mapped_column(String(300), nullable=True)

@@ -124,8 +124,13 @@ textarea.input{resize:vertical;min-height:68px;}
   transition:transform .15s;}
 .project-card:hover{transform:translateY(-2px);}
 /* 卡片头图：暖杏两档平涂——浅杏=还有任务没完成，深杏=全部任务完成（真实首帧缩略图为长期方案） */
+/* 这里不能写 z-index：一写就生成层叠上下文，⋯ 菜单的 z-index:50 被关在头图里面，
+   而卡身 .project-card-body 是 z-index:1 且在 DOM 里靠后，会盖住菜单溢出头图的那一截。
+   模板卡的菜单五项共 120px，从 ⋯ 下沿算起有 40px 落进卡身，「导出分享」「删除」点不到，
+   点击穿到卡身上，触发卡片自己的 onclick 直接跳进模板编辑器。头图是第一个子元素，
+   本来就压在卡片底色上面，不需要 z-index。 */
 .project-card-header{height:120px;display:flex;align-items:flex-end;padding:16px;position:relative;background:linear-gradient(140deg,rgba(253,240,227,.62),rgba(249,227,205,.62));
-  border-bottom:1px solid rgba(24,28,36,calc(.06*var(--sh)));border-radius:14px 14px 0 0;z-index:1;}
+  border-bottom:1px solid rgba(24,28,36,calc(.06*var(--sh)));border-radius:14px 14px 0 0;}
 .project-card-header .project-card-title{color:#43301d;}
 .project-card-header .three-dots-btn{color:#8a6a4a;}
 .project-card-header .three-dots-btn:hover{color:#43301d;background:rgba(67,48,29,.1);}
@@ -406,8 +411,11 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     <div class="form-group">
       <label class="form-label">AI 分析模型</label>
       <select class="input" id="c-ai-model">
-        <option value="gemini-3.5-flash">Gemini-3.5-Flash（默认）</option>
-        <option value="qwen-vl-max">Qwen 3.7 Plus</option>
+        <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
+             Gemini 那档不写版本号——请求体里不带 model 字段，实际跑哪个由 Dscript 代理定，
+             SkyArt 这边无从得知；通义那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
+        <option value="gemini-3.5-flash">Gemini（Dscript 代理）</option>
+        <option value="qwen3.7-plus">通义 Qwen3-VL-Plus</option>
       </select>
     </div>
 
@@ -490,8 +498,11 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     <div class="form-group">
       <label class="form-label">AI 分析模型</label>
       <select class="input" id="e-ai-model">
-        <option value="gemini-3.5-flash">Gemini-3.5-Flash（默认）</option>
-        <option value="qwen-vl-max">Qwen 3.7 Plus</option>
+        <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
+             Gemini 那档不写版本号——请求体里不带 model 字段，实际跑哪个由 Dscript 代理定，
+             SkyArt 这边无从得知；通义那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
+        <option value="gemini-3.5-flash">Gemini（Dscript 代理）</option>
+        <option value="qwen3.7-plus">通义 Qwen3-VL-Plus</option>
       </select>
     </div>
 
@@ -606,8 +617,8 @@ async function apiFetch(path, opts = {}) {
   const res = await fetch(API + path, { ...opts, headers });
   if (res.status === 401) { clearAuth(); throw new Error('未授权'); }
   if (!res.ok) {
-    const txt = await res.text().catch(() => res.statusText);
-    throw new Error(txt || res.statusText);
+    const txt = await res.text().catch(() => '');
+    throw new Error(_errText(txt) || res.statusText);
   }
   if (res.status === 204) return null;
   return res.json();
@@ -620,8 +631,22 @@ async function apiUpload(path, formData) {
     body: formData,
   });
   if (res.status === 401) { clearAuth(); throw new Error('未授权'); }
-  if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+  if (!res.ok) {
+    const txt = await res.text().catch(() => '');
+    throw new Error(_errText(txt) || res.statusText);
+  }
   return res.json();
+}
+
+// FastAPI 的报错体是 {"detail":"…"}，直接 toast 出去用户看到的是一串 JSON。
+// 编辑器页早就解过 detail，这一页一直没跟上。
+function _errText(txt) {
+  if (!txt) return '';
+  try {
+    const j = JSON.parse(txt);
+    if (j && j.detail) return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+  } catch {}
+  return txt;
 }
 
 function clearAuth() {
@@ -645,8 +670,21 @@ async function init() {
     await loadProjects();
     // 从模板编辑器返回时带 ?view=templates：落到成片模板 tab，而不是我的项目
     if (new URLSearchParams(location.search).get('view') === 'templates') switchView('templates');
-  } catch { clearAuth(); }
+  } catch (e) {
+    // 只有确认未授权才清登录态。后端没起来、网络抖一下也走这个 catch，
+    // 原来一律 clearAuth，等于把 token 删了再踢回首页，用户得重新登录才知道
+    // 问题其实出在后端。401 在 apiFetch 里已经单独处理过了，这里不重复。
+    if (e && e.message === '未授权') return;
+    toast('连不上后端服务：' + (e && e.message ? e.message : '未知错误') + '。请回首页确认后端状态。', 'error', 8000);
+  }
 }
+
+// 后端崩了要当场说。原来只有首页和短剧创作页监听，项目列表页什么提示都没有，
+// 用户看到的是每个操作都报错，却不知道后端已经不在了。
+document.addEventListener('backend-exit-event', (e) => {
+  const info = e.detail || {};
+  toast('后端服务意外退出（code=' + (info.code ?? '未知') + '），请回首页重启应用。', 'error', 15000);
+});
 
 // ── Navigation ───────────────────────────────────────────────
 function goHome() { window.location.href = '../../home.html'; }
@@ -913,9 +951,15 @@ function wireNamingValidation(inputId, errorId, label, maxLen, allowMidColon) {
     errorEl.textContent = checkNamingField(input.value.trim(), label, maxLen, allowMidColon);
   });
 }
-wireNamingValidation('c-title', 'c-title-error', '项目标题', 40, true);
+// 项目标题上限。同一个数在后端 admake.py 的 _TITLE_MAX_LEN 也有一份，改要一起改：
+// 这边只管输入框拦不拦，成片文件名那一截由后端做，两边不一致会出现"界面让你填、
+// 导出却被截短"。上限取 100 是文件系统那边算出来的余量——文件名是
+// {剧名}_SkyArt_{月.日}_{署名}_{序号}.log.txt，APFS 单个文件名上限 255 个字符
+// （按字符数不是字节数，中英文一样），固定部分最多占 47 个。
+const TITLE_MAX_LEN = 100;
+wireNamingValidation('c-title', 'c-title-error', '项目标题', TITLE_MAX_LEN, true);
 wireNamingValidation('c-alias', 'c-alias-error', '导出文件命名', 20, false);
-wireNamingValidation('e-title', 'e-title-error', '项目标题', 40, true);
+wireNamingValidation('e-title', 'e-title-error', '项目标题', TITLE_MAX_LEN, true);
 wireNamingValidation('e-alias', 'e-alias-error', '导出文件命名', 20, false);
 
 // 选导出目录：优先原生文件夹选择器；浏览器预览态(无 electronAPI)退回手动输入
@@ -937,7 +981,11 @@ async function openEditModal(pid) {
   document.getElementById('e-pid').value       = pid;
   document.getElementById('e-title').value     = project.title || '';
   document.getElementById('e-desc').value      = project.description || '';
-  document.getElementById('e-ai-model').value  = project.ai_model || 'gemini-3.5-flash';
+  // 老项目存的是已废弃的 qwen-vl-max，新下拉里没有这一项。不映射的话 select 会
+  // 落到空白，用户一保存模型就被悄悄改成 gemini，而他根本没动过这一栏。
+  const _legacyModel = { 'qwen-vl-max': 'qwen3.7-plus' };
+  const _pm = project.ai_model || 'gemini-3.5-flash';
+  document.getElementById('e-ai-model').value  = _legacyModel[_pm] || _pm;
   document.getElementById('e-platform').value  = project.target_platform || 'TikTok';
   document.getElementById('e-prompt').value    = project.prompt_template || '默认模板';
   document.getElementById('e-alias').value     = project.editor_alias || '';
@@ -994,7 +1042,7 @@ async function saveEditProject() {
   const title = document.getElementById('e-title').value.trim();
   const alias = document.getElementById('e-alias').value.trim();
   if (!title) { toast('请填写项目标题', 'error'); return; }
-  const titleErr = checkNamingField(title, '项目标题', 40, true);
+  const titleErr = checkNamingField(title, '项目标题', TITLE_MAX_LEN, true);
   const aliasErr = checkNamingField(alias, '导出文件命名', 20, false);
   if (titleErr) { toast(titleErr, 'error'); return; }
   if (aliasErr) { toast(aliasErr, 'error'); return; }
@@ -1050,7 +1098,15 @@ function onModalFilesSelected(fileList) {
   const files = Array.from(fileList).filter(f =>
     f.type.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm)$/i.test(f.name)
   );
-  pendingFiles.push(...files);
+  // 同一批文件选两次会整份追加一遍，后端按数组下标写 sort_order，
+  // Part 分组和拼接全按这个顺序走——重复的集数会被当成新的一集拼进成片。
+  const seen = new Set(pendingFiles.map(f => `${f.name}|${f.size}|${f.lastModified}`));
+  const fresh = files.filter(f => !seen.has(`${f.name}|${f.size}|${f.lastModified}`));
+  const dup = files.length - fresh.length;
+  pendingFiles.push(...fresh);
+  // 拖进来的顺序是系统给的，不一定按集数。numeric 让 2 排在 10 前面。
+  pendingFiles.sort((a, b) => a.name.localeCompare(b.name, 'zh', { numeric: true }));
+  if (dup) toast(`跳过 ${dup} 个已经在列表里的文件`, 'info', 4000);
   renderModalFileList();
   document.getElementById('modal-upload-label').textContent =
     pendingFiles.length ? `已选择 ${pendingFiles.length} 个文件` : '点击或拖拽短剧视频文件到此处';
@@ -1074,7 +1130,7 @@ function renderModalFileList() {
   if (!pendingFiles.length) { el.innerHTML = ''; return; }
   el.innerHTML = pendingFiles.map((f, i) => `
     <div class="file-item">
-      <span class="file-item-name" title="${esc(f.name)}">${esc(f.name)}</span>
+      <span class="file-item-name" title="${esc(f.name)}">${i + 1}. ${esc(f.name)}</span>
       <span class="file-item-size">${fmtFileSize(f.size)}</span>
       <button class="file-remove-btn" onclick="removeModalFile(${i})">✕</button>
     </div>`).join('');
@@ -1097,7 +1153,7 @@ async function createProject() {
   const title = document.getElementById('c-title').value.trim();
   const alias = document.getElementById('c-alias').value.trim();
   if (!title) { toast('请填写项目标题', 'error'); return; }
-  const titleErr = checkNamingField(title, '项目标题', 40, true);
+  const titleErr = checkNamingField(title, '项目标题', TITLE_MAX_LEN, true);
   const aliasErr = checkNamingField(alias, '导出文件命名', 20, false);
   if (titleErr) { toast(titleErr, 'error'); return; }
   if (aliasErr) { toast(aliasErr, 'error'); return; }
@@ -1141,7 +1197,19 @@ async function createProject() {
 
       // Step 3: auto build-parts
       btn.textContent = '合成 Part 中…';
-      await apiFetch(`/admake/projects/${p.id}/build-parts`, { method: 'POST' }).catch(() => {});
+      // 合成失败不能吞：后端会明确告诉你是没上传源视频还是文件损坏，吞掉之后
+      // 用户看到的是"合成中"加一个永远空着的 Part 列表。项目已经建好，
+      // 这里只报错不回滚，用户改完素材点"创建项目"会继续用同一个项目续传。
+      try {
+        await apiFetch(`/admake/projects/${p.id}/build-parts`, { method: 'POST' });
+      } catch (e) {
+        // 留在列表页。原来这里跳进编辑器，toast 挂在正被卸载的页面上，
+        // 随文档一起销毁，用户看到的还是"一跳就进去、Part 列表空着、没有提示"。
+        closeCreateModal();
+        toast('项目已创建，但 Part 合成没能开始：' + e.message, 'error', 10000);
+        await loadProjects();
+        return;
+      }
     }
 
     _pendingCreatedPid = null;  // 全流程成功才清，失败保留供重试续传

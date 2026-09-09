@@ -137,7 +137,16 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 /* 导出弹窗表单行：左标签右控件 */
 .exp-row{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px;}
 .exp-label{width:56px;flex-shrink:0;font-size:12px;font-weight:600;color:var(--text2);padding-top:8px;}
-.exp-hint{font-size:11px;color:var(--text3);margin-top:5px;}
+.exp-hint{font-size:11px;color:var(--text3);margin-top:5px;line-height:1.6;}
+/* 建议条数的小圆角标签；填超了整条变黄，跟输入框的告警色一致 */
+.cnt-chip{display:inline-flex;align-items:center;font-size:11px;color:var(--text2);background:var(--bg3);
+  border:1px solid var(--border);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+.cnt-chip b{color:var(--accent2);font-weight:700;margin:0 2px;}
+.cnt-chip.over{background:#fffbeb;border-color:#fde68a;color:#92400e;}
+.exp-hint.warn{color:var(--yellow);}
+.exp-hint.bad{color:var(--red);}
+#clip-count.over{border-color:var(--yellow);background:#fffbeb;}
+.dur-quick{color:var(--accent2);text-decoration:underline;cursor:pointer;font-size:11px;}
 /* 悬停说明：图标与浮层，写法与模板编辑器一致 */
 .info-ic{cursor:help;color:var(--text3);margin-left:6px;display:inline-flex;align-items:center;position:relative;}
 .info-ic:hover{color:var(--text2);}
@@ -648,14 +657,14 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
               <input type="radio" name="mode" class="mode-radio" value="highlight_shunjian" checked>
               <div>
                 <div class="mode-name">高光顺剪</div>
-                <div class="mode-desc">高光→白场→钩子</div>
+                <div class="mode-desc">高光开场，接剧情，停在钩子</div>
               </div>
             </label>
             <label class="mode-option" id="mode-xd" style="flex:1;margin-bottom:0;">
               <input type="radio" name="mode" class="mode-radio" value="xuanyi_daozhi">
               <div>
                 <div class="mode-name">悬疑倒置</div>
-                <div class="mode-desc">钩子→高光，制造悬念</div>
+                <div class="mode-desc">悬念开场，再从高光讲起</div>
               </div>
             </label>
             <label class="mode-option" id="mode-sg" style="flex:1;margin-bottom:0;">
@@ -671,13 +680,12 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
         <div class="exp-row">
           <div class="exp-label">目标时长</div>
           <div style="flex:1;">
-            <div style="display:flex;align-items:center;">
-              <div class="seg" data-seg>
-                <span class="seg-thumb"></span>
-                <label><input type="radio" name="clip-dur" value="180">3 分钟</label>
-                <label><input type="radio" name="clip-dur" value="360" checked>6 分钟</label>
-                <label><input type="radio" name="clip-dur" value="600">10 分钟</label>
-              </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="number" id="clip-dur-min" value="6" min="1" max="60" step="1"
+                style="width:72px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none;">
+              <span style="font-size:12px;color:var(--text2);">分钟</span>
+              <span style="font-size:11px;color:var(--text3);margin-left:4px;" id="dur-quick-label">常用</span>
+              <span id="dur-quick-box" style="display:inline-flex;gap:9px;"></span>
               <span class="info-ic" data-tip="三种导出模式都按这个值选材，挑成片总长最接近的组合。&#10;成片总长含模板前后贴片；实际长度由素材决定，不会正好等于目标值。"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
             </div>
             <div class="exp-hint" id="dur-mode-note" style="display:none;"></div>
@@ -686,10 +694,14 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 
         <div class="exp-row">
           <div class="exp-label">素材数量</div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <input type="number" id="clip-count" value="2" min="1" max="30"
-              style="width:72px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none;">
-            <span class="exp-hint" style="margin-top:0;">条，最多 30</span>
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input type="number" id="clip-count" value="2" min="1" max="30"
+                style="width:72px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none;">
+              <span class="exp-hint" style="margin-top:0;">条，最多 30</span>
+              <span id="count-suggest" class="cnt-chip" style="display:none;"></span>
+            </div>
+            <div class="exp-hint" id="count-note" style="display:none;"></div>
           </div>
         </div>
 
@@ -937,6 +949,13 @@ let activePartId = PART_ID || 0;  // which Part is currently loaded/being marked
 // Cache of marks for all Parts: { [partId]: { hlGroups, hookGroups } }
 // 列表统计和导出前检查用；active part uses live hlGroups/hookGroups.
 let partsMarks = {};
+// 这个 Part 已经有标记了吗。后端的 only_unanalyzed 就是按"有没有标记"筛的，
+// 前端统计必须用同一把尺子：只看 ai_status 的话，手动划过段的 Part 会被后端跳过，
+// 前端却一直把它算作待分析，导出按钮再也点不亮。缓存没加载时返回 false，与旧行为一致。
+function partHasMarks(p) {
+  const m = partsMarks[p.id];
+  return !!m && (m.hlGroups.length > 0 || m.hookGroups.length > 0);
+}
 let isSwitchingPart = false; // suppresses onTimeUpdate playhead writes during part switch
 
 // ── 打点状态（E/R 开合段） ────────────────────────────────────────────────────
@@ -1008,6 +1027,7 @@ async function init() {
   checkFfmpeg();   // 环境依赖检测：缺 ffmpeg 时顶部红条提示
   try {
     await loadAllParts();
+    await restoreAiPolling();   // 后台还在分析就把轮询接回来
     await preloadAllMarks(); // 预载全部 Part 的标注：列表统计要用
     if (activePartId) {
       await loadMarks();
@@ -1071,6 +1091,8 @@ function openExportModal() {
   // 打开时兜底重试：初始化时拉模板列表失败的话，这里再拉一次，避免静默丢默认模板
   if (!_templateOptionsReady) loadTemplateOptions();
   loadExports();
+  loadDurHabits(getMode());
+  schedulePreflight();
 }
 function closeExportModal() {
   document.getElementById('export-modal').classList.remove('visible');
@@ -1134,7 +1156,11 @@ async function preloadAllMarks() {
       partsMarks[p.id] = { hlGroups: [], hookGroups: [] };
     }
   }));
-  renderPartsList();  // 统计就绪后重绘一次
+  renderPartsList();
+  // 标记缓存这时才装满，必须重跑一次 renderAiBox。它上一次跑是在 loadAllParts 里，
+  // 那时 partsMarks 还是空的，partHasMarks 全返回 false——手动划过段的 Part 照样
+  // 被算进"待分析"，导出按钮照样点不亮，等于这条修复在打开页面时白做。
+  renderAiBox();
 }
 
 async function loadAllParts() {
@@ -1312,11 +1338,13 @@ function onPartPickClick(ev, idx) {
   if (!p) return;
   if (ev.target.checked) partChecked.add(p.id); else partChecked.delete(p.id);
   syncPartPickerHeader();
+  schedulePreflight();
 }
 
 function toggleAllPartPick(on) {
   partChecked = on ? new Set(allParts.map(p => p.id)) : new Set();
   renderPartPicker();
+  schedulePreflight();
 }
 
 function renderPartPicker() {
@@ -1341,8 +1369,27 @@ function syncPartPickerHeader() {
   });
 }
 
+// 切换途中再次点击不能直接进来：上一次切换的 await 还没走完，
+// activePartId 和 hlGroups 处在半路状态，此时保存会把空标记写到中间那个 Part 上。
+// 后来的点击先记下，等这一次切完再补跳，用户点的最后一个 Part 仍然会打开。
+let _switchingTo = null;
+let _pendingPart  = null;
+
 async function loadPartForEditing(partId) {
   if (partId === activePartId) return;
+  if (_switchingTo !== null) { _pendingPart = partId; return; }
+  _switchingTo = partId;
+  try {
+    await _doLoadPartForEditing(partId);
+  } finally {
+    _switchingTo = null;
+    isSwitchingPart = false;
+    const next = _pendingPart; _pendingPart = null;
+    if (next !== null && next !== activePartId) loadPartForEditing(next);
+  }
+}
+
+async function _doLoadPartForEditing(partId) {
   isSwitchingPart = true;
   // 取消欠着的延迟保存：否则它会在切换半途（标记已清空、activePartId 已是新 Part）触发，
   // 把空标记存到新 Part 名下，覆盖掉服务器上的真实标记。下面的显式保存会兜住旧 Part 的改动。
@@ -2126,6 +2173,26 @@ function _markAnalyzingLocal(ids) {
   renderPartsList();
 }
 
+// 进页面时把还在跑的 AI 分析接回来。后台任务不因刷新或页面跳转而停，
+// 但轮询定时器是页面级的，不接回来进度就永远停在打开那一刻。
+// 只恢复数据和定时器，不主动弹窗——用户点「查看进度」时才展开。
+async function restoreAiPolling() {
+  if (_aiRunning) return;
+  let s;
+  try {
+    s = await apiFetch(`/admake/projects/${PROJ_ID}/ai-analyze/status`);
+  } catch { return; }   // 查不到就当没在跑，不挡用户进页面
+  if (!s || s.status !== 'processing') return;
+  _aiRunning   = true;
+  _aiPollFails = 0;
+  openAiProgressModal(s.total || 0);   // 把弹窗内容复位成"进行中"
+  hideAiProgressModal();               // 立刻收起，只留数据
+  updateAiProgressModal(s);
+  renderAiBox();
+  if (_aiPollTimer) clearInterval(_aiPollTimer);
+  _aiPollTimer = setInterval(pollAiAnalysis, 4000);
+}
+
 async function pollAiAnalysis() {
   let s;
   try {
@@ -2157,6 +2224,21 @@ async function pollAiAnalysis() {
     return;
   }
   showAiResult(s);
+  // showAiResult 只往弹窗里写内容，不负责把弹窗打开。进度弹窗被收起过（或者是
+  // 进页面时 restoreAiPolling 恢复的，本来就没显示），跑完的结论就写进了一个
+  // 看不见的弹窗，失败原因也一起沉底。收起状态下补一条 toast 把结论说出来。
+  {
+    const _m = document.getElementById('ai-progress-modal');
+    if (_m && !_m.classList.contains('visible')) {
+      if (s.status === 'failed') toast('AI 分析失败：' + (s.error || '未知原因'), 'error', 10000);
+      else {
+        const _fin = Array.isArray(s.finished_parts) ? s.finished_parts : [];
+        const _hl = _fin.reduce((a, x) => a + (x.highlights || 0), 0);
+        const _hk = _fin.reduce((a, x) => a + (x.hooks || 0), 0);
+        toast(`AI 分析完成：标出 ${_hl} 个高光、${_hk} 个钩子`, 'success', 6000);
+      }
+    }
+  }
   // 标记重载失败不能吞掉上面的结果弹窗（标记本身已保存在后端），只提示刷新
   try {
     partsMarks = {};
@@ -2194,6 +2276,9 @@ function renderAiBox() {
     if (p.status === 'failed') n.buildFailed++;
     else if (!p.file_path) n.building++;
     else if (p.ai_status === 'analyzing') n.analyzing++;
+    // 有标记就能导出，不管标记是 AI 打的还是人手划的。这一条要排在 failed 前面：
+    // 分析失败但留着上一轮标记的 Part，后端重试时同样会跳过它。
+    else if (partHasMarks(p)) n.done++;
     else if (p.ai_status === 'failed') n.aiFailed++;
     else if (p.ai_status !== 'done') n.pending++;
     else n.done++;
@@ -2345,13 +2430,11 @@ async function loadMarks() {
 
 function deleteHlGroup(i) {
   hlGroups.splice(i, 1);
-  if (hlPhase === 'he' && !hlGroups.some(g => g.he === null)) hlPhase = 'hs';
   renderGroups(); renderTimeline(); scheduleSave();
 }
 
 function deleteHookGroup(i) {
   hookGroups.splice(i, 1);
-  if (hookPhase === 'ke' && !hookGroups.some(g => g.ke === null)) hookPhase = 'ks';
   renderGroups(); renderTimeline(); scheduleSave();
 }
 
@@ -2484,6 +2567,7 @@ async function saveMarks() {
     await apiFetch(`/admake/parts/${activePartId}/marks`, { method: 'PUT', body: JSON.stringify({ marks }) });
     renderTimeline();
     renderMarksCount();
+    renderAiBox();   // 手动划完段这个 Part 就算就绪了，侧栏计数和导出按钮当场跟上
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -2532,29 +2616,141 @@ function setupModeListeners() {
     radio.addEventListener('change', () => {
       document.querySelectorAll('.mode-option').forEach(el => el.classList.remove('selected'));
       radio.closest('.mode-option').classList.add('selected');
-      updateDurModeNote();
+      loadDurHabits(getMode());
+      schedulePreflight();
     });
   });
-  updateDurModeNote();
-}
-
-// 悬疑倒置的成片只有钩子段和高光段两段，长度就是两个标记的长度之和，做不出长片。
-// 目标时长对它照样生效（挑最接近的组合），但选 3 分钟以上时基本都会落在一分钟上下，
-// 不说明的话用户会以为目标时长没起作用。
-function updateDurModeNote() {
-  const note = document.getElementById('dur-mode-note');
-  if (!note) return;
-  if (getMode() === 'xuanyi_daozhi') {
-    note.textContent = '悬疑倒置只拼钩子段和高光段两段，成片通常一分钟上下。选更长的目标也只能挑到最接近的那条。';
-    note.style.display = '';
-  } else {
-    note.style.display = 'none';
-  }
 }
 
 function getMode() {
   const r = document.querySelector('input[name="mode"]:checked');
   return r ? r.value : 'highlight_shunjian';
+}
+
+// 输入类控件的联动：时长和模板变了要重算建议，条数变了只用重画提示（不必再打接口）
+document.addEventListener('DOMContentLoaded', () => {
+  const dur = document.getElementById('clip-dur-min');
+  const cnt = document.getElementById('clip-count');
+  const tpl = document.getElementById('export-template');
+  if (dur) dur.addEventListener('input', schedulePreflight);
+  if (tpl) tpl.addEventListener('change', schedulePreflight);
+  if (cnt) cnt.addEventListener('input', () => renderCountNote(_lastPreflight));
+});
+
+// ── 导出前预检：建议条数、常用时长 ──────────────────────────────────────
+// 建议条数 = 当前模式加当前目标时长下，能做到互不重复的条数上限。以前这个数只写进
+// 成片旁边的 .log.txt，用户得先导完一整批才看到「其实只有 9 条不重样」。
+const DUR_QUICK_FALLBACK = [3, 5, 10, 15];
+let _preflightTimer = null;
+let _habitCache = {};          // 按模式缓存，切模式不用每次重拉
+
+function getTargetSec() {
+  const el = document.getElementById('clip-dur-min');
+  const m = Math.min(60, Math.max(1, parseInt(el && el.value) || 6));
+  return m * 60;
+}
+
+function renderDurQuick(mode) {
+  const box = document.getElementById('dur-quick-box');
+  const lab = document.getElementById('dur-quick-label');
+  if (!box) return;
+  const h = _habitCache[mode];
+  const vals = (h && h.values && h.values.length) ? h.values : DUR_QUICK_FALLBACK;
+  const fromHistory = !!(h && h.from === 'history' && h.values.length);
+  lab.textContent = fromHistory ? '你常用' : '常用';
+  lab.title = fromHistory ? '按你最近 30 次导出统计，分模式各算各的' : '还没有导出记录，先给一组默认档位';
+  box.innerHTML = vals.map(v => {
+    const n = fromHistory && h.counts ? h.counts[String(v)] : null;
+    return `<span class="dur-quick" data-min="${v}" title="${n ? '用过 ' + n + ' 次' : '默认档位'}">${v} 分</span>`;
+  }).join('');
+  box.querySelectorAll('[data-min]').forEach(el => el.addEventListener('click', () => {
+    document.getElementById('clip-dur-min').value = el.dataset.min;
+    schedulePreflight();
+  }));
+}
+
+async function loadDurHabits(mode) {
+  if (_habitCache[mode]) { renderDurQuick(mode); return; }
+  try {
+    _habitCache[mode] = await apiFetch(`/admake/export-habits?mode=${mode}`);
+  } catch { _habitCache[mode] = { values: [], from: 'default' }; }
+  renderDurQuick(mode);
+}
+
+function schedulePreflight() {
+  clearTimeout(_preflightTimer);
+  _preflightTimer = setTimeout(runPreflight, 260);   // 防抖：数字输入框逐位敲不该每敲一下发一次
+}
+
+function renderCountNote(pf) {
+  const chip = document.getElementById('count-suggest');
+  const note = document.getElementById('count-note');
+  const durNote = document.getElementById('dur-mode-note');
+  const input = document.getElementById('clip-count');
+  if (!chip || !note || !input) return;
+  const count = Math.max(1, parseInt(input.value) || 1);
+  const hideDur = () => { if (durNote) durNote.style.display = 'none'; };
+  const hide = () => { chip.style.display = 'none'; note.style.display = 'none'; input.classList.remove('over'); hideDur(); };
+  if (!pf) return hide();
+
+  if (pf.reason || !pf.combos) {
+    chip.style.display = 'none'; input.classList.remove('over'); hideDur();
+    note.className = 'exp-hint bad'; note.style.display = '';
+    note.textContent = pf.reason || '现有标记凑不出可导出的组合。';
+    return;
+  }
+  // 目标落在素材做不到的范围外：建议值这时会虚高（窗口一路撑大到把所有组合都圈进来），
+  // 而那些成片长度全挤在一处，互不重复也没意义，所以不给建议值，改成告诉他能做到多长。
+  // 这句挂在目标时长下方，不挂数量下方——要改的是时长这个输入框，提示得挨着它。
+  if (!pf.target_in_range) {
+    chip.style.display = 'none'; input.classList.remove('over'); note.style.display = 'none';
+    if (durNote) {
+      durNote.className = 'exp-hint bad'; durNote.style.display = '';
+      durNote.textContent = `现有素材只能做到 ${fmtDurText(pf.reachable_min)} 到 ${fmtDurText(pf.reachable_max)}。`;
+    }
+    return;
+  }
+  hideDur();
+  // 建议值超过界面上限 30 就不显示：它永远触发不了，摆在那儿只是噪音
+  if (pf.suggested >= 30) { chip.style.display = 'none'; input.classList.remove('over'); note.style.display = 'none'; return; }
+  chip.style.display = '';
+  chip.innerHTML = `建议不超过 <b>${pf.suggested}</b> 条`;
+  if (count > pf.suggested) {
+    chip.classList.add('over'); input.classList.add('over');
+    note.className = 'exp-hint warn'; note.style.display = '';
+    // 这里不再报「超出 N 条」：那个数字是减出来的，加粗后比右边真正要改的建议值还抢眼。
+    note.textContent = '多出的部分会重复用同一批素材。';
+  } else {
+    chip.classList.remove('over'); input.classList.remove('over');
+    note.style.display = 'none';
+  }
+}
+
+// 说人话的时长，用在提示文案里。页面里另有一个 fmtDur 输出 00:00:35 那种给时间轴用的，
+// 别混用——两个同名函数后定义的会覆盖先定义的。
+function fmtDurText(sec) {
+  const t = Math.round(sec || 0);
+  if (t < 60) return `${t} 秒`;
+  return t % 60 ? `${Math.floor(t / 60)} 分 ${t % 60} 秒` : `${t / 60} 分钟`;
+}
+
+let _lastPreflight = null;
+async function runPreflight() {
+  const modal = document.getElementById('export-modal');
+  if (!modal || !modal.classList.contains('visible')) return;   // 面板没开就不打接口
+  const mode = getMode();
+  const parts = _checkedPartsOrdered();
+  if (!parts.length) { _lastPreflight = null; renderCountNote(null); return; }
+  const tpl = document.getElementById('export-template');
+  const q = new URLSearchParams({
+    mode, target_duration: String(getTargetSec()),
+    part_ids: parts.map(p => p.id).join(','),
+  });
+  if (tpl && tpl.value) q.set('template_id', tpl.value);
+  try {
+    _lastPreflight = await apiFetch(`/admake/projects/${PROJ_ID}/export-preflight?${q}`);
+  } catch { _lastPreflight = null; }   // 预检失败不挡导出，只是没有建议值
+  renderCountNote(_lastPreflight);
 }
 
 function doExport() {
@@ -2568,7 +2764,7 @@ function doExport() {
   const countEl = document.getElementById('clip-count');
   const count  = Math.min(30, Math.max(1, parseInt(countEl.value) || 1));
   if (String(count) !== countEl.value) countEl.value = count;
-  const durVal = document.querySelector('input[name="clip-dur"]:checked')?.value || '360';
+  const durVal = String(getTargetSec());
   const modeLabel = { highlight_shunjian: '高光顺剪', xuanyi_daozhi: '悬疑倒置', shuanggaoguang: '双高光顺剪' }[mode] || mode;
 
   const checked = _checkedPartsOrdered();
@@ -2618,9 +2814,24 @@ async function _runExport(mode, count, durVal) {
     await loadExports();
 
     if (_exportPollTimer) clearInterval(_exportPollTimer);
+    let _exportPollFails = 0;
     _exportPollTimer = setInterval(async () => {
       const list = await apiFetch(`/admake/projects/${PROJ_ID}/exports`).catch(() => null);
-      if (!list) return;
+      if (!list) {
+        // 单次失败会自愈，不管。但后端一直连不上时这个循环没有出口：
+        // done >= batchIds.size 永远进不去，_exportRunning 就永远是 true，
+        // 进度弹窗一直转，beforeunload 守卫也一直把窗口关不掉。连续 5 次（15 秒）放弃。
+        if (++_exportPollFails >= 5) {
+          clearInterval(_exportPollTimer); _exportPollTimer = null;
+          _exportRunning = false;
+          // 不走 closeExportProgressModal：那个函数会写"导出完成"，这里并没有完成
+          document.getElementById('export-progress-modal').classList.remove('visible');
+          if (window.ExportTaskFloat) ExportTaskFloat.clear();
+          toast('连不上后端，导出进度跟不了了。任务可能还在跑，请稍后到导出历史确认结果。', 'error', 8000);
+        }
+        return;
+      }
+      _exportPollFails = 0;
       renderExports(list);
       const batch = list.filter(e => batchIds.has(e.id));
       const done  = batch.filter(e => e.status === 'ready' || e.status === 'failed').length;
@@ -2918,6 +3129,20 @@ function toast(msg, type = 'info', ms = 3500) {
   setTimeout(() => el.remove(), ms + 400);
 }
 
+// 后端崩了要当场收摊。这一页原来不监听，后端一死进度弹窗永远转、窗口也关不掉
+// （beforeunload 守卫读的就是这两个标志位）。
+document.addEventListener('backend-exit-event', (e) => {
+  const info = e.detail || {};
+  if (_exportPollTimer) { clearInterval(_exportPollTimer); _exportPollTimer = null; }
+  if (_aiPollTimer) { clearInterval(_aiPollTimer); _aiPollTimer = null; }
+  _exportRunning = false;
+  _aiRunning = false;
+  document.querySelectorAll('#ai-progress-modal, #export-progress-modal')
+    .forEach(m => m.classList.remove('visible'));
+  toast('后端服务意外退出（code=' + (info.code ?? '未知') + '），任务已中断。请回首页重启应用。',
+        'error', 15000);
+});
+
 // ── Keyboard shortcuts ───────────────────────────────────────────────────────
 const NUDGE_SEC = 1;         // 方向键一步＝1 秒，AI 标记本来就是秒级
 const NUDGE_BIG_SEC = 5;     // 按住 Shift 一步 5 秒
@@ -2927,6 +3152,16 @@ document.addEventListener('keydown', e => {
   // 焦点在任何表单控件上都不接管快捷键——否则在"成片模板"下拉上按空格会触发播放、
   // Backspace 会删轨道剪辑
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+  // 弹窗开着时不接管键盘。macOS 上点过按钮之后焦点在 BUTTON 上，落不进上面那个
+  // 白名单：在导出设置弹窗里按空格会播放背后的视频，按 E/R 会往当前 Part 上
+  // 偷偷开一段标记，用户完全看不到。
+  if (document.querySelector('#export-modal.visible, #history-modal.visible,'
+      + '#ai-confirm-modal.visible, #ai-choice-modal.visible,'
+      + '#ai-progress-modal.visible, #export-progress-modal.visible')) return;
+
+  // 系统快捷键不吃掉：Ctrl+R / Cmd+R 原来会被当成"钩子段开合"
+  if (e.metaKey || e.ctrlKey) return;
 
   if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
 

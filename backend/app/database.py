@@ -55,6 +55,9 @@ async def create_tables():
             "ALTER TABLE admake_exports ADD COLUMN template_error VARCHAR(300)",
             # 用户的默认模板：新建项目和导出面板没选模板时预填它
             "ALTER TABLE admake_templates ADD COLUMN is_default BOOLEAN DEFAULT 0",
+            # 这批导出用的目标时长。以前只写进成片旁边的 .log.txt，数据库里查不到，
+            # 导致「按你常用的时长给快捷值」这件事没有数据来源。
+            "ALTER TABLE admake_exports ADD COLUMN target_duration FLOAT",
         ]:
             try:
                 await conn.execute(__import__("sqlalchemy").text(stmt))

@@ -18,10 +18,14 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
 
     # AI API (填入真实 Key 后生效)
+    # 阿里云 MaaS 白名单专属通道（Work/阿里云白名单调用规范.md）。
+    # 区域锁死在美国 us-east-1：这条通道的 key 打公网 dashscope 或其他区域地址
+    # 一律报 invalid_api_key，Host 和 key 必须成对使用。
+    # 通道内每个请求都要带 X-DashScope-DataInspection 关绿网，不带报 access_denied。
     HAPPYHORSE_API_KEY: str = ""
-    HAPPYHORSE_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
+    HAPPYHORSE_BASE_URL: str = "https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1"
     QWEN_API_KEY: str = ""
-    QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
+    QWEN_BASE_URL: str = "https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1"
 
     # Gemini 代理（Dscript 海外服务，替代直连 Gemini）
     GEMINI_PROXY_URL: str = ""   # 如 https://api.dscript.com/skyart/gemini/analyze

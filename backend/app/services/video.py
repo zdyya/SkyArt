@@ -47,6 +47,11 @@ NORMALIZE_HEIGHT = 1280
 NORMALIZE_FPS = 30
 NORMALIZE_AUDIO_RATE = 44100
 NORMALIZE_AUDIO_LAYOUT = "stereo"
+# mp4 视频轨时间刻度（timescale）也是归一化规格的一部分：concat demuxer 的 -c copy
+# 要求各段刻度一致，不一致时第二段视频包时间戳错乱，整段画面被挤进几毫秒（有声无画，
+# KNOWLEDGE #51）。15360 = 30fps × 512，是 ffmpeg 对 30fps 输入的 mp4 默认值；
+# 剪映/QuickTime 系导出常见 600，必须对齐后才允许走 copy。
+NORMALIZE_VIDEO_TIMESCALE = 15360
 # 交付码率：最终成片和贴片素材共用。3000k@720p 是 2026-07-21 由 libx264 CRF 改过来的，
 # 短剧低复杂度画面下画质够用。中间产物（Part 切片/拼接）仍用 8000k 留压缩余量。
 DELIVERY_BITRATE = "3000k"
@@ -101,7 +106,7 @@ async def get_fps(video_path: str) -> float:
 async def get_video_info(video_path: str) -> dict:
     """Return video+audio specs via ffprobe:
     {"width", "height", "fps", "duration", "vcodec", "pix_fmt", "rotation",
-     "has_audio", "acodec", "audio_sample_rate", "audio_channels"}.
+     "video_time_base", "has_audio", "acodec", "audio_sample_rate", "audio_channels"}.
 
     Used before a copy-merge to detect spec mismatches — concat demuxer
     with `-c copy` requires uniform specs across inputs; feeding it mismatched
@@ -111,12 +116,16 @@ async def get_video_info(video_path: str) -> dict:
     loop = asyncio.get_running_loop()
 
     def _probe():
-        probe = ffmpeg.probe(abs_p)
+        # show_data：让 ffprobe 带回流的 extradata（H.264 的 SPS/PPS 参数集十六进制）。
+        # copy 拼接要求各段参数集逐字节一致——不同编码器产的码流缝进一个 mp4，
+        # 容器头只能声明第一段的参数，VideoToolbox 从拼接点起 Cannot Decode（KNOWLEDGE #51）
+        probe = ffmpeg.probe(abs_p, show_data=None)
         fmt_duration = probe.get("format", {}).get("duration")
         info = {
             "width": None, "height": None, "fps": 30.0,
             "duration": float(fmt_duration) if fmt_duration else 0.0,
             "vcodec": None, "pix_fmt": None, "rotation": 0,
+            "video_time_base": None, "video_extradata": None,
             "has_audio": False, "acodec": None,
             "audio_sample_rate": None, "audio_channels": None,
             "audio_duration": None,
@@ -132,6 +141,8 @@ async def get_video_info(video_path: str) -> dict:
                 info["height"] = stream.get("height")
                 info["vcodec"] = stream.get("codec_name")
                 info["pix_fmt"] = stream.get("pix_fmt")
+                info["video_time_base"] = stream.get("time_base")
+                info["video_extradata"] = stream.get("extradata")
                 # 旋转元数据（iPhone 竖拍常见）：新版 ffprobe 在 side_data_list，旧版在 tags.rotate。
                 # 带旋转的素材实际显示方向 ≠ 存储宽高，copy 拼接会导致画面横竖错乱，必须走重编码
                 for sd in stream.get("side_data_list", []) or []:
@@ -227,7 +238,8 @@ async def cut_video_copy(
         else:
             vf_chain, af_chain = "setpts=PTS-STARTPTS", "asetpts=PTS-STARTPTS"
         common = dict(vf=vf_chain, af=af_chain,
-                      acodec="aac", audio_bitrate="128k", movflags="+faststart", bf=0)
+                      acodec="aac", audio_bitrate="128k", movflags="+faststart", bf=0,
+                      video_track_timescale=NORMALIZE_VIDEO_TIMESCALE)
         try:
             # macOS 硬件编码器 — CPU 占用极低
             (src.output(out_path, vcodec="h264_videotoolbox", video_bitrate="8000k",
@@ -291,7 +303,8 @@ async def export_final_video(
             src = ffmpeg.input(list_path, format="concat", safe=0)
             common = dict(vf=vf_chain, af=af_chain,
                           acodec="aac", audio_bitrate="128k",
-                          movflags="+faststart", bf=0)
+                          movflags="+faststart", bf=0,
+                          video_track_timescale=NORMALIZE_VIDEO_TIMESCALE)
             try:
                 # 硬编 videotoolbox 3000k（2026-07-21 由 libx264 CRF 改）：短剧低复杂度画面下
                 # 3000k@720p 画质够用，比软编快约 4.8×、CPU 减半，色彩经逐帧对齐验证与 libx264 一致。
@@ -359,7 +372,8 @@ async def normalize_to_target(src_path: str, out_path: str) -> None:
                 f="lavfi", t=dur,
             ).audio
         common = dict(acodec="aac", audio_bitrate="128k", pix_fmt="yuv420p",
-                      movflags="+faststart", bf=0)
+                      movflags="+faststart", bf=0,
+                      video_track_timescale=NORMALIZE_VIDEO_TIMESCALE)
         try:
             (ffmpeg.output(v, a, out_path, vcodec="h264_videotoolbox",
                            video_bitrate=DELIVERY_BITRATE, allow_sw=1, **common)
@@ -384,10 +398,14 @@ def _at_normalize_target(i: dict) -> bool:
     或 iPhone 竖拍（存储横向+rotate 元数据）仍会走 copy 产出坏片。同时要求规格
     恰好等于目标值（而非"彼此一致"）——否则 copy 出的 Part 保留原始规格，与其他
     归一化 Part 混合导出时 concat 输入再次不一致。
+    视频轨时间刻度同样必须等于目标值：刻度不一致的输入走 copy 拼接，第二段的
+    画面帧会被 mp4 muxer 的非单调 DTS 钳制全部挤进几毫秒，成片该段有声无画
+    （KNOWLEDGE #51，2026-08-28 片尾贴片实测）。
     """
     return (
         i["width"] == NORMALIZE_WIDTH and i["height"] == NORMALIZE_HEIGHT
         and abs(i["fps"] - NORMALIZE_FPS) < 0.05
+        and i["video_time_base"] == f"1/{NORMALIZE_VIDEO_TIMESCALE}"
         and i["vcodec"] == "h264" and i["pix_fmt"] == "yuv420p"
         and not i["rotation"]
         and i["has_audio"] and i["acodec"] == "aac"
@@ -460,6 +478,19 @@ async def merge_videos(input_paths: list[str], out_path: str | None = None,
     trimming = any(l is not None and l < i["duration"] - 0.05
                    for l, i in zip(limits, infos))
     uniform = all(_at_normalize_target(i) for i in infos) and not trimming
+
+    # copy 拼接还要求所有输入的视频参数集（SPS/PPS）逐字节一致：规格全对但出自
+    # 不同编码器的两段码流缝进一个 mp4，容器头只声明第一段的参数集，ffmpeg 软解
+    # 能读码流内参数所以看着正常，VideoToolbox（QuickTime/浏览器硬解）按容器头
+    # 初始化，从拼接点起 Cannot Decode——成片后半段有声无画（KNOWLEDGE #51 第二层）。
+    # 探测不到参数集（None）按不一致处理：宁可多编一次，不出解不了的片。
+    if uniform:
+        extradatas = {i["video_extradata"] for i in infos}
+        if len(extradatas) > 1 or None in extradatas:
+            uniform = False
+            log_event("video.merge_reencode", reason="extradata_mismatch",
+                      out_path=out_path,
+                      extradata_sizes=[len(i["video_extradata"] or "") for i in infos])
 
     loop = asyncio.get_running_loop()
 
@@ -554,7 +585,8 @@ async def merge_videos(input_paths: list[str], out_path: str | None = None,
             streams += [v, a]
         joined = ffmpeg.concat(*streams, v=1, a=1).node
         common = dict(acodec="aac", audio_bitrate="128k", pix_fmt="yuv420p",
-                      movflags="+faststart", bf=0)
+                      movflags="+faststart", bf=0,
+                      video_track_timescale=NORMALIZE_VIDEO_TIMESCALE)
         try:
             (
                 ffmpeg.output(joined[0], joined[1], out_path,

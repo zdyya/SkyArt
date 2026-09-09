@@ -24,6 +24,11 @@
     root.innerHTML = `
       <style>
         #export-task-float{position:fixed;right:0;top:38%;z-index:9500;font-family:inherit;pointer-events:none;}
+        /* 项目列表页的弹窗遮罩是 z-index:1000，浮窗 9500 压在它上面，而且能点。
+           新建项目填到一半误点一下，表单连同已选的素材一起没了。弹窗开着就把浮窗收起来。
+           编辑器自己的弹窗是 9999，本来就盖在浮窗上，不受这条影响。 */
+        body:has(.modal-overlay:not(.hidden)) #export-task-float,
+        body:has(#leave-modal:not(.hidden)) #export-task-float{display:none!important;}
         #export-task-float .etf{pointer-events:auto;}
         /* 折叠态：贴边玻璃圆球，hover 微微滑出。整个界面是浅色的，原来这颗球是深灰底，
            贴在右边像一块外来的东西；底色改成和展开卡片同一档的白玻璃。
@@ -126,11 +131,15 @@
       }
       return;
     }
-    // 编辑器页的 beforeunload 会拦没放行的跳转（导出/分析中防误关应用），先放行再跳
-    if (window.__allowInAppNav) window.__allowInAppNav();
-    location.href = type === 'export'
+    const target = type === 'export'
       ? `editor.html?projectId=${pid}&history=1`
       : `editor.html?projectId=${pid}`;
+    // 模板编辑器的未保存改动只活在内存里，它的确认弹窗只挂在自己的返回按钮上。
+    // 从这里直接跳走会绕过去，改了一半的版式全丢。有钩子就把跳转交给页面自己。
+    if (window.__guardLeave && window.__guardLeave(target)) return;
+    // 编辑器页的 beforeunload 会拦没放行的跳转（导出/分析中防误关应用），先放行再跳
+    if (window.__allowInAppNav) window.__allowInAppNav();
+    location.href = target;
   }
 
   function render() {

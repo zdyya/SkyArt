@@ -11,7 +11,7 @@ DashScope 视频编辑接口需要公网可访问的 URL。
   OSS_BUCKET_NAME        — bucket 名称（需开启公共读，或改用签名 URL）
   OSS_ENDPOINT           — 如 https://oss-cn-hangzhou.aliyuncs.com
   OSS_CUSTOM_DOMAIN      — 可选，绑定的自定义域名（不填则用默认 bucket 域名）
-  HAPPYHORSE_BASE_URL    — https://dashscope.aliyuncs.com/api/v1（国内节点）
+  HAPPYHORSE_BASE_URL    — 阿里云白名单通道 us-east-1（见 Work/阿里云白名单调用规范.md）
 
 无 API key 时自动 fallback 到 mock 模式。
 """
@@ -125,6 +125,7 @@ async def submit_video_edit(
         "Authorization": f"Bearer {settings.HAPPYHORSE_API_KEY}",
         "Content-Type": "application/json",
         "X-DashScope-Async": "enable",
+        "X-DashScope-DataInspection": '{"input":"disable","output":"disable"}',
     }
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -156,7 +157,13 @@ async def get_task_status(task_id: str) -> dict:
         return {"status": "FAILED", "output_url": None, "error_message": "No API key"}
 
     task_url = f"{settings.HAPPYHORSE_BASE_URL}/tasks/{task_id}"
-    headers = {"Authorization": f"Bearer {settings.HAPPYHORSE_API_KEY}"}
+    headers = {
+        "Authorization": f"Bearer {settings.HAPPYHORSE_API_KEY}",
+        # 提交和轮询是同一条白名单通道上的两次请求，都要关绿网。
+        # 只给提交加、轮询不加，会在查结果这一步拿到 access_denied，
+        # 表现成"任务提交成功但状态永远查不到"。
+        "X-DashScope-DataInspection": '{"input":"disable","output":"disable"}',
+    }
 
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.get(task_url, headers=headers)

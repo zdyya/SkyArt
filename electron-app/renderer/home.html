@@ -321,7 +321,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
     </div>
     <div class="cfg-row">
       <div class="cfg-label">API 地址</div>
-      <input class="cfg-input" id="cfg-hh-url" placeholder="https://dashscope-us.aliyuncs.com/api/v1">
+      <input class="cfg-input" id="cfg-hh-url" placeholder="https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1">
     </div>
 
     <div class="settings-section">Gemini 代理（素材 AI 分析）</div>
@@ -341,7 +341,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
     </div>
     <div class="cfg-row">
       <div class="cfg-label">API 地址</div>
-      <input class="cfg-input" id="cfg-qwen-url" placeholder="https://dashscope.aliyuncs.com/api/v1">
+      <input class="cfg-input" id="cfg-qwen-url" placeholder="https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1">
     </div>
 
     <div class="settings-section">阿里云 OSS 国内区（短剧创作存储）</div>
@@ -920,11 +920,13 @@ async function saveSettings() {
 
   const cfg = {
     happyhorseApiKey:  document.getElementById('cfg-hh-key').value.trim(),
-    happyhorseBaseUrl: document.getElementById('cfg-hh-url').value.trim() || 'https://dashscope-us.aliyuncs.com/api/v1',
+    // 留空时回落到阿里云 MaaS 白名单通道（us-east-1）。这条通道的 key 区域绑定，
+    // 兜底值若还指着公网 dashscope，用户只填 key 不填地址就会报 invalid_api_key。
+    happyhorseBaseUrl: document.getElementById('cfg-hh-url').value.trim() || 'https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1',
     geminiProxyUrl:    document.getElementById('cfg-gemini-url').value.trim(),
     geminiProxyKey:    document.getElementById('cfg-gemini-key').value.trim(),
     qwenApiKey:        document.getElementById('cfg-qwen-key').value.trim(),
-    qwenBaseUrl:       document.getElementById('cfg-qwen-url').value.trim() || 'https://dashscope.aliyuncs.com/api/v1',
+    qwenBaseUrl:       document.getElementById('cfg-qwen-url').value.trim() || 'https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1',
     ossAccessKeyId:     document.getElementById('cfg-oss-cn-id').value.trim(),
     ossAccessKeySecret: document.getElementById('cfg-oss-cn-secret').value.trim(),
     ossBucketName:      document.getElementById('cfg-oss-cn-bucket').value.trim(),
@@ -972,6 +974,20 @@ function toast(msg, type = 'info', ms = 3000) {
 }
 
 // ── Listen for settings event from main process ───────────────
+// 后端崩了要当场说。原来只有短剧创作页监听这个事件，首页不监听——
+// 顶栏灯停在崩溃前的绿色，自检也不会自己重跑，用户看到的是"一切正常"。
+document.addEventListener('backend-exit-event', (e) => {
+  const info = e.detail || {};
+  const dot = document.getElementById('sc-dot');
+  const label = document.getElementById('sc-label');
+  if (dot) dot.className = 'sc-dot fail';
+  if (label) label.textContent = '后端已停止';
+  _scLastAt = 0;   // 作废节流，下次点开面板必定重新检测
+  alert('SkyArt 后端服务意外退出（code=' + (info.code ?? '未知') + '）。\n\n'
+    + (info.stderr ? '错误信息：\n' + info.stderr + '\n\n' : '')
+    + '请重启应用。若反复出现，把这段信息截图发给开发者。');
+});
+
 document.addEventListener('open-settings-event', () => {
   openSettings();
 });

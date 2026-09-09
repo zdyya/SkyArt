@@ -202,18 +202,25 @@
 
   function splash(el, x, y) {
     const b = el.getBoundingClientRect(), d = Math.max(b.width, b.height) * 1.5;
+    // 波纹装在自带裁剪的罩层里，不改元素自身的 overflow——直接在元素上开关
+    // overflow:hidden 有两个坑：620ms 内会把定位在元素外的子菜单一起裁掉
+    // （首页头像菜单点了"没反应"），且快速连点时后一次把 'hidden' 当原值存下，
+    // 恢复后元素永久停在 hidden。
+    const wrap = document.createElement('span');
+    wrap.className = 'll-splash';
+    wrap.style.cssText = 'position:absolute;inset:0;overflow:hidden;' +
+      'border-radius:inherit;pointer-events:none;z-index:1;';
     const s = document.createElement('span');
-    s.className = 'll-splash';
-    s.style.cssText = `position:absolute;border-radius:50%;pointer-events:none;z-index:1;
+    s.style.cssText = `position:absolute;border-radius:50%;
       width:${d}px;height:${d}px;left:${x - b.left}px;top:${y - b.top}px;
       background:radial-gradient(circle,rgba(255,255,255,.75) 0%,rgba(255,255,255,.26) 42%,transparent 70%);
       transform:translate(-50%,-50%) scale(0);`;
-    const clip = el.style.overflow; el.style.overflow = 'hidden';
-    el.appendChild(s);
+    wrap.appendChild(s);
+    el.appendChild(wrap);
     s.animate([{ transform: 'translate(-50%,-50%) scale(0)', opacity: .8 },
                { transform: 'translate(-50%,-50%) scale(1)', opacity: 0 }],
               { duration: 620, easing: 'cubic-bezier(.22,1,.36,1)' })
-     .onfinish = () => { s.remove(); el.style.overflow = clip; };
+     .onfinish = () => { wrap.remove(); };
   }
 
   // 悬停时轻弹一下：比点击那一下小得多（幅度 .45 对 1.2、时长 420 对 520）。
@@ -304,11 +311,17 @@
     host.innerHTML = h;
   }
 
-  // 页面被切走/窗口最小化就停。只认 document.hidden，不认失焦——
-  // 用户点一下旁边的应用，窗口还好端端露在桌面上，动画却停住，读起来像界面卡死。
+  // 页面被切走、窗口最小化或失焦就停（低功耗模式）。漂移背景会让每块玻璃的
+  // backdrop-filter 逐帧重跑，实测首页前台恒定约 19.9% GPU；只认 document.hidden
+  // 的话，窗口被别的应用盖住（macOS 不算 hidden）时照烧，机器持续发烫。
+  // 失焦即暂停是 2026-08-28 用户定的决策，覆盖之前"失焦不停、怕读成卡死"的取舍——
+  // 装饰动画停在原地的代价远小于持续发热。回焦点后动画原地续播。
   function bindDriftPause(wrap) {
-    const sync = () => wrap.classList.toggle('paused', document.hidden);
+    const sync = () => wrap.classList.toggle(
+      'paused', document.hidden || !document.hasFocus());
     document.addEventListener('visibilitychange', sync);
+    window.addEventListener('blur', sync);
+    window.addEventListener('focus', sync);
     sync();
   }
 

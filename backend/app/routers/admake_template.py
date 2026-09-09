@@ -480,17 +480,20 @@ async def upload_asset(
         # 导出最后一步要把正片和贴片拼起来，规格对得上才走 -c copy 把正片字节原样搬过去；
         # 对不上就得整条重编码，3000k 的正片会被压成 8000k，体积翻两倍多。
         # 贴片只有几秒，这一步压的代价可以忽略。
-        if not await video.at_normalize_target(abs_path):
-            tmp_norm = abs_path + ".norm.mp4"
-            try:
-                await video.normalize_to_target(abs_path, tmp_norm)
-                os.replace(tmp_norm, abs_path)
-                meta = await asyncio.to_thread(_probe_asset, abs_path)
-            except Exception as e:
-                # 归一化失败不拦上传：素材本身是好的，大不了导出时多压一次
-                if os.path.exists(tmp_norm):
-                    os.remove(tmp_norm)
-                log_failure("admake.template.normalize_clip", e, template_id=tid, asset=asset_name)
+        # 无条件重编码，"已达标就原样收下"的捷径已实测推翻（KNOWLEDGE #51）：
+        # 导出时贴片和正片走 -c copy 拼接，两段码流必须出自同一编码器（SPS/PPS
+        # 参数集逐字节一致），否则 QuickTime 硬解从拼接点起解不出画面。外部素材
+        # 无论规格多标准都是别家编码器产的，只有这里重编一遍才能保证参数集一致。
+        tmp_norm = abs_path + ".norm.mp4"
+        try:
+            await video.normalize_to_target(abs_path, tmp_norm)
+            os.replace(tmp_norm, abs_path)
+            meta = await asyncio.to_thread(_probe_asset, abs_path)
+        except Exception as e:
+            # 归一化失败不拦上传：素材本身是好的，大不了导出时多压一次
+            if os.path.exists(tmp_norm):
+                os.remove(tmp_norm)
+            log_failure("admake.template.normalize_clip", e, template_id=tid, asset=asset_name)
     elif kind == "mov":
         # 先裁掉透明边 + 分辨率封顶（剪映整块画布→只留元素，才能当小贴纸摆），再生成预览
         await asyncio.to_thread(_autocrop_dyn, abs_path, d, meta)

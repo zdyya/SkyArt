@@ -98,11 +98,11 @@ def build_backend_env(use_app_data):
     env.update({
         "SECRET_KEY":            config.get("secretKey") or "skyart-default-secret-2024",
         "HAPPYHORSE_API_KEY":    config.get("happyhorseApiKey") or "",
-        "HAPPYHORSE_BASE_URL":   config.get("happyhorseBaseUrl") or "https://dashscope-us.aliyuncs.com/api/v1",
+        "HAPPYHORSE_BASE_URL":   config.get("happyhorseBaseUrl") or "https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1",
         "GEMINI_PROXY_URL":      config.get("geminiProxyUrl") or "https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze",
         "GEMINI_PROXY_KEY":      config.get("geminiProxyKey") or "",
         "QWEN_API_KEY":          config.get("qwenApiKey") or "",
-        "QWEN_BASE_URL":         config.get("qwenBaseUrl") or "https://dashscope.aliyuncs.com/api/v1",
+        "QWEN_BASE_URL":         config.get("qwenBaseUrl") or "https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1",
         "OSS_ACCESS_KEY_ID":     config.get("ossAccessKeyId") or "",
         "OSS_ACCESS_KEY_SECRET": config.get("ossAccessKeySecret") or "",
         "OSS_BUCKET_NAME":       config.get("ossBucketName") or "",

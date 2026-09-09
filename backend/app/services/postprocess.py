@@ -184,15 +184,35 @@ def _text_width(text: str, font: ImageFont.FreeTypeFont) -> int:
         (probe.textbbox((0, 0), ln, font=font)[2] for ln in text.split("\n")), default=0)
 
 
-def _split_two(text: str) -> tuple[str, str]:
-    """折两行的断点：英文取最靠中间的空格；中文/无空格对半断。"""
+def _split_lines(text: str, n: int) -> list[str]:
+    """把一句话折成 n 行：英文在最靠近等分点的空格处断，中文/无空格按字数等分。"""
     t = text.strip()
+    if n <= 1 or not t:
+        return [t]
     spaces = [i for i, c in enumerate(t) if c == " "]
     if spaces:
-        mid = min(spaces, key=lambda i: abs(i - len(t) / 2))
-        return t[:mid].rstrip(), t[mid + 1:].lstrip()
-    half = (len(t) + 1) // 2
-    return t[:half], t[half:]
+        cuts: list[int] = []
+        for k in range(1, n):
+            want = len(t) * k / n
+            free = [i for i in spaces if i not in cuts]
+            if not free:
+                break
+            cuts.append(min(free, key=lambda i: abs(i - want)))
+        cuts.sort()
+        lines, prev = [], 0
+        for c in cuts:
+            lines.append(t[prev:c].rstrip())
+            prev = c + 1
+        lines.append(t[prev:].lstrip())
+        return [ln for ln in lines if ln] or [t]
+    per = -(-len(t) // n)          # 向上取整，最后一行可能短一点
+    return [t[i:i + per] for i in range(0, len(t), per)]
+
+
+# 折行档位：(行数, 字号底线占基准字号的比例)。两行装不下再上三行——
+# 长英文剧名（如 Forbidden Bathwater: Stepbrother's Searing Embrace）两行压到 50% 还超宽，
+# 只有三行这一档能让它完整显示，否则会被砍掉尾巴加省略号，片头板上出现半截剧名。
+_LINE_TIERS = ((2, 0.5), (3, 0.4))
 
 
 def _fit_text(text: str, font_path: str, base_size: int) -> tuple[str, int]:
@@ -203,29 +223,29 @@ def _fit_text(text: str, font_path: str, base_size: int) -> tuple[str, int]:
     k = _MAX_TEXT_W / w
     if k >= 0.7:  # 缩字号就装得下：保持单行海报感
         return text, max(12, int(base_size * k))
-    # 折两行，从 70% 底线继续按最长行微缩到 50% 底线
-    l1, l2 = _split_two(text)
-    two = f"{l1}\n{l2}"
+    # 逐档折行：每档都从 70% 起按最长行微缩，缩到本档底线还装不下就多折一行
+    lines = _split_lines(text, 2)
     size = int(base_size * 0.7)
-    floor = max(12, int(base_size * 0.5))
-    for _ in range(4):
-        lw = _text_width(two, _load_font(font_path, size))
-        if lw <= _MAX_TEXT_W:
-            return two, size
-        size = max(floor, int(size * _MAX_TEXT_W / lw))
-        if size == floor:
-            break
-    # 50% 底线仍超宽：逐字截断更宽的那一行 + 省略号（长单词可能落在第一行，两行都要能截）
+    for line_count, floor_ratio in _LINE_TIERS:
+        lines = _split_lines(text, line_count)
+        joined = "\n".join(lines)
+        size = int(base_size * 0.7)
+        floor = max(12, int(base_size * floor_ratio))
+        for _ in range(4):
+            lw = _text_width(joined, _load_font(font_path, size))
+            if lw <= _MAX_TEXT_W:
+                return joined, size
+            size = max(floor, int(size * _MAX_TEXT_W / lw))
+            if size == floor:
+                break
+    # 最后一档的底线仍超宽：逐字截断最宽的那一行 + 省略号（长单词可能落在任意一行）
     f = _load_font(font_path, size)
-    while _text_width(two, f) > _MAX_TEXT_W and (len(l1) > 2 or len(l2) > 2):
-        if _text_width(l1, f) >= _text_width(l2, f) and len(l1) > 2:
-            l1 = l1[:-2] + "…"
-        elif len(l2) > 2:
-            l2 = l2[:-2] + "…"
-        else:
+    while _text_width("\n".join(lines), f) > _MAX_TEXT_W and any(len(ln) > 2 for ln in lines):
+        widest = max(range(len(lines)), key=lambda i: _text_width(lines[i], f))
+        if len(lines[widest]) <= 2:   # 最宽那行已经砍到底，再砍别的行也救不了宽度
             break
-        two = f"{l1}\n{l2}"
-    return two, size
+        lines[widest] = lines[widest][:-2] + "…"
+    return "\n".join(lines), size
 
 
 def _render_text_png(text: str, font_key: str, color_key: str, effect: str, out_png: str) -> None:

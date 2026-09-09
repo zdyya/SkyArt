@@ -18,9 +18,13 @@ from app.database import create_tables, AsyncSessionLocal
 from app.routers import auth, projects, episodes, assets, storyboard, admake, admake_template
 from app.core.logs import setup_logging, log_event, machine_profile
 
-# 版本号只写这一处。之前散在 FastAPI(version=)、/、自检接口三个地方，
-# 改版号漏掉一处就会出现「首页显示 beta.4、自检里还写着 beta.3」
-APP_VERSION = "1.0.7-beta.3"
+# 后端这边版本号只写这一处。之前散在 FastAPI(version=)、/、自检接口三个地方，
+# 改版号漏掉一处就会出现「首页显示 beta.4、自检里还写着 beta.3」。
+# 改这个值时必须同步改 electron-app/package.json 的 version，两个数字要一模一样：
+# 打包版启动时 main.js 拿 app.getVersion() 和后端 / 返回的版本比对，不等就拒绝连接
+# （防「壳新芯旧」，见 KNOWLEDGE #19）。这两处曾经各走各的，一个 beta.3 一个 beta.6。
+# 改完必须重跑 PyInstaller——npm run pack 不会重编后端，包里带的还是上一次编的版本。
+APP_VERSION = "1.0.7-beta.9"
 
 # 尽早安装日志 tee（捕获含 uvicorn 在内的全部 stdout/stderr → 按天滚动日志文件）
 setup_logging()
@@ -207,8 +211,14 @@ async def system_config_status():
         ("美区 OSS Secret", settings.OSS_SECRET_SkyArt_US),
         ("美区 OSS Bucket", settings.OSS_BUCKET_SkyArt_US),
     ])
+    # 通义链路查的是 QWEN_API_KEY 加美区 OSS 三项，与 HappyHorse 无关
+    # （HappyHorse 是短剧成片那条线的 key，见 KNOWLEDGE #15）。两者混用会让
+    # 面板在两个方向上都判错：配好通义显示没配，只配 HappyHorse 显示已配好。
     ai_qwen = _missing([
-        ("HappyHorse API Key", settings.HAPPYHORSE_API_KEY),
+        ("通义 API Key", settings.QWEN_API_KEY),
+        ("美区 OSS AccessKey", settings.OSS_KEY_SkyArt_US),
+        ("美区 OSS Secret", settings.OSS_SECRET_SkyArt_US),
+        ("美区 OSS Bucket", settings.OSS_BUCKET_SkyArt_US),
     ])
     drama_video = _missing([
         ("HappyHorse API Key", settings.HAPPYHORSE_API_KEY),

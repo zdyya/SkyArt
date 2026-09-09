@@ -833,40 +833,67 @@ const PREVIEW_RATIO = 300 / 720;  // 画布 300px 宽 : 成片 720px 宽
 const MAX_TEXT_W = 300 * 0.9;     // 文字安全宽度（画布 90%）——与后端 _MAX_TEXT_W(648/720) 同比例
 
 // 文字超宽处理，与后端 postprocess._fit_text 同一套规则：先缩字号(到 70%)，
-// 再折两行(到 50%)，仍超宽截断加省略号。返回 {lines:[...], fs}
+// 再逐档折行(两行到 50%、三行到 40%)，仍超宽截断加省略号。返回 {lines:[...], fs}
 const _measureCtx = document.createElement('canvas').getContext('2d');
 function _lineW(s, fs, fam) { _measureCtx.font = `800 ${fs}px ${fam}`; return _measureCtx.measureText(s).width; }
-function _splitTwo(t) {
+function _maxW(lines, fs, fam) { return Math.max(...lines.map(l => _lineW(l, fs, fam))); }
+// 折成 n 行：英文在最靠近等分点的空格处断，中文/无空格按字数等分。
+// 另一份在 backend/app/services/postprocess.py::_split_lines。
+function _splitLines(t, n) {
   t = t.trim();
+  if (n <= 1 || !t) return [t];
   const sp = [...t].map((c, i) => c === ' ' ? i : -1).filter(i => i >= 0);
   if (sp.length) {
-    const mid = sp.reduce((a, b) => Math.abs(b - t.length / 2) < Math.abs(a - t.length / 2) ? b : a);
-    return [t.slice(0, mid).trimEnd(), t.slice(mid + 1).trimStart()];
+    const cuts = [];
+    for (let k = 1; k < n; k++) {
+      const want = t.length * k / n;
+      const free = sp.filter(i => !cuts.includes(i));
+      if (!free.length) break;
+      cuts.push(free.reduce((a, b) => Math.abs(b - want) < Math.abs(a - want) ? b : a));
+    }
+    cuts.sort((a, b) => a - b);
+    const lines = [];
+    let prev = 0;
+    for (const c of cuts) { lines.push(t.slice(prev, c).trimEnd()); prev = c + 1; }
+    lines.push(t.slice(prev).trimStart());
+    const kept = lines.filter(l => l);
+    return kept.length ? kept : [t];
   }
-  const half = Math.ceil(t.length / 2);
-  return [t.slice(0, half), t.slice(half)];
+  const per = Math.ceil(t.length / n);
+  const out = [];
+  for (let i = 0; i < t.length; i += per) out.push(t.slice(i, i + per));
+  return out;
 }
+// 折行档位：[行数, 字号底线比例]。另一份在后端 _LINE_TIERS。
+const LINE_TIERS = [[2, 0.5], [3, 0.4]];
 function fitText(raw, baseFs, fam) {
   const w = _lineW(raw, baseFs, fam);
   if (w <= MAX_TEXT_W) return { lines: [raw], fs: baseFs };
   const k = MAX_TEXT_W / w;
   if (k >= 0.7) return { lines: [raw], fs: Math.max(6, baseFs * k) };
-  let [l1, l2] = _splitTwo(raw);
+  let lines = _splitLines(raw, 2);
   let fs = baseFs * 0.7;
-  const floor = baseFs * 0.5;
-  for (let i = 0; i < 4; i++) {
-    const lw = Math.max(_lineW(l1, fs, fam), _lineW(l2, fs, fam));
-    if (lw <= MAX_TEXT_W) return { lines: [l1, l2], fs };
-    fs = Math.max(floor, fs * MAX_TEXT_W / lw);
-    if (fs === floor) break;
+  for (const [lineCount, floorRatio] of LINE_TIERS) {
+    lines = _splitLines(raw, lineCount);
+    fs = baseFs * 0.7;
+    const floor = baseFs * floorRatio;
+    for (let i = 0; i < 4; i++) {
+      const lw = _maxW(lines, fs, fam);
+      if (lw <= MAX_TEXT_W) return { lines, fs };
+      fs = Math.max(floor, fs * MAX_TEXT_W / lw);
+      if (fs === floor) break;
+    }
   }
-  // 逐字截断更宽的那一行（长单词可能落在第一行）——与后端 _fit_text 同规则
-  while (Math.max(_lineW(l1, fs, fam), _lineW(l2, fs, fam)) > MAX_TEXT_W && (l1.length > 2 || l2.length > 2)) {
-    if (_lineW(l1, fs, fam) >= _lineW(l2, fs, fam) && l1.length > 2) l1 = l1.slice(0, -2) + '…';
-    else if (l2.length > 2) l2 = l2.slice(0, -2) + '…';
-    else break;
+  // 逐字截断最宽的那一行（长单词可能落在任意一行）——与后端 _fit_text 同规则
+  while (_maxW(lines, fs, fam) > MAX_TEXT_W && lines.some(l => l.length > 2)) {
+    let widest = 0;
+    for (let i = 1; i < lines.length; i++) {
+      if (_lineW(lines[i], fs, fam) > _lineW(lines[widest], fs, fam)) widest = i;
+    }
+    if (lines[widest].length <= 2) break;
+    lines[widest] = lines[widest].slice(0, -2) + '…';
   }
-  return { lines: [l1, l2], fs };
+  return { lines, fs };
 }
 
 function elInner(o, k) {
@@ -1312,12 +1339,24 @@ function goList() {
   if (_savedSnap && _snap() !== _savedSnap) { showLeaveModal(); return; }
   location.href = 'index.html?view=templates';  // 回到成片模板 tab，不落到我的项目
 }
-function _gotoList() { location.href = 'index.html?view=templates'; }
+let _leaveTarget = '';
+// 外部脚本（右侧任务浮窗）发起的跳转先过一遍未保存确认。拦下返回 true，
+// 之后去哪儿由弹窗上的按钮决定。
+window.__guardLeave = (href) => {
+  if (!(_savedSnap && _snap() !== _savedSnap)) return false;
+  _leaveTarget = href;
+  showLeaveModal();
+  return true;
+};
+function _gotoList() { location.href = _leaveTarget || 'index.html?view=templates'; }
 function showLeaveModal() {
   document.getElementById('leave-modal').classList.remove('hidden');
   document.getElementById('leave-save-btn').focus();
 }
-function hideLeaveModal() { document.getElementById('leave-modal').classList.add('hidden'); }
+function hideLeaveModal() {
+  document.getElementById('leave-modal').classList.add('hidden');
+  _leaveTarget = '';   // 取消之后再点返回按钮，不能跑去浮窗那次的目标页
+}
 async function leaveWithSave() {
   const b = document.getElementById('leave-save-btn');
   b.disabled = true;

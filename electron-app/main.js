@@ -83,11 +83,13 @@ function buildBackendEnv() {
     DATABASE_URL:         `sqlite+aiosqlite:///${path.join(dataDir, 'skyart.db')}`,
     SECRET_KEY:           cfg.secretKey           || 'skyart-default-secret-2024',
     HAPPYHORSE_API_KEY:   cfg.happyhorseApiKey    || '',
-    HAPPYHORSE_BASE_URL:  cfg.happyhorseBaseUrl   || 'https://dashscope-us.aliyuncs.com/api/v1',
+    // 阿里云 MaaS 白名单专属通道（Work/阿里云白名单调用规范.md）。区域锁死 us-east-1，
+    // 这条通道的 key 打公网 dashscope 或别的区域一律 invalid_api_key，Host 与 key 成对使用。
+    HAPPYHORSE_BASE_URL:  _maasUrl(cfg.happyhorseBaseUrl),
     GEMINI_PROXY_URL:     cfg.geminiProxyUrl      || 'https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze',
     GEMINI_PROXY_KEY:     cfg.geminiProxyKey      || '',
     QWEN_API_KEY:         cfg.qwenApiKey          || '',
-    QWEN_BASE_URL:        cfg.qwenBaseUrl         || 'https://dashscope.aliyuncs.com/api/v1',
+    QWEN_BASE_URL:        _maasUrl(cfg.qwenBaseUrl),
     OSS_ACCESS_KEY_ID:      cfg.ossAccessKeyId      || '',
     OSS_ACCESS_KEY_SECRET:  cfg.ossAccessKeySecret  || '',
     OSS_BUCKET_NAME:        cfg.ossBucketName       || '',
@@ -99,6 +101,17 @@ function buildBackendEnv() {
     OSS_BUCKET_SkyArt_US:   cfg.ossBucketUsWest   || 'saas-dscriptr-dscriptr-develop',
     OSS_ENDPOINT_SkyArt_US: cfg.ossEndpointUsWest || 'https://oss-us-west-1.aliyuncs.com',
   };
+}
+
+// 装过旧版的机器上，这两个地址字段里存的是公网 dashscope——旧版设置面板在地址框
+// 留空时会把公网地址写进配置文件，填过一次 API Key 的人必然踩到。改默认值救不了他们：
+// 字段非空，`||` 兜底轮不到。白名单 key 打公网一律 invalid_api_key，用户在设置里
+// 看到地址填着、key 也填着，换多少次 key 都过不去。这里把已知的旧地址当空值处理。
+const _OLD_DASHSCOPE = /^https:\/\/dashscope(-us|-intl)?\.aliyuncs\.com/i;
+function _maasUrl(v) {
+  const s = (v || '').trim();
+  if (!s || _OLD_DASHSCOPE.test(s)) return 'https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1';
+  return s;
 }
 
 function startBackend() {
@@ -279,6 +292,21 @@ function createMainWindow() {
     if (splashWindow) { splashWindow.close(); splashWindow = null; }
     mainWindow.show(); mainWindow.focus();
   });
+  // 渲染进程否决退出时 Electron 默认静默照办，点关闭按钮什么都不发生，
+  // 编辑器里写好的那句「导出进行中」提示根本没机会出现。这里接管，问一句。
+  mainWindow.webContents.on('will-prevent-unload', (e) => {
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'question',
+      buttons: ['继续等待', '仍然退出'],
+      defaultId: 0,
+      cancelId: 0,
+      title: '有任务正在进行',
+      message: '导出或 AI 分析还没结束。',
+      detail: '现在退出会中断任务，已经转码的片段不会保留。',
+    });
+    if (choice === 1) e.preventDefault();   // preventDefault 在这里的含义是「不要阻止退出」
+  });
+
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
@@ -376,7 +404,10 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => { stopBackend(); if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => stopBackend());
+// 停后端必须挂 will-quit，不能挂 before-quit。before-quit 在关窗口之前就触发，
+// 而编辑器页的 beforeunload 在导出/AI 分析进行中会否决退出——后端已经 SIGTERM 掉了，
+// 应用却还开着，之后每个请求都失败，用户只能强杀重开。will-quit 只在退出真的成立后触发。
+app.on('will-quit', () => stopBackend());
 
 // ── IPC ───────────────────────────────────────────────────────────────────────
 
