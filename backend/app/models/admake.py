@@ -93,6 +93,10 @@ class AdmakePart(Base):
     exports: Mapped[list["AdmakeExport"]] = relationship(
         back_populates="part", cascade="all, delete-orphan", order_by="AdmakeExport.created_at.desc()"
     )
+    segments: Mapped[list["AdmakeSegment"]] = relationship(
+        back_populates="part", cascade="all, delete-orphan",
+        order_by="AdmakeSegment.seg_index",
+    )
 
 
 class AdmakeMark(Base):
@@ -113,6 +117,69 @@ class AdmakeMark(Base):
     )
 
     part: Mapped["AdmakePart"] = relationship(back_populates="marks")
+
+
+class AdmakeSegment(Base):
+    """AI 从一个 Part 里拆出来的一段戏。
+
+    列只留三种：外键和时间（要按它查和排序）、界面和模板引擎每次都要读的两个
+    （段落类型上色、尺度档过滤）、剪辑排除的开关。其余三十来个字段整块存进
+    fields_json，键名跟拆解产物一字不差。
+
+    这么分是因为字段表还在动，逐列建表每改一个字段就要补一条 ALTER；而套模板
+    选段本来就是把整个项目的段全读进内存算，不靠 SQL 过滤。
+    """
+    __tablename__ = "admake_segments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    part_id: Mapped[int] = mapped_column(
+        ForeignKey("admake_parts.id", ondelete="CASCADE"), index=True
+    )
+    seg_index: Mapped[int] = mapped_column(Integer, default=0)
+    start_sec: Mapped[float] = mapped_column(Float, nullable=False)
+    end_sec: Mapped[float] = mapped_column(Float, nullable=False)
+    duration_sec: Mapped[float] = mapped_column(Float, default=0.0)
+    # 剪辑在右栏把这一段排除掉，导出时不进任何一条成片
+    excluded: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 冲突 / 反转 / 爽点 / 悬念点 / 情绪，判不出来是 None
+    seg_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 尺度档 0 到 4，没命中行为词是 0
+    intensity: Mapped[int] = mapped_column(Integer, default=0)
+    fields_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    part: Mapped["AdmakePart"] = relationship(back_populates="segments")
+    plot_points: Mapped[list["AdmakePlotPoint"]] = relationship(
+        back_populates="segment", cascade="all, delete-orphan",
+        order_by="AdmakePlotPoint.time_sec",
+    )
+
+
+class AdmakePlotPoint(Base):
+    """段里的一个剧情点。
+
+    单独一张表而不是塞进段的 JSON：界面按时间列它们、点一条跳过去，
+    套模板时又要按剧情分挑代表，两处都要逐条读。
+    """
+    __tablename__ = "admake_plot_points"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    segment_id: Mapped[int] = mapped_column(
+        ForeignKey("admake_segments.id", ondelete="CASCADE"), index=True
+    )
+    time_sec: Mapped[float] = mapped_column(Float, nullable=False)
+    # 配给这个点的起止，用在进度条刻度和超长段进格时裁哪一截
+    start_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
+    end_sec: Mapped[float | None] = mapped_column(Float, nullable=True)
+    kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    text: Mapped[str] = mapped_column(Text, default="")
+    story_score: Mapped[float] = mapped_column(Float, default=0.0)
+    intensity_score: Mapped[int] = mapped_column(Integer, default=0)
+    fields_json: Mapped[str] = mapped_column(Text, default="{}")
+
+    segment: Mapped["AdmakeSegment"] = relationship(back_populates="plot_points")
 
 
 class AdmakeExport(Base):

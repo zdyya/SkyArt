@@ -99,6 +99,43 @@ class AdmakeMarkOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── 段库 ──────────────────────────────────────────────────────
+
+class AdmakePlotPointOut(BaseModel):
+    id: int
+    time_sec: float
+    start_sec: float | None = None
+    end_sec: float | None = None
+    kind: str | None = None
+    text: str = ""
+    story_score: float = 0.0
+    intensity_score: int = 0
+    model_config = {"from_attributes": True}
+
+
+class AdmakeSegmentOut(BaseModel):
+    id: int
+    part_id: int
+    seg_index: int
+    start_sec: float
+    end_sec: float
+    duration_sec: float
+    excluded: bool = False
+    seg_type: str | None = None
+    intensity: int = 0
+    # 其余三十来个字段原样带出去，键名跟拆解产物一致，前端按名取
+    fields: dict = {}
+    plot_points: list[AdmakePlotPointOut] = []
+
+
+class AdmakeSegmentPatch(BaseModel):
+    """右栏能改的只有一件事：这一段用不用。
+
+    改段的起止属于精修，那件事去剪映做，工具只管把段拆出来给剪辑核对。
+    """
+    excluded: bool
+
+
 # ── Exports ───────────────────────────────────────────────────
 
 class AdmakeExportRequest(BaseModel):

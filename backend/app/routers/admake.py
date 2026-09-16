@@ -18,13 +18,15 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.models.user import User
-from app.models.admake import AdmakeProject, AdmakeSource, AdmakePart, AdmakeMark, AdmakeExport, AdmakeTemplate
+from app.models.admake import (AdmakeProject, AdmakeSource, AdmakePart, AdmakeMark, AdmakeExport,
+                               AdmakeTemplate, AdmakeSegment, AdmakePlotPoint)
 from app.schemas.admake import (
     AdmakeProjectCreate, AdmakeProjectUpdate,
     AdmakeProjectOut, AdmakeProjectDetailOut, AdmakeTaskOut,
     AdmakeSourceOut, AdmakePartOut,
     AdmakeMarkIn, AdmakeMarkBatchSave, AdmakeMarkOut,
     AdmakeExportRequest, AdmakeExportOut,
+    AdmakeSegmentOut, AdmakePlotPointOut, AdmakeSegmentPatch,
 )
 from app.core.deps import get_current_user
 from app.core.config import settings
@@ -1325,6 +1327,39 @@ def _parse_ts(val) -> float:
     return float(round(float(s)))
 
 
+async def _拆解一个Part(part: AdmakePart, on_stage=None) -> dict:
+    """跑十二步拆解，返回跟 _analyze_one_part 同形状的结果，好共用日志和重试。
+
+    整套是同步阻塞的（ffmpeg、OCR、模型调用都不是 async），丢进线程池跑，
+    别占着事件循环——一个 Part 要跑好几分钟，占住了整个后端都不响应。
+
+    视频不上传 OSS：白名单通道接受 base64 内联，而美区 OSS 要平台侧配环境变量，
+    用户机器上那条路是断的。
+    """
+    from app.services.decompose.驱动 import 拆一个Part
+
+    abs_src = (part.file_path if os.path.isabs(part.file_path)
+               else os.path.join(settings.UPLOAD_DIR, part.file_path))
+    loop = asyncio.get_running_loop()
+
+    def _跑():
+        def 报(键, 名):
+            if on_stage:
+                # 回调来自工作线程，on_stage 只改内存里的进度字典，线程安全
+                on_stage(键)
+        return 拆一个Part(abs_src, 报阶段=报)
+
+    产物 = await loop.run_in_executor(None, _跑)
+    段们 = 产物.get("段") or []
+    return {
+        "parsed": 产物,
+        "raw": json.dumps({"段数": len(段们)}, ensure_ascii=False),
+        "orig_bytes": os.path.getsize(abs_src) if os.path.exists(abs_src) else 0,
+        "comp_bytes": 0,
+        "comp_skip_bytes": 0,
+    }
+
+
 async def _save_ai_marks(part_id: int, highlights: list, hooks: list, max_dur: float):
     from app.database import AsyncSessionLocal
     async with AsyncSessionLocal() as db:
@@ -1709,7 +1744,9 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 result = None
                 for attempt in range(MAX_RETRIES):
                     try:
-                        if ai_model.startswith("gemini"):
+                        if ai_model == "段库":
+                            result = await _拆解一个Part(part, on_stage=_set_stage)
+                        elif ai_model.startswith("gemini"):
                             result = await _analyze_one_part_gemini(part, on_stage=_set_stage)
                         else:
                             result = await _analyze_one_part(part, on_stage=_set_stage)
@@ -1733,10 +1770,19 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 comp_bytes      = result["comp_bytes"]
                 comp_skip_bytes = result.get("comp_skip_bytes", 0)
 
-                highlights = parsed.get("highlights", [])
-                hooks      = parsed.get("hooks", [])
-                async with db_write_lock:
-                    await _save_ai_marks(part_id, highlights, hooks, part.duration_sec)
+                if ai_model == "段库":
+                    from app.database import AsyncSessionLocal as _S
+                    from app.services.decompose.入库 import 写段库
+                    async with db_write_lock:
+                        async with _S() as _db:
+                            计 = await 写段库(_db, part_id, parsed)
+                    highlights = [None] * 计["段"]          # 下面的日志和计数按条数读，借用它
+                    hooks      = [None] * 计["剧情点"]
+                else:
+                    highlights = parsed.get("highlights", [])
+                    hooks      = parsed.get("hooks", [])
+                    async with db_write_lock:
+                        await _save_ai_marks(part_id, highlights, hooks, part.duration_sec)
 
                 elapsed  = _time.monotonic() - part_start
                 orig_mb  = orig_bytes / 1024 / 1024
@@ -2332,6 +2378,60 @@ async def rebuild_part(
 
 
 # ── Marks ─────────────────────────────────────────────────────────────────────
+
+def _段出参(seg) -> AdmakeSegmentOut:
+    try:
+        字段 = json.loads(seg.fields_json or "{}")
+    except json.JSONDecodeError:
+        字段 = {}
+    return AdmakeSegmentOut(
+        id=seg.id, part_id=seg.part_id, seg_index=seg.seg_index,
+        start_sec=seg.start_sec, end_sec=seg.end_sec, duration_sec=seg.duration_sec,
+        excluded=seg.excluded, seg_type=seg.seg_type, intensity=seg.intensity,
+        fields=字段,
+        plot_points=[AdmakePlotPointOut.model_validate(p) for p in seg.plot_points],
+    )
+
+
+@router.get("/parts/{part_id}/segments", response_model=list[AdmakeSegmentOut])
+async def 读段库(
+    part_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """这个 Part 拆出来的段，连剧情点一起。没分析过就是空列表。"""
+    await _get_part(part_id, user, db)
+    res = await db.execute(
+        select(AdmakeSegment)
+        .options(selectinload(AdmakeSegment.plot_points))
+        .where(AdmakeSegment.part_id == part_id)
+        .order_by(AdmakeSegment.seg_index)
+    )
+    return [_段出参(x) for x in res.scalars().all()]
+
+
+@router.patch("/segments/{seg_id}", response_model=AdmakeSegmentOut)
+async def 改段(
+    seg_id: int,
+    body: AdmakeSegmentPatch,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """排除或恢复一段。排除掉的段不进任何一条成片。"""
+    res = await db.execute(
+        select(AdmakeSegment)
+        .options(selectinload(AdmakeSegment.plot_points))
+        .where(AdmakeSegment.id == seg_id)
+    )
+    seg = res.scalar_one_or_none()
+    if not seg:
+        raise HTTPException(404, "段不存在")
+    await _get_part(seg.part_id, user, db)      # 顺带校验这个段属不属于当前用户
+    seg.excluded = body.excluded
+    await db.commit()
+    await db.refresh(seg)
+    return _段出参(seg)
+
 
 @router.get("/parts/{part_id}/marks", response_model=list[AdmakeMarkOut])
 async def get_marks(
