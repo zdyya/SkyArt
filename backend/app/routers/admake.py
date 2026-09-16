@@ -764,12 +764,17 @@ def _sanitize_naming_field(value: str, max_len: int, fallback: str) -> str:
     return cleaned or fallback
 
 
-def _build_export_filename(title: str, editor_alias: str, seq: int) -> str:
-    """{项目标题}_SkyArt_{M.D}_{导出文件命名}_{编号}，编号由调用方保证项目内唯一。"""
+def _build_export_filename(title: str, editor_alias: str, seq: int, kind: str = "marks") -> str:
+    """{项目标题}_{SkyArt|Sky}_{M.D}_{导出文件命名}_{编号}，编号由调用方保证项目内唯一。
+
+    中间那段按项目类型分：按高光钩子剪还是 SkyArt，按模板剪写 Sky。
+    成片混在一个目录里时，靠文件名就能看出是哪条路出的。
+    """
     now = datetime.now()
     clean_title = _sanitize_naming_field(title, _TITLE_MAX_LEN, "未命名项目")
     clean_alias = _sanitize_naming_field(editor_alias, 20, "未署名")
-    return f"{clean_title}_SkyArt_{now.month}.{now.day}_{clean_alias}_{seq}"
+    牌 = "Sky" if kind == "segments" else "SkyArt"
+    return f"{clean_title}_{牌}_{now.month}.{now.day}_{clean_alias}_{seq}"
 
 
 def _write_export_log(
@@ -2941,7 +2946,8 @@ async def _建段版导出(pid, project, body, background_tasks, user, db):
             .values(export_seq=AdmakeProject.export_seq + 1)
         )
         await db.refresh(project)
-        filename_stem = _build_export_filename(project.title, project.editor_alias, project.export_seq)
+        filename_stem = _build_export_filename(project.title, project.editor_alias,
+                                               project.export_seq, "segments")
         export = AdmakeExport(
             part_id=plan[0].get("part_id") or _锚定Part(plan, pid),
             project_id=pid, mode=body.mode, status="pending",

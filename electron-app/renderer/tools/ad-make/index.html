@@ -75,12 +75,6 @@ textarea.input{resize:vertical;min-height:68px;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .badge-blue.pulse{animation:pulse 1.5s infinite;}
 .chip{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text2);}
-.kind-option{position:relative;display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;overflow:hidden;flex:1;transition:background var(--t-color),border-color var(--t-color);}
-.kind-option::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
-.kind-option.selected{border-color:var(--accent);background:rgba(249,115,22,.07);}
-.kind-option.selected::before{transform:scaleX(1);}
-.kind-name{font-size:13px;color:var(--text);font-weight:500;}
-.kind-desc{font-size:11px;color:var(--text3);margin-top:2px;}
 
 /* ── Modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;}
@@ -387,16 +381,6 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     </div>
 
     <div class="form-group">
-      <label class="form-label">项目类型</label>
-      <div class="kind-option selected" style="cursor:default;">
-        <div>
-          <div class="kind-name" id="c-kind-name"></div>
-          <div class="kind-desc" id="c-kind-desc"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="form-group">
       <label class="form-label">项目标题 *</label>
       <input class="input" id="c-title" placeholder="请输入项目标题">
       <div id="c-title-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
@@ -410,7 +394,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     <div class="form-group">
       <label class="form-label">导出文件命名</label>
       <input class="input" id="c-alias" placeholder="署名" maxlength="20">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">命名规则：项目标题_SkyArt_日期_<span style="color:var(--text)">署名</span>_编号</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">命名规则：项目标题_<span id="c-brand">SkyArt</span>_日期_<span style="color:var(--text)">署名</span>_编号</div>
       <div id="c-alias-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
     </div>
 
@@ -430,8 +414,8 @@ body.selecting .project-card.busy .busy-tag{display:block;}
         <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
              Gemini 那档不写版本号——请求体里不带 model 字段，实际跑哪个由 Dscript 代理定，
              SkyArt 这边无从得知；通义那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
-        <option value="gemini-3.5-flash">Gemini（Dscript 代理）</option>
-        <option value="qwen3.7-plus">通义 Qwen3-VL-Plus</option>
+        <option value="gemini-3.5-flash">Gemini</option>
+        <option value="qwen3.7-plus">Qwen</option>
       </select>
     </div>
 
@@ -494,12 +478,6 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     <input type="hidden" id="e-pid">
 
     <div class="form-group">
-      <label class="form-label">项目类型</label>
-      <div id="e-kind" style="font-size:13px;color:var(--text2);padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;"></div>
-      <div style="font-size:11px;color:var(--text3)">建完不能改</div>
-    </div>
-
-    <div class="form-group">
       <label class="form-label">项目标题 *</label>
       <input class="input" id="e-title" placeholder="请输入项目标题">
       <div id="e-title-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
@@ -513,7 +491,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     <div class="form-group">
       <label class="form-label">导出文件命名</label>
       <input class="input" id="e-alias" placeholder="署名" maxlength="20">
-      <div style="font-size:11px;color:var(--text3);margin-top:4px">命名规则：项目标题_SkyArt_日期_<span style="color:var(--text)">署名</span>_编号</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">命名规则：项目标题_<span id="e-brand">SkyArt</span>_日期_<span style="color:var(--text)">署名</span>_编号</div>
       <div id="e-alias-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
     </div>
 
@@ -523,8 +501,8 @@ body.selecting .project-card.busy .busy-tag{display:block;}
         <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
              Gemini 那档不写版本号——请求体里不带 model 字段，实际跑哪个由 Dscript 代理定，
              SkyArt 这边无从得知；通义那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
-        <option value="gemini-3.5-flash">Gemini（Dscript 代理）</option>
-        <option value="qwen3.7-plus">通义 Qwen3-VL-Plus</option>
+        <option value="gemini-3.5-flash">Gemini</option>
+        <option value="qwen3.7-plus">Qwen</option>
       </select>
     </div>
 
@@ -615,6 +593,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
 
 <input type="file" id="tpl-import-input" accept=".skytpl,application/zip,application/octet-stream" style="display:none">
 
+<script src="../../shared/web-shim.js"></script>
 <script src="../../shared/liquid-lens.js"></script>
 <script src="ui-kit.js"></script>
 <script>
@@ -625,10 +604,6 @@ let authToken   = localStorage.getItem('skyart_token') || '';
 // 不带参数（老的「素材制作」）=按高光钩子剪，?kind=segments（「爆款素材分析」）=按模板剪。
 // 列表只显示本类型的项目，新建出来的也是本类型。
 const PAGE_KIND = new URLSearchParams(location.search).get('kind') === 'segments' ? 'segments' : 'marks';
-const KIND_TEXT = {
-  marks:    { 名: '按高光钩子剪', 说明: '标出高光和钩子，按导出模式拼片' },
-  segments: { 名: '按模板剪',     说明: 'AI 把片子拆成一段段，按剪辑模板挑段拼片' },
-};
 let currentUser = null;
 let currentRole = null;
 let allProjects = [];
@@ -1011,9 +986,9 @@ async function openEditModal(pid) {
   if (!project) return;
   document.getElementById('e-pid').value       = pid;
   const 是段 = project.project_kind === 'segments';
-  document.getElementById('e-kind').textContent = 是段 ? '按模板剪' : '按高光钩子剪';
   // 按模板剪只有 qwen 拆段一条管线，没得选，那一栏就不摆出来
   document.getElementById('e-ai-model').closest('.form-group').style.display = 是段 ? 'none' : '';
+  document.getElementById('e-brand').textContent = 是段 ? 'Sky' : 'SkyArt';
   document.getElementById('e-title').value     = project.title || '';
   document.getElementById('e-desc').value      = project.description || '';
   // 老项目存的是已废弃的 qwen-vl-max，新下拉里没有这一项。不映射的话 select 会
@@ -1111,18 +1086,17 @@ async function saveEditProject() {
 
 // ── Create project modal ──────────────────────────────────────
 if (PAGE_KIND === 'segments') {
-  document.title = 'SkyArt — 素材制作（按模板剪）';
+  document.title = 'SkyArt — 素材制作 2.0';
   document.addEventListener('DOMContentLoaded', () => {
     const t = document.getElementById('page-title');
-    if (t) t.textContent = '素材制作 · 按模板剪';
+    if (t) t.textContent = '素材制作 2.0';
   });
 }
 
 function openCreateModal() {
-  document.getElementById('c-kind-name').textContent = KIND_TEXT[PAGE_KIND].名;
-  document.getElementById('c-kind-desc').textContent = KIND_TEXT[PAGE_KIND].说明;
   // 按模板剪只有一条分析管线（qwen 拆段），没有可选的模型，那一栏就不摆出来。
   document.getElementById('c-ai-model-group').style.display = PAGE_KIND === 'segments' ? 'none' : '';
+  document.getElementById('c-brand').textContent = PAGE_KIND === 'segments' ? 'Sky' : 'SkyArt';
   document.getElementById('c-title').value = '';
   document.getElementById('c-desc').value  = '';
   document.getElementById('c-alias').value = '';

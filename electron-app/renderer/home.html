@@ -473,9 +473,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 
   <div class="tools-grid">
     <!-- 爆款素材分析 -->
-    <div class="tool-card hot locked" id="card-hot" onclick="enterHotAnalysis()"
-         title="上传爆款广告片、拆段、把段存成剪辑模板。这套界面还没做。">
-      <span class="lock-badge">开发中</span>
+    <div class="tool-card hot ll-raise" id="card-hot" onclick="enterHotAnalysis()">
       <div class="tool-card-banner">
         <div class="banner-icon"><div class="segs">
           <div class="seg"></div>
@@ -511,7 +509,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
         </div></div>
       </div>
       <div class="tool-card-body">
-        <div class="tool-card-title">素材制作<span class="tool-card-tag">新</span></div>
+        <div class="tool-card-title">素材制作 2.0<span class="tool-card-tag">新</span></div>
         <div class="tool-card-desc">
           选一个爆款模板，每一格按模板写的条件从素材里挑段填进去，一次导出多条。
         </div>
@@ -536,7 +534,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
       </div>
       <div class="tool-card-body">
         <div class="tool-card-title">
-          素材制作
+          素材制作 1.0
         </div>
         <div class="tool-card-desc">
           AI 标注高光与钩子片段，按多种剪辑模式批量合成，产出可直接投放的广告素材。
@@ -552,7 +550,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
       </div>
     </div>
     <!-- 短剧创作 -->
-    <div class="tool-card drama ll-raise" id="card-drama" onclick="enterDrama()">
+    <div class="tool-card drama locked" id="card-drama" onclick="enterDrama()">
+      <span class="lock-badge">暂不可用</span>
       <div class="tool-card-banner">
         <div class="banner-icon"><div class="frames">
           <div class="frame f1"><div class="cap"></div></div>
@@ -583,6 +582,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 
 <div id="toast-container"></div>
 
+<script src="shared/web-shim.js"></script>
 <script src="shared/liquid-lens.js"></script>
 <script>
 if (window.LiquidLens) {                                   // 组件没加载上也不能让页面塌掉

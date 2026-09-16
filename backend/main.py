@@ -197,6 +197,12 @@ async def system_health():
     return await asyncio.to_thread(check_dependencies)
 
 
+@app.get("/api/v1/system/upload-dir")
+async def system_upload_dir():
+    """素材根目录。浏览器里跑的时候没有 Electron 那层桥，前端从这里问。"""
+    return {"dir": settings.UPLOAD_DIR}
+
+
 @app.get("/api/v1/system/config-status")
 async def system_config_status():
     """密钥完整性检查（只查非空、不发网络请求）：启动时前端据此提示缺哪些配置。

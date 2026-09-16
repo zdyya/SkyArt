@@ -1,0 +1,2155 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SkyArt — 爆款素材分析</title>
+<style>
+/* 液态镜片 —— 全站共用的玻璃质感层。配套 shared/liquid-lens.js。
+   2026-08-09 定稿的一组值写在 :root 里，四个页面共用，改一处全站生效。 */
+
+:root {
+  --glass-a: .10;   /* 中间高透区的底色浓度。浅底上这是「透不透」的主开关：白底越薄，折射越透得出来 */
+  --sh: 1.53;       /* 阴影总强度，所有阴影层都乘它 */
+  --rim: 1.45;      /* 镜边反光强度 */
+  /* 棱镜色散扇默认关。它模拟「一束光射进透镜」，扇形的张角是按接近方形的元素设计的：
+     压在 1386×48 这种长条上，整把扇子被挤成一个点，再被 6px 的环一裁就成了一团彩色污渍；
+     重复出现在十几张卡上时又会被读成色差 bug。要用只能用在大而接近方形的单个面上，
+     调用时显式传 prism:true。真正的色散在滤镜里（R/G/B 三通路），那个一直开着。 */
+  --prism: 0;
+  --band: 8px;      /* 弧面宽度，由 LiquidLens 按元素实际尺寸写回 */
+
+  /* 工作面的底色浓度。浏览页（首页、列表页）的卡片可以做通透，看的是内容缩略；
+     编辑器的面板是工作面，字要长时间读、还要对着导轨比位置，底下透出网格会晃眼。
+     所以工作面几乎不透，只保留边缘那一圈弧面反光和色散当质感。 */
+  --glass-work: .88;
+}
+
+/* ── 工作台定位线 ────────────────────────────────────────────
+   玻璃折射的是边缘，不是颜色。平铺的浅灰底下面没有任何边，玻璃盖上去等于隐形。
+   这一层全是 1px 硬边：方格纸、粗格交点的十字对位标、顶边和左边的尺规刻度、
+   带箭头的尺寸标注线、圆规弧线、四角定位角标。工匠在工作台上放样定位用的就是
+   这套线，和「天工」是一回事。
+   浏览页（首页、列表页）用默认浓度 .16；编辑器传 mountBackdrop({ink:.06}) 压到一半，
+   在那里它只负责给玻璃边缘提供可折射的东西，不是让人去读那些线。 */
+/* z-index:-1 —— 定位元素会盖在「未定位」的普通内容之上，用 0 的话编辑器那种
+   没写 position 的面板会被这层盖住、被暖色晕染。负层级压到全部内容之下，
+   页面的底色由 body 传递给画布、画在更下面，不会被这层遮掉。 */
+.ll-bgfx { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; --ink: .26; }
+.ll-tint { position: absolute; border-radius: 50%; filter: blur(70px); }
+.ll-tint.t1 { width: 560px; height: 560px; left: -120px; top: -190px; background: #fbdcc0; opacity: .9; }
+.ll-tint.t2 { width: 480px; height: 480px; right: -100px; bottom: -200px; background: #dde7f4; opacity: .85; }
+/* 这一层必须是静止的。backdrop-filter 的背景只要在动，每个玻璃元素的滤镜就得逐帧重跑；
+   一个页面十几块玻璃、每块滤镜里三次位移加三次通道提取，GPU 直接吃满。
+   之前挂过一个 48 秒的漂移动画，实测把 Chrome 的 GPU 进程顶到 109%、WindowServer 77%。
+   定位线本来也不该动——它是工作台上的基准线，动的基准线没有意义。 */
+.ll-draft { position: absolute; inset: -60px; color: rgba(67,48,29,var(--ink)); }
+/* 纸：网格 + 交点标。开了漂移时整块横向走一个粗格(120px)就复位。
+   左右各多铺 140px——位移期间边缘不能露白，.ll-draft 自己只有 60px 出血不够。 */
+.ll-paper { position: absolute; top: 0; bottom: 0; left: -140px; right: -140px; }
+.ll-draft .g-minor, .ll-draft .g-major { position: absolute; inset: 0; }
+.ll-draft .g-minor { background-image: linear-gradient(currentColor 1px, transparent 1px),
+                                       linear-gradient(90deg, currentColor 1px, transparent 1px);
+  background-size: 24px 24px; opacity: .42; }
+.ll-draft .g-major { background-image: linear-gradient(currentColor 1px, transparent 1px),
+                                       linear-gradient(90deg, currentColor 1px, transparent 1px);
+  background-size: 120px 120px; opacity: .95; }
+.ll-draft .cross { position: absolute; width: 15px; height: 15px; }
+.ll-draft .cross::before, .ll-draft .cross::after { content: ''; position: absolute; background: currentColor; }
+.ll-draft .cross::before { left: 0; right: 0; top: 7px; height: 1px; }
+.ll-draft .cross::after { top: 0; bottom: 0; left: 7px; width: 1px; }
+.ll-draft .ruler { position: absolute; left: 0; right: 0; height: 26px;
+  border-bottom: 1px solid currentColor; opacity: .9; top: 60px; }
+.ll-draft .ruler .tk { position: absolute; bottom: 0; width: 1px; background: currentColor; height: 5px; }
+.ll-draft .ruler .tk.lg { height: 11px; }
+.ll-draft .ruler .num { position: absolute; bottom: 12px; font-size: 9px;
+  font-family: ui-monospace, Menlo, monospace; transform: translateX(-50%); letter-spacing: .4px; opacity: .85; }
+.ll-draft .vruler { position: absolute; top: 0; bottom: 0; width: 26px;
+  border-right: 1px solid currentColor; opacity: .75; }
+.ll-draft .vruler .tk { position: absolute; right: 0; height: 1px; background: currentColor; width: 5px; }
+.ll-draft .vruler .tk.lg { width: 11px; }
+.ll-draft .dim { position: absolute; height: 1px; background: currentColor; }
+.ll-draft .dim::before, .ll-draft .dim::after { content: ''; position: absolute;
+  top: -3px; width: 1px; height: 7px; background: currentColor; }
+.ll-draft .dim::before { left: 0; } .ll-draft .dim::after { right: 0; }
+.ll-draft .dim .lb { position: absolute; left: 50%; top: -15px; transform: translateX(-50%);
+  font-size: 9px; font-family: ui-monospace, Menlo, monospace; letter-spacing: .4px;
+  background: var(--bg, #f4f5f7); padding: 0 5px; }
+.ll-draft .arc { position: absolute; border-radius: 50%; border: 1px solid currentColor; opacity: .8; }
+.ll-draft .corner { position: absolute; width: 22px; height: 22px; }
+.ll-draft .corner::before, .ll-draft .corner::after { content: ''; position: absolute; background: currentColor; }
+.ll-draft .corner::before { width: 22px; height: 1px; } .ll-draft .corner::after { width: 1px; height: 22px; }
+.ll-draft .corner.tl::before, .ll-draft .corner.tl::after { top: 0; left: 0; }
+.ll-draft .corner.tr::before, .ll-draft .corner.tr::after { top: 0; right: 0; }
+.ll-draft .corner.bl::before, .ll-draft .corner.bl::after { bottom: 0; left: 0; }
+.ll-draft .corner.br::before, .ll-draft .corner.br::after { bottom: 0; right: 0; }
+.ll-draft .diag { position: absolute; height: 1px; background: currentColor;
+  opacity: .55; transform-origin: left center; }
+
+/* ── 6D 镜边 ─────────────────────────────────────────────────
+   一块 6D 钢化膜的边是一圈窄弧面：光斜穿过去被压缩、被反射，所以亮的是「一段」
+   不是整圈，而且顺着光的方向一头强一头弱；中间是平的高透区，不做模糊。
+   ::before 是弧面反光，::after 是弧面内侧那道暗线（玻璃切面会吃光，少了它环会飘），
+   .prism 是棱镜色散扇。三层都用 mask 掏空中心，只留 --band 那一圈。
+   给谁加 .g6d，就必须保证它的直接子元素里有一个 <i class="prism">，
+   LiquidLens.glass() 会自动补。 */
+.g6d { position: relative; isolation: isolate; }
+
+/* 凸面镜边 —— 用四条内嵌阴影，不用遮罩掏环。
+   曾经用「padding/border + mask-composite」掏出一圈环，结果角上总有一块灰楔：
+   **遮罩的区域框永远是矩形，不受 border-radius 影响**，所以环是外圆内方，
+   圆角处多出来的那块被暗面填上了。内嵌阴影则是跟着 border-radius 走的，天然没有角问题。
+
+   **暗的部分一律在外面，不能在里面。** 一块凸起的板子，上缘受光、下缘吃反射光，
+   两条边都是亮的；暗的是它投在背景上的影子。反过来——上缘亮、下缘在内部压一道暗线——
+   画的是凹槽：槽的上沿会在内部投影。之前就是写反了，所以怎么调角都还是凹的。 */
+.g6d::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  pointer-events: none; z-index: 2;
+  box-shadow:
+    inset 0 1.5px 0 rgba(255,255,255,calc(.98 * var(--rim))),
+    inset 1.4px 0 0 rgba(255,255,255,calc(.62 * var(--rim))),
+    inset -1.4px 0 0 rgba(255,255,255,calc(.46 * var(--rim))),
+    inset 0 -1.3px 0 rgba(255,255,255,calc(.72 * var(--rim))); }
+
+/* 棱镜色散扇，默认关（--prism: 0）。注意它仍然用遮罩掏环，所以同样有「外圆内方」的
+   角问题——要重新启用得先换成别的画法。 */
+.g6d > .prism {
+  position: absolute; inset: 0; border-radius: inherit; box-sizing: border-box;
+  pointer-events: none; z-index: 2; opacity: var(--prism); filter: blur(1.6px);
+  border: var(--band) solid transparent;
+  -webkit-mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) padding-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  background:
+    conic-gradient(from 168deg at 14% 8%,
+      transparent 0deg,
+      rgba(255,64,64,.62)   16deg, rgba(255,150,40,.58)  25deg,
+      rgba(250,220,60,.52)  33deg, rgba(90,225,130,.50)  41deg,
+      rgba(60,190,255,.56)  49deg, rgba(150,100,255,.58) 57deg,
+      transparent 72deg, transparent 360deg),
+    conic-gradient(from 348deg at 88% 94%,
+      transparent 0deg,
+      rgba(255,80,80,.34)   14deg, rgba(255,190,60,.30)  24deg,
+      rgba(80,210,255,.32)  38deg, rgba(160,110,255,.34) 48deg,
+      transparent 62deg, transparent 360deg); }
+
+/* ── 阴影梯队 ────────────────────────────────────────────────
+   五层缺一层图层关系就散：外缘一根暗线把玻璃和背景切开，贴边接触阴影读出「浮起来」，
+   中程和环境负责重量与高度。只有一层大散阴影时读到的是重量，不是高度。 */
+.ll-raise {
+  box-shadow:
+    0 0 0 1px rgba(24,28,36,calc(.055 * var(--sh))),
+    0 1px 1px rgba(24,28,36,calc(.10 * var(--sh))),
+    0 3px 5px rgba(24,28,36,calc(.10 * var(--sh))),
+    0 9px 18px rgba(24,28,36,calc(.11 * var(--sh))),
+    0 22px 46px rgba(24,28,36,calc(.10 * var(--sh))); }
+/* 顶栏这类贴着窗口边缘的横条：只要贴边那两层，大散阴影会在下面拖一条脏影 */
+.ll-raise-bar {
+  box-shadow:
+    0 1px 2px rgba(24,28,36,calc(.07 * var(--sh))),
+    0 6px 16px rgba(24,28,36,calc(.06 * var(--sh))); }
+
+/* ── 漂移层 ──────────────────────────────────────────────────
+   一组制图母版横向平铺、匀速右移，只给首页这种过路页面开（mountBackdrop({drift:true})）。
+   位移正好走满一个母版宽度就回到起点，接缝两侧内容一样，看不出跳。
+   动的背景会让每一块玻璃的 backdrop-filter 逐帧重跑：实测停在首页 19.9% GPU、
+   切到别的页 0.9%、窗口最小化 0%。编辑器那种一屏十几块玻璃的页面不能开这个。 */
+.ll-bgfx .ll-drift {
+  position: absolute; top: 0; bottom: 0; left: -960px;
+  color: rgba(67,48,29,calc(var(--ink) * .85));
+  animation: ll-drift 72s linear infinite;
+}
+@keyframes ll-drift { from { transform: translateX(0); } to { transform: translateX(960px); } }
+/* 纸的速度跟母版对齐：母版 960px / 72s = 13.3px/s，纸走 120px 就是 9s。
+   两层同速才读成「一整块背景在动」，速度不同会散成两层各走各的。 */
+.ll-bgfx.drift .ll-paper { animation: ll-paper 9s linear infinite; }
+@keyframes ll-paper { from { transform: translateX(-120px); } to { transform: translateX(0); } }
+.ll-bgfx.paused .ll-paper { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .ll-bgfx .ll-paper { animation: none; } }
+/* 窗口被切走、最小化、或只是失焦被别的应用盖住时暂停——那些情况下动画看不见，
+   但滤镜不一定停，转着就是白烧电 */
+.ll-bgfx.paused .ll-drift { animation-play-state: paused; }
+@media (prefers-reduced-motion: reduce) { .ll-bgfx .ll-drift { animation: none; } }
+
+.ll-drift .arc { position: absolute; border-radius: 50%; border: 1px solid currentColor; opacity: .8; }
+.ll-drift .cross { position: absolute; width: 15px; height: 15px; }
+.ll-drift .cross::before, .ll-drift .cross::after { content: ''; position: absolute; background: currentColor; }
+.ll-drift .cross::before { left: 0; right: 0; top: 7px; height: 1px; }
+.ll-drift .cross::after { top: 0; bottom: 0; left: 7px; width: 1px; }
+.ll-drift .dim { position: absolute; height: 1px; background: currentColor; }
+.ll-drift .dim::before, .ll-drift .dim::after { content: ''; position: absolute;
+  top: -3px; width: 1px; height: 7px; background: currentColor; }
+.ll-drift .dim::before { left: 0; } .ll-drift .dim::after { right: 0; }
+.ll-drift .dim .lb { position: absolute; left: 50%; top: -15px; transform: translateX(-50%);
+  font-size: 9px; font-family: ui-monospace, Menlo, monospace; letter-spacing: .4px;
+  background: var(--bg, #f4f5f7); padding: 0 5px; }
+.ll-drift .corner { position: absolute; width: 22px; height: 22px; }
+.ll-drift .corner::before, .ll-drift .corner::after { content: ''; position: absolute; background: currentColor; }
+.ll-drift .corner::before { width: 22px; height: 1px; } .ll-drift .corner::after { width: 1px; height: 22px; }
+.ll-drift .corner.tr::before, .ll-drift .corner.tr::after { top: 0; right: 0; }
+.ll-drift .corner.bl::before, .ll-drift .corner.bl::after { bottom: 0; left: 0; }
+/* 剖面线：制图里表示"这一块是实体"的斜线填充 */
+.ll-drift .hatch { position: absolute; width: 132px; height: 84px;
+  border: 1px solid currentColor; opacity: .75;
+  background-image: repeating-linear-gradient(45deg, currentColor 0 1px, transparent 1px 9px); }
+
+
+:root {
+  --bg:#f4f5f7; --bg2:#ffffff; --bg3:#eef0f1; --bg4:#e5e7e9;
+  --border:#e0e2e5; --accent:#f97316; --accent2:#ea580c;
+  --btn:#1f2328; --btn-h:#000000;
+  --text:#191b1f; --text2:#565b63; --text3:#9298a1;
+  /* 选中态动效统一：颜色 .18s，位移 .12s，滑块 .28s，都用同一条缓动 */
+  --e:cubic-bezier(.22,1,.36,1); --t-color:.18s ease; --t-move:.12s cubic-bezier(.22,1,.36,1);
+  --green:#059669; --red:#dc2626; --blue:#2563eb; --yellow:#d97706;
+  --hl-color:#f97316; --hook-color:#2563eb; --white-color:#94a3b8;
+  /* 阴影总强度压到 1.0（liquid-lens.css 里的默认是 1.53）。那个默认值是给首页调的，
+     一屏三四张大卡片，阴影重才有质感；这一页一屏五块面板，同样的重量叠起来读到的
+     不是层次，是「元素很多」。只压工作页，浏览页保持默认。 */
+  --sh:1.00;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+.hidden{display:none!important;}
+
+/* ── Topbar ── */
+/* 顶栏玻璃：这一页是固定布局，底下没有滚动内容穿过，所以看不到折射——
+   做成玻璃只为跟列表页的顶栏长得一样。backdrop-filter 这条是兜底，
+   liquid-glass.js 会用带 url() 的行内样式盖掉它。 */
+.topbar{background:rgba(255,255,255,.42);backdrop-filter:blur(3px) saturate(135%) brightness(108%);border-bottom:1px solid rgba(224,226,229,.7);box-shadow:inset 0 1.4px 0 rgba(255,255,255,.9);height:52px;display:flex;align-items:center;padding:0 16px 0 78px;gap:12px;flex-shrink:0;z-index:100;-webkit-app-region:drag;}
+
+/* ── 悬浮玻璃列头 ──
+   列头挪进滚动容器里做 sticky，列表就从它底下滚过去，行经过下边缘时会被掰弯。
+   列头留在滚动容器外面是看不到这个效果的——两者不重叠就没有可折射的内容。 */
+.glass-scroll{flex:1;min-height:0;overflow-y:auto;}
+/* 列头自己要带圆角：它挂了 backdrop-filter 成了合成层，Chrome 不保证用祖先的
+   border-radius 去裁合成层，不写这一条圆角面板里会露出一个方角 */
+.glass-head{border-radius:14px 14px 0 0;position:sticky;top:0;z-index:5;
+/* 列头的底色必须比它所在的面板更实，不能更透。之前是 50% 白压在 88% 白的面板上，
+   里外反过来，中间就显出一条灰带。这里给 .96，读起来是「一条页眉」而不是「一扇窗」。
+   工作面上的列头不上镜片：折射被面板底色盖住看不见，只剩圆角处那个畸变的结。 */
+  background:rgba(252,253,254,.96);
+  box-shadow:inset 0 -1px 0 rgba(224,226,229,.85),inset 0 1.2px 0 rgba(255,255,255,.95);}
+.parts-head{padding:9px 12px;font-size:10px;font-weight:600;color:var(--text3);}
+.marks-head{padding:10px 14px 7px;}
+.marks-head-row{display:flex;align-items:center;justify-content:space-between;}
+.logo{font-size:16px;font-weight:700;color:var(--text);cursor:pointer;-webkit-app-region:no-drag;}
+.logo span{color:var(--text3);font-size:11px;font-weight:400;margin-left:4px;}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text2);-webkit-app-region:no-drag;}
+.breadcrumb a{color:var(--text2);cursor:pointer;text-decoration:none;}
+.breadcrumb a:hover{color:var(--accent);}
+/* 返回：折角+来处文字，与模板编辑器同款（高频操作，常驻大热区） */
+.bk{border:none;background:transparent;cursor:pointer;display:flex;align-items:center;gap:4px;color:var(--text2);font-size:13px;font-weight:500;padding:6px 12px 6px 6px;border-radius:6px;transition:color .15s,background .15s;}
+.bk:hover{color:var(--text);background:var(--bg3);}
+.breadcrumb .sep{color:var(--text3);}
+.part-badge{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:12px;font-weight:600;color:var(--text);}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;}
+
+/* ── Buttons ── */
+.btn{padding:6px 14px;border-radius:6px;border:1px solid transparent;cursor:pointer;font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.btn-primary{background:var(--btn);color:#fff;}.btn-primary:hover{background:var(--btn-h);}
+.btn-secondary{background:var(--bg3);color:var(--text);border:1px solid var(--border);}.btn-secondary:hover{background:var(--bg4);}
+.btn-ghost{background:transparent;color:var(--text2);}.btn-ghost:hover{background:var(--bg3);}
+.btn-green{background:var(--green);color:#fff;}.btn-green:hover{filter:brightness(.9);}
+.btn-sm{padding:4px 10px;font-size:11px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.ic{flex-shrink:0;vertical-align:-2px;}
+
+/* ── Workspace: left-sidebar + ep-main ── */
+.ep-workspace{display:flex;flex:1;min-height:0;overflow:hidden;}
+
+/* ── 面板层：统一高度 ─────────────────────────────────────────
+   阴影表达的是离背景多远，不是重不重要。这五块都是浮在工作台背景上的工作面，
+   属于同一层，阴影和圆角必须一模一样；谁少一套，那块就像贴死在背景上。
+   焦点不靠阴影抢：播放器是全页唯一的深色块，本来就最跳；「当前在哪」交给选中态。
+   面板里面的东西（Part 行、标记行、导轨色块）一律不给阴影，靠底色和描边区分。
+   比面板更高的只有弹窗和下拉菜单。 */
+.workflow-sidebar,
+.crop-player-area,
+.crop-info-col .info-card,
+.marks-info-card,
+.crop-timeline-wrap{
+  border-radius:14px;
+  box-shadow:0 0 0 1px rgba(24,28,36,calc(.055*var(--sh))),
+             0 1px 1px rgba(24,28,36,calc(.10*var(--sh))),
+             0 3px 5px rgba(24,28,36,calc(.09*var(--sh))),
+             0 9px 18px rgba(24,28,36,calc(.10*var(--sh)));
+}
+
+/* ── Left sidebar: tabbed ── */
+/* 外边距跟 ep-main 的 16px 内边距取齐：这样左栏的上下沿正好和播放器、片段信息卡在同一条线上 */
+.workflow-sidebar{
+  width:220px;flex-shrink:0;margin:16px 0 16px 16px;
+  background:rgba(255,255,255,var(--glass-work));
+  display:flex;flex-direction:column;overflow:hidden;
+}
+.workflow-sidebar > *:not(.prism){position:relative;z-index:1;}
+
+/* ── Panel / subpanel ── */
+.sidebar-panel{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;}
+.sidebar-subpanel{flex:1;min-height:0;overflow-y:auto;padding:10px;}
+
+/* ── legacy section kept for compat ── */
+.sidebar-section{border-bottom:1px solid var(--border);}
+.marks-section{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
+.marks-body{flex:1;overflow-y:auto;padding:8px 10px;}
+.export-section{flex-shrink:0;}
+
+/* ── 标记组：一段一行 ── */
+.mark-line{display:flex;align-items:center;gap:6px;min-height:30px;padding:0 4px 0 8px;cursor:pointer;font-size:11px;transition:background .12s;}
+.mark-line + .mark-line{border-top:1px solid var(--border);}
+.mark-line:hover{background:var(--bg3);}
+.mark-line::before{content:'';width:3px;height:12px;border-radius:2px;flex-shrink:0;}
+.mark-line.hl::before{background:var(--hl-color);}
+.mark-line.hk::before{background:var(--hook-color);}
+.mark-line-name{font-weight:600;color:var(--text);white-space:nowrap;}
+.mark-line-time{margin-left:auto;font-family:monospace;font-size:10px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.group-del-btn{background:none;border:none;cursor:pointer;color:var(--text3);font-size:13px;padding:1px 3px;border-radius:4px;}
+.group-del-btn:hover{background:rgba(220,38,38,.1);color:var(--red);}
+.score-badge{font-size:10px;font-weight:600;padding:1px 6px 1px 4px;border-radius:4px;background:rgba(234,179,8,.2);color:#b45309;margin-left:4px;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;cursor:help;}
+.score-badge svg{width:9px;height:9px;fill:currentColor;flex-shrink:0;}
+/* 手动划的段没有评分（评分只有 AI 会给）。空着的话看起来像"这条出了问题"，
+   所以给一个同尺寸的徽章占住位置，颜色和图标都跟评分区分开：
+   评分＝琥珀色星星，自选＝青灰色手形。 */
+.pick-badge{font-size:10px;font-weight:600;padding:1px 6px 1px 4px;border-radius:4px;
+  background:rgba(100,116,139,.16);color:#475569;margin-left:4px;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:3px;cursor:help;}
+.pick-badge svg{width:9px;height:9px;fill:none;stroke:currentColor;stroke-width:2.4;
+  stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;}
+
+/* ── Export section ── */
+/* 导出弹窗表单行：左标签右控件 */
+.exp-row{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px;}
+.exp-label{width:56px;flex-shrink:0;font-size:12px;font-weight:600;color:var(--text2);padding-top:8px;}
+.exp-hint{font-size:11px;color:var(--text3);margin-top:5px;line-height:1.6;}
+/* 建议条数的小圆角标签；填超了整条变黄，跟输入框的告警色一致 */
+.cnt-chip{display:inline-flex;align-items:center;font-size:11px;color:var(--text2);background:var(--bg3);
+  border:1px solid var(--border);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+.cnt-chip b{color:var(--accent2);font-weight:700;margin:0 2px;}
+.cnt-chip.over{background:#fffbeb;border-color:#fde68a;color:#92400e;}
+.exp-hint.warn{color:var(--yellow);}
+.exp-hint.bad{color:var(--red);}
+#clip-count.over{border-color:var(--yellow);background:#fffbeb;}
+.dur-quick{color:var(--accent2);text-decoration:underline;cursor:pointer;font-size:11px;}
+/* 悬停说明：图标与浮层，写法与模板编辑器一致 */
+.info-ic{cursor:help;color:var(--text3);margin-left:6px;display:inline-flex;align-items:center;position:relative;}
+.info-ic:hover{color:var(--text2);}
+/* 层级必须高过所有弹窗：说明 icon 大多长在弹窗里（导出面板 .ai-modal-backdrop 是 9999，
+   顶层弹窗 10000），tooltip 原来的 9500 会被遮罩压在底下，鼠标悬停什么都看不见 */
+#tip-pop{position:fixed;z-index:10001;display:none;background:rgba(25,27,31,.94);color:#fff;
+  padding:7px 10px;border-radius:6px;font-size:11px;font-weight:400;line-height:1.65;
+  width:max-content;max-width:230px;white-space:pre-line;pointer-events:none;
+  box-shadow:0 4px 14px rgba(0,0,0,.22);}
+#tip-pop::before{content:"";position:absolute;left:-4px;top:50%;transform:translateY(-50%) rotate(45deg);
+  width:8px;height:8px;background:rgba(25,27,31,.94);}
+/* A 类分段控件（目标时长）：凹槽实色，滑块浮起，滑块本体样式在 ui-kit.js */
+.seg{position:relative;display:inline-flex;padding:3px;border-radius:10px;
+     background:rgba(20,24,30,.055);box-shadow:inset 0 1px 2px rgba(20,24,30,.1);}
+.seg label{position:relative;z-index:1;padding:7px 16px;border-radius:6px;font-size:12px;
+     font-weight:500;cursor:pointer;color:var(--text2);white-space:nowrap;
+     transition:color var(--t-color);}
+.seg label:not(:has(input:checked)):hover{color:var(--text);}
+.seg label:has(input:checked){color:var(--text);font-weight:600;}
+.seg input{display:none;}
+/* B 类块形态：左侧橙条从左边滑出来，跟 Part 列表用同一套语言 */
+.mode-option{position:relative;display:flex;align-items:flex-start;gap:7px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;cursor:pointer;margin-bottom:5px;overflow:hidden;transition:background var(--t-color),border-color var(--t-color);}
+.mode-option:not(.selected):hover{border-color:var(--text3);background:var(--bg3);}
+.mode-option::before{content:'';position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.mode-option.selected{border-color:var(--accent);background:rgba(249,115,22,.07);}
+.mode-option.selected::before{transform:scaleX(1);}
+.mode-radio{width:13px;height:13px;margin-top:2px;accent-color:var(--accent);flex-shrink:0;}
+.mode-name{font-size:11px;font-weight:600;color:var(--text);margin-bottom:2px;}
+.mode-desc{font-size:10px;color:var(--text3);line-height:1.3;}
+/* 导出范围：多列小方块，560px 弹窗一行放四个 */
+.pick-all-row{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer;padding-top:7px;}
+.pick-all-row input{accent-color:var(--accent);margin:0;}
+.part-pick-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:6px;margin-top:8px;}
+.part-pick{position:relative;display:flex;align-items:center;gap:5px;padding:5px 7px 5px 9px;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--text3);cursor:pointer;min-width:0;overflow:hidden;transition:background var(--t-color),border-color var(--t-color),color var(--t-color);}
+.part-pick:not(:has(input:checked)):hover{border-color:var(--text3);background:var(--bg3);}
+.part-pick::before{content:'';position:absolute;left:0;top:5px;bottom:5px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.part-pick input{accent-color:var(--accent);margin:0;flex-shrink:0;}
+.part-pick span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.part-pick:has(input:checked){border-color:var(--accent);background:rgba(249,115,22,.07);color:var(--text);font-weight:600;}
+.part-pick:has(input:checked)::before{transform:scaleX(1);}
+/* 导出历史：一批一行，展开才看单条 */
+.exp-batch{border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;}
+.exp-batch-head{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;background:var(--bg3);}
+.exp-batch-head:hover{background:var(--bg4);}
+.exp-batch-arrow{color:var(--text3);font-size:14px;line-height:1;transition:transform .15s;flex-shrink:0;}
+.exp-batch-arrow.open{transform:rotate(90deg);}
+.exp-batch-when{font-size:12px;font-weight:600;color:var(--text);white-space:nowrap;flex-shrink:0;}
+.exp-batch-mode{font-size:11px;color:var(--text2);white-space:nowrap;flex-shrink:0;}
+.exp-batch-folder{font-size:10px;color:var(--text3);font-family:monospace;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.exp-batch-body{padding:2px 10px 6px;}
+.exp-item-line{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:11px;border-top:1px solid var(--border);}
+.exp-item-seq{font-family:monospace;font-weight:600;color:var(--text2);width:38px;flex-shrink:0;}
+/* 文件名直接摆在行上，不再靠「复制名」按钮把它拷出来才看得见。
+   「定位」也删了——它和批次头的「打开文件夹」调的是同一个 showItemInFolder，
+   一批 20 条本来就在同一个文件夹里，差别只是 Finder 里高亮第几个。 */
+.exp-item-name{flex:1;min-width:0;color:var(--text2);font-size:10.5px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.exp-item-dur{font-family:monospace;color:var(--text3);font-size:10px;flex-shrink:0;}
+.exp-item-err{color:var(--red);font-size:10px;}
+.export-list{display:flex;flex-direction:column;gap:5px;}
+.export-item{display:flex;align-items:center;gap:5px;padding:6px 8px;background:var(--bg3);border-radius:4px;font-size:11px;}
+.export-item-name{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.download-btn{background:var(--green);color:#fff;border:none;border-radius:6px;padding:2px 7px;font-size:10px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.download-btn:hover{filter:brightness(.9);}
+
+/* ── ep-main: crop-layout ── */
+.ep-main{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:16px;}
+
+/*
+  高度计算:
+  topbar 52px + ep-main padding 32px + gap 8px + timeline 125px = 217px
+  timeline 125px = 外层下留白 10 + 边框 2 + 工具条 38 + vis 区上下留白 6 + vis 自适应高度 69
+*/
+.crop-layout{display:flex;flex-direction:column;gap:8px;flex:1;min-height:0;}
+
+.crop-top-section{
+  display:flex;gap:12px;align-items:stretch;
+  flex:1;min-height:260px;
+}
+
+/* ── Player area ── */
+.crop-player-area{flex:1;min-width:0;display:flex;flex-direction:column;background:#111;overflow:hidden;}
+.crop-player-wrap{flex:1;display:flex;align-items:center;justify-content:center;min-height:0;position:relative;overflow:hidden;}
+#main-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:none;z-index:1;}
+.player-placeholder{display:flex;flex-direction:column;align-items:center;gap:10px;color:rgba(255,255,255,.35);}
+.player-placeholder .ph-text{font-size:13px;}
+.time-overlay{position:absolute;top:8px;left:12px;background:rgba(0,0,0,.55);color:#fff;font-family:monospace;font-size:12px;font-weight:600;padding:2px 7px;border-radius:4px;pointer-events:none;z-index:2;}
+
+/* ── Video progress bar (DramaC style — inside player, absolute at bottom) ── */
+.video-progress{position:absolute;bottom:0;left:0;right:0;padding:8px 12px;background:rgba(0,0,0,.35);cursor:pointer;z-index:2;}
+.video-progress-bar{height:4px;background:rgba(255,255,255,.25);border-radius:2px;position:relative;}
+.video-progress-fill{height:100%;background:var(--accent);border-radius:2px;position:relative;width:0%;}
+.video-progress-thumb{position:absolute;right:-6px;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;background:#fff;box-shadow:0 0 3px rgba(0,0,0,.4);}
+
+/* ── Video controls (below player) ── */
+.video-controls{background:#1a1b1e;padding:6px 12px;display:flex;align-items:center;gap:8px;flex-shrink:0;}
+.ctrl-btn{background:rgba(255,255,255,.1);border:none;color:#fff;border-radius:6px;cursor:pointer;padding:3px 9px;font-size:11px;font-weight:600;}
+.ctrl-btn:hover{background:rgba(255,255,255,.2);}
+.time-display{color:rgba(255,255,255,.6);font-size:11px;font-family:monospace;white-space:nowrap;}
+.speed-btn{background:rgba(255,255,255,.1);border:none;color:rgba(255,255,255,.7);border-radius:6px;cursor:pointer;padding:2px 7px;font-size:10px;}
+.speed-btn:hover{background:rgba(255,255,255,.2);}
+.speed-btn.active{background:var(--accent);color:#fff;}
+
+/* ── Right info col ── */
+.crop-info-col{
+  /* 左栏从 300 收到 220 省出来的 80px 全给这里：标记行要同时放下名字、分数、起止时间和删除，
+     320 是实测下限、一直在贴边。竖屏素材下播放器被高度卡住，这点宽度中间用不上 */
+  width:400px;flex-shrink:0;
+  display:flex;flex-direction:column;gap:10px;
+  height:100%;
+  /* 这里不能写 overflow:hidden。这一列的盒子和里面两张卡严丝合缝，一裁就把卡片的投影
+     沿着列的矩形边切断：落在矩形内、圆角外的那一小块留下来，外面的全没了，四个角上
+     各留一块直边的方形灰块——看起来就是「圆角外面还有个尖角」。
+     两张卡自己都有 overflow:hidden 和 min-height:0，列上再裁一层没有作用。 */
+}
+.crop-info-col .info-card{
+  /* 工作面不写 backdrop-filter：底色 88% 不透明，滤镜本来就看不见，白开一层合成层 */
+  background:rgba(255,255,255,var(--glass-work));
+  display:flex;flex-direction:column;overflow:hidden;padding:14px;
+}
+.crop-info-col .info-card > *:not(.prism){position:relative;z-index:1;}
+.crop-info-col .info-card:first-child{flex:0 0 auto;}
+.crop-info-col .info-card:last-child{flex:1;min-height:0;}
+.info-card-title{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:10px;}
+.info-row{font-size:12px;color:var(--text);line-height:1.9;}
+.info-row span{color:var(--text3);}
+.part-list-scroll{overflow-y:auto;flex:1;min-height:0;}
+
+/* ── Timeline (full-width, below ep-workspace) ── */
+/* 底部留 14px 不是 10px：导轨底下就是窗口边，留白不够时落影被挤掉，
+   同一套阴影它看起来就比四面都有余量的侧栏弱一截 */
+.crop-timeline-outer{padding:0 16px 14px;flex-shrink:0;}
+.crop-timeline-wrap{
+  background:rgba(255,255,255,var(--glass-work));
+  overflow:hidden;
+}
+
+/* ── Marks card in right col ── */
+/* 内边距挪给了里面的列头和列表：列头要通栏才能让标记行从它整条底下滚过去 */
+.marks-info-card{
+  /* 工作面不写 backdrop-filter：底色 88% 不透明，滤镜本来就看不见，白开一层合成层 */
+  background:rgba(255,255,255,var(--glass-work));
+  display:flex;flex-direction:column;overflow:hidden;padding:0;
+  flex:1;min-height:0;
+}
+.marks-info-card > *:not(.prism){position:relative;z-index:1;}
+.marks-hint{font-size:10px;color:var(--text3);line-height:1.5;padding:5px 0 0;}
+.marks-info-card .marks-body{padding:4px 10px 10px;}
+.timeline-toolbar{
+  padding:7px 12px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:6px;background:var(--bg3);
+}
+/* 提示位只讲按钮本身讲不出来的那件事：E/R 是开合式，按一次开始再按一次结束。
+   拖色块、方向键微调这些是剪辑软件的通用操作，用户在别处已经会了，不占这里的位置。 */
+.tl-hint{font-size:10.5px;color:var(--text3);margin-left:6px;}
+/* 打点开合按钮：开段中实心＋脉动点＋文案换"结束"，另一颗禁用 */
+/* 静止是凹的，开段中浮起带光晕。宽度写死：开段时多一个脉动点、文案又从
+   「高光段开始」变成「结束」，不定宽的话按钮会跳一下 */
+.mark-btn{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:126px;
+  box-shadow:inset 0 2px 4px rgba(16,24,40,.12),inset 0 -1px 0 rgba(255,255,255,.7);
+  transition:background var(--t-color),border-color var(--t-color),color var(--t-color),
+             transform var(--t-move),box-shadow var(--t-move);}
+.mark-btn:not(.on):active{transform:translateY(1px);
+  box-shadow:inset 0 3px 6px rgba(16,24,40,.18),inset 0 -1px 0 rgba(255,255,255,.5);}
+.mark-btn .kbd-tag{background:var(--bg2);border:1px solid var(--border);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:10px;color:var(--text2);line-height:15px;}
+.mark-btn .rec{width:7px;height:7px;border-radius:50%;background:#fff;animation:recPulse 1s infinite;display:none;}
+.mark-btn.on{background:var(--accent)!important;color:#fff!important;border-color:var(--accent2)!important;
+  box-shadow:0 0 0 3px rgba(249,115,22,.22),0 6px 14px -4px rgba(234,88,12,.5)!important;
+  transform:translateY(-1px);}
+.mark-btn.on.hk{background:var(--hook-color)!important;border-color:#1d4ed8!important;
+  box-shadow:0 0 0 3px rgba(37,99,235,.22),0 6px 14px -4px rgba(29,78,216,.5)!important;}
+.mark-btn.on .rec{display:inline-block;}
+.mark-btn.on .kbd-tag{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.35);color:#fff;}
+.mark-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+@keyframes recPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.35;transform:scale(.75);}}
+
+/* ── vis-timeline 换肤（双泳道） ── */
+/* 右边不留内边距。左边这 12px 挨着「高光/钩子」标签列，两块白连成一条标签栏，看得出是干什么的；
+   右边同样宽的一条白后面什么都没有，就成了一根没来由的竖条。底部留 5px，免得泳道被卡片圆角啃掉一角。 */
+#vis-tl{background:var(--bg2);padding:0 0 5px 12px;}
+.vis-timeline{border:none;font-family:inherit;}
+.vis-panel.vis-bottom{border:none;}
+.vis-time-axis .vis-text{color:var(--text3);font-size:10px;font-variant-numeric:tabular-nums;padding:12px 4px 10px;}
+.vis-time-axis .vis-grid.vis-minor{border-color:var(--bg3);}
+.vis-labelset .vis-label{border:none;font-size:10px;color:var(--text3);}
+/* 泳道高度是被这个标签撑起来的，不是色块——要压扁泳道得改这里 */
+.vis-labelset .vis-label .vis-inner{padding:3px 6px;}
+.vis-group{background:rgba(0,0,0,.05);border-bottom:2px solid transparent;background-clip:padding-box;border-radius:4px;}
+.vis-panel.vis-center{cursor:pointer;border-color:var(--border);}
+.vis-panel.vis-left{border-color:var(--border);}
+.vis-item{border-radius:4px;border-width:1px;font-size:0;height:14px;cursor:grab;box-shadow:0 0 0 1.5px var(--bg2);}
+.vis-item:active{cursor:grabbing;}
+.vis-item.hl{background:rgba(249,115,22,.75);border-color:rgba(234,88,12,.9);}
+/* 钩子在标记组里是蓝的（--hook-color），导轨上原来是灰的，同一个东西两个颜色 */
+.vis-item.hk{background:rgba(37,99,235,.62);border-color:rgba(37,99,235,.85);}
+.vis-item.vis-selected{box-shadow:0 0 0 1.5px var(--bg2),0 0 0 4px rgba(249,115,22,.5);background-clip:padding-box;}
+.vis-item .vis-drag-left,.vis-item .vis-drag-right{width:12px;}
+/* 导轨的整体起止：时间窗两端各留了 1% 余量（updateTimelineRuler 里的 padMs），
+   0:00 和结尾都不落在面板边上，不画线就看不出这条导轨从哪开始、到哪结束。
+   颜色取主色橙的同一个色相（24°），把饱和度和明度压下来：同一家族，认得出是一路的，
+   但游标那种高饱和的亮橙只有一个，不会跟这两根固定的边界线混。 */
+.vis-custom-time.tstart,.vis-custom-time.tend{
+  background-color:#8c5a34;width:2px;pointer-events:none;z-index:1;}
+.vis-custom-time.tstart .vis-custom-time-marker{display:none;}
+/* 结尾的时间戳。刻度尺最后一格会被 _hideClippedTicks 整个藏掉（贴边会被裁成半个数字），
+   所以导轨右端本来是一片空白，读不出这条 Part 到底多长。标签永远朝左翻，它就在最右边。 */
+.vis-custom-time.tend .vis-custom-time-marker{
+  background:#8c5a34;color:#fff;font-size:9.5px;padding:1px 6px;
+  border-radius:4px 0 0 4px;font-variant-numeric:tabular-nums;white-space:nowrap;
+  top:0;pointer-events:none;transform:translateX(-100%);}
+.vis-item.vis-background.ovl{background:repeating-linear-gradient(45deg,rgba(220,38,38,.4) 0 4px,rgba(220,38,38,.12) 4px 8px);border:none;}
+/* 游标压在边界线之上：它比两条边界线晚加进 DOM，不写层级的话游标走到 0:00 会被起点的灰线盖掉 */
+.vis-custom-time.ph{background-color:var(--accent);width:2px;cursor:ew-resize;z-index:2;}
+/* 抓取区放宽到 12px：线只有 2px，鼠标压不住 */
+.vis-custom-time.ph::before{content:"";position:absolute;top:0;bottom:0;left:-5px;right:-5px;}
+/* 时间标签是读数不是控件，不吃点击。它浮在刻度尺上、正好盖在游标位置，
+   而要挪游标时本能就是往游标上点——被它吃掉就成了"点上面的时间没反应" */
+.vis-custom-time.ph .vis-custom-time-marker{background:var(--accent);color:#fff;font-size:9.5px;padding:1px 6px;border-radius:0 4px 4px 0;font-variant-numeric:tabular-nums;white-space:nowrap;top:0;pointer-events:none;}
+.vis-custom-time.ph .vis-custom-time-marker.flip{transform:translateX(-100%);border-radius:4px 0 0 4px;}
+.vis-time-axis.vis-foreground{cursor:pointer;}
+.vis-panel.vis-top{cursor:pointer;background:var(--bg3);}
+.vis-panel.vis-top:hover{background:var(--bg4);}
+.vis-panel.vis-top:hover .vis-text{color:var(--accent2);}
+.vis-delete{background:none;}
+.vis-delete:after{color:var(--red);}
+/* 删除按钮是 right:-24px，挂在色块外面右侧，而中间面板 overflow:hidden——
+   段落贴到时间窗右边缘时它整个被裁掉，点不到也看不见。裁到就翻到色块左侧去。 */
+.vis-delete.flip{right:auto;left:-24px;}
+/* E/R 开合中的段：蚂蚁线（流动虚线框）＝进行中未收尾 */
+.vis-item.vis-background.openseg{
+  --ant:rgba(234,88,12,.95);
+  background-image:
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    linear-gradient(rgba(249,115,22,.12),rgba(249,115,22,.12));
+  background-size:100% 2px,100% 2px,2px 100%,2px 100%,100% 100%;
+  background-position:0 0,0 100%,0 0,100% 0,0 0;background-repeat:no-repeat;
+  animation:ants .45s linear infinite;
+}
+.vis-item.vis-background.openseg.hk{--ant:rgba(74,78,85,.9);
+  background-image:
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(90deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    repeating-linear-gradient(0deg,var(--ant) 0 5px,transparent 5px 10px),
+    linear-gradient(rgba(74,78,85,.12),rgba(74,78,85,.12));}
+@keyframes ants{to{background-position:10px 0,-10px 100%,0 -10px,100% 10px,0 0;}}
+.vis-item.vis-background.openseg .vis-item-content{font-size:9px;color:var(--accent2);padding:2px 5px;font-weight:600;white-space:nowrap;}
+.vis-item.vis-background.openseg.hk .vis-item-content{color:#4a4e55;}
+
+/* ── Badges ── */
+/* nowrap 的 flex 行里，默认 flex-shrink:1 会把徽章压窄，「全部就绪」四个字就在徽章
+   内部折成两行、把整行撑高——所以同一个列表里有的行高有的行矮。徽章不参与收缩，
+   收缩交给右边那个带省略号的文件夹名。 */
+.badge{padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;display:inline-flex;
+  align-items:center;white-space:nowrap;flex-shrink:0;}
+.badge-green{background:rgba(5,150,105,.12);color:var(--green);}
+.badge-gray{background:rgba(86,91,99,.12);color:var(--text2);}
+.badge-blue{background:rgba(37,99,235,.12);color:var(--blue);}
+.badge-red{background:rgba(220,38,38,.12);color:var(--red);}
+.badge-orange{background:rgba(249,115,22,.12);color:var(--accent);}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.badge-blue.pulse{animation:pulse 1.5s infinite;}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+/* ── Input ── */
+.input{background:var(--bg3);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:6px 10px;font-size:13px;width:100%;outline:none;transition:border-color .15s;}
+.input:focus{border-color:var(--accent);}
+
+/* ── Toast (bottom-right, DramaC style) ── */
+/* 通知放顶栏下方居中：底部是时间轴，右下角的通知会挡住它 */
+#toast-container{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;align-items:center;gap:6px;pointer-events:none;}
+.toast{background:#1f2328;color:#fff;border-radius:999px;padding:9px 18px 9px 12px;font-size:12.5px;font-weight:500;max-width:min(46vw,480px);animation:dropIn .25s ease;display:flex;align-items:center;gap:9px;box-shadow:0 10px 30px rgba(15,18,22,.28),0 2px 6px rgba(15,18,22,.16);}
+.toast-dot{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;flex-shrink:0;}
+.toast-dot svg{width:10px;height:10px;stroke:#1f2328;stroke-width:3.4;fill:none;stroke-linecap:round;stroke-linejoin:round;}
+.toast-success .toast-dot{background:#34d399;}
+.toast-error .toast-dot{background:#fb7185;}
+.toast-info .toast-dot{background:#60a5fa;}
+@keyframes dropIn{from{transform:translateY(-14px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* Scrollbar */
+::-webkit-scrollbar{width:5px;height:5px;}
+::-webkit-scrollbar-track{background:var(--bg2);}
+::-webkit-scrollbar-thumb{background:#c4c8cd;border-radius:3px;}
+::-webkit-scrollbar-thumb:hover{background:var(--text3);}
+
+/* ── Part 列表：一行一个 Part，分割线只隔开相邻两条，不切在一条内部 ── */
+/* 就绪的 Part 一行就够：编号 + 时长。只有卡住的才长出第二行说明卡在哪、能干什么 */
+.part-item{
+  position:relative;display:flex;flex-direction:column;justify-content:center;gap:3px;
+  min-height:34px;padding:6px 10px 6px 14px;cursor:pointer;
+  font-size:12px;color:var(--text);overflow:hidden;
+  transition:background var(--t-color),color var(--t-color);
+}
+.part-line{display:flex;align-items:center;gap:7px;}
+.part-line2{display:flex;align-items:center;gap:6px;font-size:10.5px;}
+.part-item + .part-item{border-top:1px solid var(--border);}
+.part-item::before{content:'';position:absolute;left:0;top:6px;bottom:6px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.part-item.active{background:rgba(249,115,22,.09);color:var(--accent);font-weight:600;}
+.part-item.active::before{transform:scaleX(1);}
+.part-item:not(.active):hover{background:var(--bg3);}
+.part-item-name{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 小圆点只标"这条还没准备好"，不写字：灰＝AI 未分析，红＝分析失败 */
+.part-item-tail{margin-left:auto;flex-shrink:0;display:flex;align-items:center;gap:6px;}
+.part-item-dur{font-size:11px;color:var(--text3);white-space:nowrap;font-variant-numeric:tabular-nums;}
+/* 标记数：分析过的行有数字，没分析的写"无标记"。这是就绪行上唯一能区分两者的东西 */
+.part-marks{font-size:10px;color:var(--accent2);background:rgba(249,115,22,.1);
+  padding:1px 5px;border-radius:4px;white-space:nowrap;flex-shrink:0;}
+.part-item.active .part-item-dur{color:var(--accent2);}
+.part-item-dur.warn{color:var(--accent2);}
+/* 卡住的 Part 按钮常驻——重试就是这一行存在的理由；就绪的才藏起来等 hover。
+   按钮不再顶掉时长：原来 hover 一下时长就消失，想对着时长找 Part 的人没法用 */
+.part-act{border:1px solid var(--border);background:var(--bg2);border-radius:6px;font-size:10px;
+  color:var(--text2);padding:1px 7px;cursor:pointer;white-space:nowrap;
+  transition:border-color var(--t-color),color var(--t-color),background var(--t-color);}
+.part-act:hover{border-color:var(--accent);color:var(--accent2);}
+.part-act.ghost{visibility:hidden;}
+.part-item:hover .part-act.ghost{visibility:visible;}
+/* 时长要跟上下行对齐。就绪行的按钮在第一行（藏起来也占位），卡住的行按钮挪到了第二行，
+   第一行少了那一块，时长就会往右滑一截，两种行的时长对不上。这里补一块同宽的空位。
+   min-width 写死是因为四种按钮文案都是两个字，宽度本来就一样，占位块也得一样。 */
+.part-act{min-width:36px;text-align:center;}
+.part-act-slot{width:36px;flex-shrink:0;}
+/* 合成中 / 分析中：整行铺一层交叉斜纹并持续向前滚，再叠一道从左扫到右的柔光。
+   两个状态共用一套遮罩，因为它们对用户是同一件事：这一条正在后台跑，点了也没用
+   （合成中还没有视频可放，分析中标记随时会被覆盖），两行都没有操作按钮。
+   具体在跑哪一步由第二行的文字区分，不靠底纹区分。
+   一行小字加一个转圈，隔着半屏是看不见的；整行动起来才能远远看出哪几条在跑。
+   斜纹周期 14×√2≈19.8px——沿 x 轴滚满一个周期才不会看出接缝。
+   两组反向滚，交叉点会沿着行跑。
+   .part-item 的 ::before 已经被左侧选中条占了，扫光只能用真实子元素 .part-sheen；
+   z-index 从下到上是：斜纹(::after,auto) < 扫光(1) < 两行内容(2)，字压在纹上仍读得清。 */
+.part-item.analyzing:not(.active){background:rgba(249,115,22,.05);}
+.part-item.analyzing::after{content:'';position:absolute;inset:0;pointer-events:none;
+  background-image:
+    repeating-linear-gradient(45deg, rgba(249,115,22,.11) 0 5px, transparent 5px 14px),
+    repeating-linear-gradient(-45deg,rgba(249,115,22,.11) 0 5px, transparent 5px 14px);
+  background-size:19.8px 19.8px,19.8px 19.8px;
+  animation:partStripe 1.4s linear infinite;}
+@keyframes partStripe{to{background-position:19.8px 0,-19.8px 0;}}
+.part-sheen{position:absolute;left:0;top:0;bottom:0;width:100%;pointer-events:none;z-index:1;
+  background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.85) 50%,transparent 70%);
+  animation:partSheen 1.9s cubic-bezier(.4,0,.2,1) infinite;}
+@keyframes partSheen{0%{transform:translateX(-100%);}60%,100%{transform:translateX(100%);}}
+.part-item.analyzing .part-line,.part-item.analyzing .part-line2{position:relative;z-index:2;}
+/* 信息卡里的图标按钮：原来「打开文件夹」是个 10px 字、内边距 1px 的迷你文字按钮，
+   挤在等宽路径后面像块补丁，跟全站按钮也不是一套。这里只有"点一下打开所在文件夹"
+   一件事，用图标加悬停提示，不跟路径抢字重。 */
+.icon-mini{width:22px;height:22px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;
+  border:1px solid transparent;border-radius:6px;background:transparent;color:var(--text3);cursor:pointer;
+  transition:background var(--t-color),color var(--t-color),border-color var(--t-color);}
+.icon-mini:hover{background:var(--bg3);color:var(--text);border-color:var(--border);}
+.part-state{display:inline-flex;align-items:center;gap:5px;color:var(--text3);}
+.part-state.bad{color:var(--red);}
+.part-state.busy{color:var(--blue);}
+.part-dot-sm{width:5px;height:5px;border-radius:50%;background:currentColor;flex-shrink:0;}
+.part-spin{width:9px;height:9px;border:1.5px solid currentColor;border-top-color:transparent;
+  border-radius:50%;flex-shrink:0;animation:pspin .9s linear infinite;}
+@keyframes pspin{to{transform:rotate(360deg)}}
+
+/* ── 左栏底部：AI 分析（作用于全部 Part，流程第一步） ── */
+/* AI 分析是这一页的主入口：先分析，不满意再手动打点。
+   "有多少活没干"和"点这里干活"合成一块卡片——拆成两行、两种视觉重量的话，
+   读的时候要自己拼起来。全部就绪时整块收成一行文字，不占位置。 */
+.sidebar-footer{flex-shrink:0;padding:10px;border-top:1px solid var(--border);}
+.ai-act{border:1px solid var(--border);border-radius:10px;padding:11px;background:var(--bg3);}
+.ai-act-hd{display:flex;align-items:center;gap:7px;margin-bottom:3px;}
+.ai-act-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;
+  animation:aiPulse 1.6s ease infinite;}
+@keyframes aiPulse{0%,100%{opacity:1}50%{opacity:.35}}
+.ai-act-ttl{font-size:12px;font-weight:700;color:var(--text);}
+.ai-act-sub{font-size:10.5px;color:var(--text3);line-height:1.5;margin-bottom:9px;}
+.ai-act-sub b{color:var(--text2);font-weight:600;}
+.ai-act-sub .bad{color:var(--red);font-weight:600;}
+.ai-act-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;height:34px;
+  border:none;border-radius:6px;background:var(--btn);color:#fff;font-size:12.5px;font-weight:700;
+  cursor:pointer;box-shadow:0 4px 12px -3px rgba(31,35,40,.5);transition:background var(--t-color);}
+.ai-act-btn:hover:not(:disabled){background:var(--btn-h);}
+.ai-act-btn:disabled{opacity:.55;cursor:not-allowed;box-shadow:none;}
+.ai-act-btn svg{width:15px;height:15px;flex-shrink:0;}
+/* 全部就绪：收成一行，配一个不抢眼的重析入口 */
+.ai-done{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  font-size:11px;color:var(--text2);}
+.ai-done-t{white-space:nowrap;}
+.ai-done-t b{color:var(--text);font-weight:700;}
+.ai-done b{color:var(--text2);font-weight:600;}
+.side-relink{margin-left:auto;background:none;border:none;padding:0;cursor:pointer;flex-shrink:0;
+  font-size:10.5px;color:var(--text3);text-decoration:underline;text-underline-offset:2px;}
+.side-relink:hover{color:var(--accent2);}
+.sidebar-footer .btn{width:100%;justify-content:center;}
+/* ── AI Confirm Modal ── */
+.ai-modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:none;align-items:center;justify-content:center;}
+.ai-modal-backdrop.visible{display:flex;}
+/* 弹窗＝实色卡片 + 一圈玻璃边。中间实心，正文对比度不受影响；只有外圈那一环折射被遮罩压暗的页面。
+   通体做玻璃行不通：白玻璃叠在 45% 黑遮罩上混成一片灰浆，字跟着糊。
+   玻璃做在外层而不是伪元素上——导出设置和导出历史自带 overflow-y:auto，伪元素会被裁掉。 */
+.ai-modal-glass{padding:4px;border-radius:14px;display:flex;max-height:calc(100vh - 24px);
+  background:rgba(255,255,255,.2);
+  backdrop-filter:blur(4px) saturate(150%) brightness(112%);
+  box-shadow:inset 0 1.2px 0 rgba(255,255,255,.85),
+             inset 0 -1px 0 rgba(255,255,255,.25),
+             0 20px 56px rgba(10,13,18,.34),0 4px 12px rgba(10,13,18,.18);
+  /* 玻璃边不吃点击：点这一圈仍然穿透到遮罩，保持"点空白处关闭"的原行为 */
+  pointer-events:none;}
+.ai-modal-glass > *{pointer-events:auto;}
+.ai-modal-box{background:var(--bg2);border-radius:10px;padding:28px 32px;width:380px;}
+.ai-modal-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:10px;}
+.ai-modal-msg{font-size:13px;color:var(--text2);margin-bottom:22px;line-height:1.6;}
+/* 代价单独一行，用分隔线跟上面隔开：这是弹窗里唯一需要犹豫的信息，
+   混在正文里会跟"要做什么"一起被一眼扫过去 */
+.ai-modal-note{margin-top:11px;padding-top:10px;border-top:1px solid var(--border);
+  font-size:12.5px;color:var(--text2);line-height:1.7;}
+.ai-modal-note b{color:var(--text);}
+.ai-modal-footer{display:flex;gap:10px;justify-content:flex-end;}
+/* ── AI Progress Modal (2.0.0.20) ── */
+#ai-progress-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);z-index:10000;display:none;align-items:center;justify-content:center;}
+#ai-progress-modal.visible{display:flex;}
+.ai-progress-box{background:var(--bg2);border-radius:10px;padding:48px 56px;width:580px;max-width:92vw;box-shadow:0 8px 24px rgba(0,0,0,.12);text-align:center;}
+.ai-progress-icon{font-size:44px;margin-bottom:20px;}
+.ai-progress-title{font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px;}
+.ai-progress-subtitle{font-size:13px;color:var(--text3);margin-bottom:32px;line-height:1.6;}
+.ai-progress-counter{font-size:16px;font-weight:600;color:var(--text);margin-bottom:16px;}
+.ai-progress-track{background:var(--bg4);border-radius:999px;height:14px;width:100%;overflow:hidden;margin-bottom:14px;}
+.ai-progress-fill{height:100%;background:var(--accent);border-radius:999px;width:0%;transition:width 1.2s ease;}
+.ai-progress-status{font-size:12px;color:var(--text3);white-space:pre-line;line-height:1.75;}
+.ai-progress-status.slide{animation:aiStageSlide .35s ease;}
+@keyframes aiStageSlide{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.ai-progress-box{position:relative;}
+.ai-progress-close{position:absolute;top:14px;right:16px;background:none;border:none;cursor:pointer;font-size:18px;color:var(--text3);padding:4px 8px;border-radius:4px;line-height:1;}
+.ai-progress-close:hover{background:var(--bg3);}
+.ai-progress-done-btn{margin-top:28px;background:#22c55e;color:#fff;border:none;border-radius:6px;padding:9px 40px;font-size:14px;font-weight:600;cursor:pointer;}
+.ai-progress-done-btn:hover{filter:brightness(1.1);}
+.ai-progress-retry-btn{margin-top:28px;margin-right:10px;background:var(--bg2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:9px 28px;font-size:14px;font-weight:600;cursor:pointer;}
+.ai-progress-retry-btn:hover{background:var(--bg3);}
+.ai-progress-fill.done{background:#22c55e;}
+/* ── AI Choice Modal (2.0.0.20) ── */
+#ai-choice-modal{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:none;align-items:center;justify-content:center;}
+#ai-choice-modal.visible{display:flex;}
+/* ── Export Progress Modal (2.0.0.22) ── */
+#export-progress-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);backdrop-filter:blur(6px);z-index:10000;display:none;align-items:center;justify-content:center;}
+#export-progress-modal.visible{display:flex;}
+
+body{margin:0;background:var(--bg);}
+.hide{display:none!important;}
+.msel{height:28px;border:1px solid var(--border);border-radius:7px;background:var(--bg2);
+  font-size:12.5px;font-weight:600;color:var(--text);padding:0 8px;font-family:inherit;margin-left:6px;}
+.wrap{display:grid;grid-template-columns:minmax(0,1fr) 348px;grid-template-rows:minmax(0,1fr);
+  gap:12px;padding:12px 16px 16px;height:calc(100vh - 52px);box-sizing:border-box;}
+.left{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;}
+.right{min-height:0;}
+.blk,.right{background:var(--bg2);border:1px solid var(--border);border-radius:12px;
+  display:flex;flex-direction:column;overflow:hidden;}
+.blk.grow{flex:1;min-height:0;}
+.bh{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid var(--border);flex:none;}
+.bh .t{font-size:13px;font-weight:700;}
+.bh .s{font-size:11.5px;color:var(--text3);}
+
+/* 段序 */
+.lane{display:flex;gap:8px;padding:12px 14px;overflow-x:auto;flex:none;}
+.sc{position:relative;width:82px;flex:none;border:1.5px solid var(--border);border-radius:9px;
+  overflow:hidden;background:var(--bg2);cursor:pointer;line-height:0;}
+.sc:hover{border-color:#cfd4db;}
+.sc.on{border-color:var(--accent);box-shadow:0 0 0 2px rgba(249,115,22,.25);}
+.sc img,.sc video{width:100%;height:96px;object-fit:cover;display:block;background:#111;pointer-events:none;}
+.sc .cat{position:absolute;left:0;right:0;top:78px;color:#fff;font-size:10px;font-weight:600;
+  line-height:1.8;text-align:center;}
+.sc .meta{display:block;font-size:10px;line-height:1.9;color:var(--text3);text-align:center;
+  font-variant-numeric:tabular-nums;}
+.sc .idx{position:absolute;right:3px;top:3px;background:rgba(0,0,0,.6);color:#fff;font-size:9px;
+  line-height:1.6;border-radius:3px;padding:0 4px;z-index:2;}
+.sc .pk{position:absolute;left:4px;top:4px;width:16px;height:16px;border-radius:5px;
+  background:rgba(255,255,255,.92);color:#111;font-size:10px;font-weight:700;line-height:16px;
+  text-align:center;z-index:2;}
+.sc.picked .pk{background:var(--accent);color:#fff;}
+.sc .lv{position:absolute;right:3px;top:20px;background:rgba(255,255,255,.92);color:#111;
+  font-size:9px;font-weight:700;border-radius:3px;padding:0 3px;line-height:1.5;z-index:2;}
+
+/* 播放器＋内容字段＋结构字段三栏 */
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:1;min-height:0;}
+.three > *{min-height:0;}
+.vcol{padding:12px 14px;display:flex;flex-direction:column;
+  border-right:1px solid var(--border);min-width:0;min-height:0;overflow:hidden;}
+.vbox{position:relative;background:#000;border-radius:9px;overflow:hidden;
+  flex:1;min-height:0;display:flex;flex-direction:column;}
+.vbox video{width:100%;flex:1;min-height:0;object-fit:contain;background:#000;display:block;}
+.vbox::after{content:none;}
+.vbar{flex:none;padding:9px 10px 10px;background:#0d0f12;border-top:1px solid rgba(255,255,255,.08);}
+.vprog{position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,.32);
+  cursor:pointer;margin:0 0 9px;}
+.vprog::before{content:'';position:absolute;left:0;right:0;top:-9px;bottom:-9px;}
+.vprog i{display:block;height:100%;width:0;border-radius:3px;background:var(--accent);}
+.vprog b{position:absolute;top:50%;left:0;width:13px;height:13px;margin:-6.5px 0 0 -6.5px;
+  border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.45);}
+.vctrl{display:flex;gap:6px;align-items:center;}
+.pbtn{flex:none;white-space:nowrap;border:0;border-radius:7px;background:rgba(255,255,255,.92);
+  color:#15171b;font-size:12px;font-weight:600;padding:5px 11px;cursor:pointer;
+  font-family:inherit;line-height:1.35;}
+.pbtn:hover{background:#fff;}
+.vtime{position:absolute;right:8px;top:8px;z-index:2;background:rgba(0,0,0,.58);
+  color:#fff;border-radius:5px;padding:2px 7px;font-size:11px;font-variant-numeric:tabular-nums;}
+.nt{font-size:12px;color:var(--text2);line-height:1.85;}
+.fset{padding:12px 14px;min-width:0;overflow-y:auto;}
+.fset + .fset{border-left:1px solid var(--border);}
+.fh{font-size:11px;font-weight:700;color:var(--text3);letter-spacing:.05em;margin-bottom:8px;}
+.fr2{display:flex;gap:10px;font-size:12.5px;line-height:1.95;}
+.fr2 .k{color:var(--text3);width:86px;flex:none;}
+.fr2 .v{flex:1;min-width:0;}
+.tagc{color:#fff;border-radius:4px;padding:0 7px;font-size:11px;font-weight:600;}
+.tagl{background:var(--bg3);color:var(--text2);border-radius:4px;padding:0 7px;font-size:11px;}
+.tagl.l3{background:#fff3e4;color:#b45309;}
+.tagl.l4{background:#fdecec;color:#b91c1c;}
+.tm{font-family:monospace;color:var(--accent2);cursor:pointer;
+  border-bottom:1px dashed var(--accent2);}
+.tm:hover{border-bottom-style:solid;}
+
+.beh2{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:3px 0;border-top:1px dashed var(--border);}
+.beh2:first-child{border-top:0;}
+.beh2 .lv{margin-left:auto;}
+
+/* 右栏模板草稿 */
+.right .dbody{flex:1;min-height:0;overflow-y:auto;padding:12px 14px;}
+.dnote{padding:9px 14px;font-size:11px;color:var(--text3);line-height:1.75;
+  border-bottom:1px solid var(--border);background:var(--bg3);flex:none;}
+.dfooter{border-top:1px solid var(--border);padding:10px 14px;display:flex;gap:8px;align-items:center;flex:none;}
+.dfooter .inp2{flex:1;}
+.gcell{border:1px solid var(--border);border-radius:9px;padding:9px 10px;margin-bottom:8px;}
+.gcell .gh{display:flex;align-items:center;gap:7px;margin-bottom:7px;}
+.gcell .no{width:18px;height:18px;border-radius:5px;background:var(--text);color:var(--bg2);
+  display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex:none;}
+.gcell img,.gcell video{width:22px;height:39px;object-fit:cover;border-radius:4px;background:#111;pointer-events:none;}
+.gcell .gn{font-size:12px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gcell .gd{font-size:10.5px;color:var(--text3);font-variant-numeric:tabular-nums;}
+.gc{display:flex;flex-wrap:wrap;gap:5px;}
+.gc button{border:1px solid var(--border);border-radius:6px;padding:2px 8px;font-size:11px;
+  background:var(--bg3);color:var(--text3);cursor:pointer;}
+.gc button.on{background:#fff3e4;border-color:#f7c9a5;color:#9a3412;font-weight:600;}
+.gc button .x{margin-left:4px;opacity:.6;}
+.gsub{font-size:11px;color:var(--text3);margin-top:7px;line-height:1.7;}
+.empty{font-size:12px;color:var(--text3);padding:18px 4px;line-height:1.8;}
+.inp2{height:32px;border:1px solid var(--border);border-radius:7px;background:var(--bg2);
+  font-size:12.5px;color:var(--text);padding:0 9px;font-family:inherit;}
+
+.drop{border:1.5px dashed var(--border);border-radius:10px;padding:22px;text-align:center;
+  font-size:12.5px;color:var(--text3);background:var(--bg3);margin-bottom:12px;cursor:pointer;}
+.uprow{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);font-size:12px;}
+.uprow:first-child{border-top:0;}
+.upn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.toast2{position:fixed;left:50%;bottom:34px;transform:translateX(-50%) translateY(20px);
+  background:var(--text);color:var(--bg2);padding:9px 18px;border-radius:9px;font-size:12.5px;
+  opacity:0;pointer-events:none;transition:all .2s;z-index:9999;}
+.toast2.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+
+/* 模板草稿的操作栏与格卡片 */
+.dtool{flex:none;padding:9px 14px;border-bottom:1px solid var(--border);}
+.dtool .drow{display:flex;align-items:center;gap:6px;}
+.dtool .drow + .drow{margin-top:8px;}
+.dtool .dl{font-size:12.5px;font-weight:600;color:var(--text);}
+.dtool .drow.grp{background:var(--bg3);border:1px solid var(--border);border-radius:9px;
+  padding:6px 8px 6px 10px;}
+.dtool .drow.grp .seg3{background:var(--bg2);}
+.dtool .seg3{margin-left:auto;}
+.seg3{display:flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;}
+.seg3 button{flex:none;white-space:nowrap;border:0;background:var(--bg2);color:var(--text2);
+  font-size:11px;padding:4px 10px;cursor:pointer;font-family:inherit;}
+.seg3 button + button{border-left:1px solid var(--border);}
+.seg3 button.on{background:var(--text);color:var(--bg2);font-weight:600;}
+.gcell .gh{cursor:pointer;margin-bottom:0;}
+.gcell .gh:hover .gx{color:var(--text2);}
+.gx{flex:none;font-size:10.5px;color:var(--text3);margin-left:6px;}
+.gc.hide{display:none;}
+.gc{margin-top:8px;}
+.gnote{font-size:11px;color:var(--text3);line-height:1.7;padding:0 14px 10px;}
+
+/* 右栏两个页签：模板草稿 / 模板库 */
+.tabs2{display:flex;gap:4px;}
+.tb{border:0;background:none;font-family:inherit;font-size:13px;font-weight:700;color:var(--text3);
+  padding:2px 0;margin-right:10px;cursor:pointer;border-bottom:2px solid transparent;}
+.tb.on{color:var(--text);border-bottom-color:var(--accent);}
+.tb i{font-style:normal;font-weight:600;font-size:10.5px;color:var(--text3);
+  background:var(--bg3);border-radius:9px;padding:1px 6px;margin-left:5px;}
+.pane{display:flex;flex-direction:column;flex:1;min-height:0;}
+.pane.hide{display:none!important;}
+.dfooter{display:block;}
+.dfooter .drow{display:flex;gap:8px;align-items:center;}
+.dwarn{margin-top:7px;font-size:11px;color:#b45309;line-height:1.6;}
+.dwarn.calm{color:var(--text3);}
+.inp2.bad{border-color:#e0a34a;background:#fffbf3;}
+
+/* 模板库列表 */
+.lrow{border:1px solid var(--border);border-radius:9px;padding:9px 10px;margin-bottom:8px;}
+.lh{display:flex;align-items:center;gap:7px;cursor:pointer;}
+.lh .ln{font-size:12.5px;font-weight:600;flex:1;min-width:0;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.lh .lg{font-size:10.5px;color:var(--text3);flex:none;}
+.ltag{font-size:10px;border-radius:4px;padding:1px 6px;background:var(--bg3);color:var(--text2);flex:none;}
+.ltag.mine{background:#fff3e4;color:#9a3412;}
+.lbody{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);}
+.lcell{font-size:11.5px;color:var(--text2);line-height:1.9;display:flex;gap:8px;}
+.lcell .n{color:var(--text3);flex:none;width:16px;}
+.lact{display:flex;gap:6px;margin-top:8px;}
+.lact button{border:1px solid var(--border);background:var(--bg2);border-radius:6px;
+  font-size:11px;padding:3px 9px;cursor:pointer;font-family:inherit;color:var(--text2);}
+.lact button:hover{background:var(--bg3);}
+
+/* 折叠箭头：草稿的格、模板库的行共用 */
+.chev{flex:none;width:13px;height:13px;color:var(--text3);transition:transform .15s;}
+.open > .chev, .lh.open .chev, .gh.open .chev{transform:rotate(180deg);}
+.lh .lact{margin-left:auto;display:flex;gap:2px;}
+.lh .ib{border:0;background:none;padding:3px;border-radius:6px;cursor:pointer;
+  color:var(--text3);line-height:0;}
+.lh .ib:hover{background:var(--bg3);color:var(--text);}
+.lh .ib.danger:hover{background:#fdecec;color:#b91c1c;}
+.lh .ib.warn{background:#fdecec;color:#b91c1c;font-size:10.5px;line-height:1.6;padding:2px 7px;}
+
+/* 模板库工具条：计数在左，两个轻按钮在右 */
+.dl2{font-size:12px;color:var(--text3);}
+.gb{margin-left:auto;border:1px solid var(--border);background:var(--bg2);color:var(--text2);
+  border-radius:7px;font-size:11.5px;padding:4px 10px;cursor:pointer;font-family:inherit;}
+.gb + .gb{margin-left:6px;}
+.gb:hover{background:var(--bg3);color:var(--text);}
+.lh .ib{padding:5px;}
+.lh .ib svg{width:15px;height:15px;}
+
+.lfrom{font-size:11px;color:var(--text3);margin-bottom:6px;}
+
+/* 卡片标题跟卡内小标题拉开层级 */
+.fh2{font-size:13px;font-weight:700;color:var(--text);padding-bottom:8px;margin-bottom:10px;
+  border-bottom:1px solid var(--border);}
+
+.ib.rst{border:0;background:none;color:var(--text3);padding:4px;margin-left:4px;
+  border-radius:6px;cursor:pointer;line-height:0;}
+.ib.rst:hover{background:var(--bg2);color:var(--text);}
+.ib.rst[disabled]{opacity:.3;cursor:default;}
+
+.lh > .chev{margin-right:2px;}
+
+/* 首次使用：内置示范提示条 */
+.fbar{display:flex;align-items:center;gap:10px;margin:10px 16px 0;padding:8px 12px;
+  background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;}
+.fdot{flex:none;font-size:11px;font-weight:700;color:#c2410c;background:#ffedd5;
+  border-radius:4px;padding:2px 7px;}
+.ftxt{font-size:12px;color:var(--text2);line-height:1.6;}
+.fbar .btn{margin-left:auto;flex:none;}
+body.firstrun .wrap{height:calc(100vh - 52px - var(--fbar-h, 58px));}
+.btn[disabled]{opacity:.45;cursor:not-allowed;}
+.btn.off{opacity:.45;cursor:not-allowed;}
+
+/* 上传队列 */
+.droph{display:block;margin-top:5px;font-size:11.5px;color:var(--text3);}
+.uprow .upix{flex:none;width:18px;height:18px;border-radius:5px;background:var(--bg3);
+  color:var(--text2);font-size:10.5px;font-weight:700;line-height:18px;text-align:center;}
+.uprow .updur{flex:none;color:var(--text3);font-variant-numeric:tabular-nums;}
+.uprow .upact{flex:none;display:flex;gap:2px;}
+.uprow .uib{border:none;background:transparent;color:var(--text3);cursor:pointer;
+  width:22px;height:22px;border-radius:5px;line-height:0;padding:0;}
+.uprow .uib:hover{background:var(--bg3);color:var(--text);}
+.uprow .uib:disabled{opacity:.3;cursor:not-allowed;}
+.uprow .uib.danger:hover{background:#fee2e2;color:var(--red);}
+
+/* ── 顶栏的当前素材按钮 + 素材面板 ── */
+.matbtn{display:inline-flex;align-items:center;gap:6px;height:28px;margin-left:6px;padding:0 9px;
+  border:1px solid var(--border);border-radius:7px;background:var(--bg2);cursor:pointer;
+  font-family:inherit;font-size:12.5px;font-weight:600;color:var(--text);}
+.matbtn:hover{background:var(--bg3);}
+.matbtn .chev{color:var(--text3);transition:transform .16s;}
+.matbtn.open .chev{transform:rotate(180deg);}
+
+.mpanel{position:absolute;left:186px;top:48px;z-index:180;width:430px;max-height:64vh;
+  display:flex;flex-direction:column;overflow:hidden;
+  background:var(--bg2);border-radius:12px;
+  box-shadow:0 0 0 1px rgba(24,28,36,.13),0 2px 6px rgba(24,28,36,.10),
+             0 18px 44px rgba(24,28,36,.22);}
+.mph{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--border);}
+.mpt{font-size:12.5px;font-weight:700;}
+.mpt i{display:inline-block;margin-left:5px;font-style:normal;font-size:11px;font-weight:600;
+  color:var(--text3);}
+.mph .btn{margin-left:auto;}
+.mplist{overflow-y:auto;padding:6px;}
+.mrow{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;cursor:pointer;}
+.mrow:hover{background:var(--bg3);}
+.mrow.on{background:#fff3e4;}
+.mrow img,.mrow video{width:44px;height:30px;border-radius:5px;object-fit:cover;background:#111;flex:none;pointer-events:none;}
+.mrow .mc{flex:1;min-width:0;}
+.mrow .mn{font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mrow .mm{font-size:11px;color:var(--text3);margin-top:2px;font-variant-numeric:tabular-nums;}
+.mrow .mx{flex:none;display:flex;align-items:center;gap:5px;}
+.st{font-size:10.5px;font-weight:600;border-radius:4px;padding:2px 7px;flex:none;}
+.st.ok{background:var(--bg3);color:var(--text2);}
+.st.run{background:#ffedd5;color:#c2410c;}
+.st.wait{background:var(--bg3);color:var(--text3);}
+.st.bad{background:#fee2e2;color:#b91c1c;}
+.mrow .mbar{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:5px;}
+.mrow .mbar i{display:block;height:100%;background:var(--accent);transition:width .2s;}
+.mrow .mib{border:none;background:transparent;color:var(--text3);cursor:pointer;
+  width:24px;height:24px;border-radius:6px;line-height:0;padding:0;}
+.mrow .mib:hover{background:var(--bg4);color:var(--text);}
+.mrow .mib.danger:hover{background:#fee2e2;color:var(--red);}
+.mrow .mib:disabled{opacity:.3;cursor:not-allowed;}
+
+/* ── 还没分析完的素材，段详情这块放占位 ── */
+.waitbox{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:9px;padding:24px;text-align:center;}
+.waitbox .wt{font-size:14px;font-weight:700;}
+.waitbox .ws{font-size:12px;color:var(--text3);line-height:1.7;max-width:380px;}
+.waitbox .wbar{width:220px;height:6px;border-radius:3px;background:var(--bg4);overflow:hidden;}
+.waitbox .wbar i{display:block;height:100%;background:var(--accent);transition:width .2s;}
+
+/* ── 后台任务浮窗：贴右缘，形态照产品那件 ── */
+.tf{position:fixed;right:0;top:38%;z-index:190;}
+.tf-tab{position:absolute;right:0;top:0;width:52px;height:52px;border-radius:50%;
+  transform:translateX(22%);cursor:pointer;display:flex;align-items:center;justify-content:center;
+  background:rgba(255,255,255,.92);border:1px solid rgba(255,255,255,.6);
+  box-shadow:0 6px 20px rgba(24,28,36,.18);transition:transform .3s,opacity .25s;opacity:0;pointer-events:none;}
+.tf.fold .tf-tab{opacity:1;pointer-events:auto;}
+.tf.fold .tf-tab:hover{transform:translateX(6%);}
+.tf-ring{width:32px;height:32px;border-radius:50%;position:relative;
+  display:flex;align-items:center;justify-content:center;
+  font-size:12.5px;font-weight:700;font-variant-numeric:tabular-nums;}
+.tf-ring::before{content:'';position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(var(--accent) 0deg 270deg,rgba(249,115,22,.16) 270deg 360deg);
+  -webkit-mask:radial-gradient(circle,transparent 12.5px,#000 12.5px);
+  mask:radial-gradient(circle,transparent 12.5px,#000 12.5px);
+  animation:tfspin 1.4s linear infinite;}
+@keyframes tfspin{to{transform:rotate(360deg);}}
+.tf-card{width:286px;margin-right:12px;background:var(--bg2);border-radius:12px;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(24,28,36,.13),0 18px 44px rgba(24,28,36,.22);transition:opacity .25s;}
+.tf.fold .tf-card{opacity:0;pointer-events:none;}
+.tf-h{display:flex;align-items:center;padding:9px 12px;border-bottom:1px solid var(--border);
+  font-size:12.5px;font-weight:700;}
+.tf-x{margin-left:auto;border:none;background:transparent;color:var(--text3);cursor:pointer;
+  font-size:11.5px;font-family:inherit;}
+.tf-x:hover{color:var(--text);}
+.tfrow{padding:8px 12px;border-top:1px solid var(--border);cursor:pointer;}
+.tfrow:first-child{border-top:0;}
+.tfrow:hover{background:var(--bg3);}
+.tfrow .tl{display:flex;align-items:center;gap:6px;font-size:12px;}
+.tfrow .tl b{font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tfrow .tl span{color:var(--text3);font-variant-numeric:tabular-nums;}
+.tfrow .tb{height:4px;border-radius:2px;background:var(--bg4);overflow:hidden;margin-top:6px;}
+.tfrow .tb i{display:block;height:100%;background:var(--accent);transition:width .2s;}
+.tfk{font-size:10px;font-weight:600;color:#c2410c;background:#ffedd5;border-radius:4px;padding:1px 6px;}
+
+</style>
+<body>
+
+<div class="topbar">
+  <div class="breadcrumb">
+    <button class="bk" onclick="location.href='../../home.html'"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="m14.5 17-5-5 5-5"/></svg>返回项目</button>
+    <span class="part-badge">爆款素材分析</span>
+    <button class="matbtn" id="mat-btn" onclick="开面板(event)">
+      <span id="mat-now">素材</span>
+      <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <span style="font-size:11.5px;color:var(--text3)" id="mat-meta"></span>
+  </div>
+  <div class="topbar-right">
+    <button class="btn btn-secondary" title="上传已投放过的爆款素材，AI 拆成段并逐段提取字段" onclick="开上传()">上传爆款素材</button>
+    <button class="btn btn-secondary off" id="btn-freq" title="规划中" onclick="高频()">高频段序分析</button>
+  </div>
+</div>
+
+<div class="mpanel hide" id="mpanel" onclick="event.stopPropagation()">
+  <div class="mph">
+    <span class="mpt">素材<i id="mp-n">0</i></span>
+    <button class="btn btn-primary btn-sm hide" id="mp-runall" onclick="分析全部待的()">分析待分析的</button>
+  </div>
+  <div class="mplist" id="mp-list"></div>
+</div>
+
+<div class="fbar hide" id="fbar">
+  <span class="fdot">内置示范</span>
+  <span class="ftxt" id="ftxt"></span>
+  <button class="btn btn-primary btn-sm" onclick="开上传()">上传爆款素材</button>
+</div>
+
+<div class="wrap">
+
+  <div class="left">
+    <div class="blk">
+      <div class="bh">
+        <span class="t" id="seq-t">段序</span>
+        <span class="s" id="seq-s"></span>
+      </div>
+      <div class="lane" id="lane"></div>
+    </div>
+
+    <div class="blk grow">
+      <div class="bh">
+        <span class="t" id="seg-t"></span>
+        <span class="s" id="seg-s"></span>
+      </div>
+      <div class="waitbox hide" id="waitbox">
+        <div class="wt" id="wait-t"></div>
+        <div class="ws" id="wait-s"></div>
+        <div class="wbar hide" id="wait-bar"><i id="wait-fill"></i></div>
+        <button class="btn btn-primary btn-sm hide" id="wait-go" onclick="开分析(当前.编号)">开始分析</button>
+      </div>
+      <div class="three" id="three">
+        <div class="vcol">
+          <div class="vbox">
+            <video id="seg-v" preload="metadata" playsinline onclick="播放()"
+              ontimeupdate="走时()" onplay="改播放字()" onpause="改播放字()"></video>
+            <span class="vtime" id="v-time">00:00 / 00:00</span>
+            <div class="vbar">
+              <div class="vprog" id="v-prog"><i id="v-fill"></i><b id="v-knob"></b></div>
+              <div class="vctrl">
+                <button class="pbtn" id="v-play" onclick="播放()">播放</button>
+                <button class="pbtn" onclick="回段首()" title="回到本段起点">段首</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="fset">
+          <div class="fh2">剧情内容</div>
+          <div id="f-content"></div>
+          <div class="fh" style="margin:12px 0 5px">段落叙述</div>
+          <div class="nt" id="f-narr"></div>
+        </div>
+        <div class="fset">
+          <div class="fh2">剧情结构</div>
+          <div id="f-struct"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="bh">
+      <div class="tabs2" id="tabs">
+        <button class="tb on" data-p="draft">模板草稿</button>
+        <button class="tb" data-p="lib">模板库<i id="lib-n">0</i></button>
+      </div>
+      <span class="s" id="d-s" style="margin-left:auto"></span>
+    </div>
+
+    <div class="pane" id="pane-draft">
+      <div class="dtool">
+        <div class="drow">
+          <button class="btn btn-secondary btn-sm" onclick="全勾()">全选段</button>
+          <button class="btn btn-secondary btn-sm" onclick="清勾()">取消全选</button>
+        </div>
+        <div class="drow grp">
+          <span class="dl">模板写入条件</span>
+          <div class="seg3" id="lvl">
+            <button data-l="精简" title="只写段落类型和尺度档上限。换一部剧最容易找到段，出来的片结构像、细节不像">精简</button>
+            <button data-l="标准" class="on" title="再写入主角角色、本能刺激。与题材绑定的三项不写">标准</button>
+            <button data-l="完整" title="把这一段的字段尽量写满。最接近原片，能匹配上的段也最少">完整</button>
+          </div>
+          <button class="ib rst" id="btn-reset" onclick="重置条件()" title="恢复本档的默认条件，手动加减的全部作废">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="dbody" id="d-body"></div>
+      <div class="dfooter">
+        <div class="drow">
+          <input class="inp2" id="d-name" placeholder="模板名称" oninput="改名()">
+          <button class="btn btn-primary" id="d-save" onclick="存模板()">存入模板库</button>
+        </div>
+        <div class="dwarn hide" id="d-warn"></div>
+      </div>
+    </div>
+
+    <div class="pane hide" id="pane-lib">
+      <div class="dtool">
+        <div class="drow">
+          <button class="gb" onclick="$('imp').click()" title="从 JSON 文件导入模板">导入</button>
+          <button class="gb" onclick="导出全部()" title="把整个模板库导出成 JSON 文件">导出全部</button>
+          <input type="file" id="imp" accept="application/json" class="hide" onchange="读入(event)">
+        </div>
+      </div>
+      <div class="dbody" id="lib-body"></div>
+    </div>
+
+  </div>
+
+</div>
+
+<div id="up-modal" class="ai-modal-backdrop" onclick="if(event.target===this)关上传()">
+  <div class="ai-modal-glass">
+    <div class="ai-modal-box" style="width:560px;max-width:96vw">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div class="ai-modal-title" style="margin-bottom:0">上传爆款素材</div>
+        <button class="btn btn-ghost btn-sm" onclick="关上传()">✕</button>
+      </div>
+      <div class="drop" onclick="$('up-file').click()">
+        拖入文件或点击选择
+        <span class="droph">mp4、mov，一次最多 5 条，单条不超过 30 分钟</span>
+      </div>
+      <input type="file" id="up-file" accept="video/mp4,video/quicktime,.mp4,.mov" multiple class="hide" onchange="选好文件(event)">
+      <div id="up-list"></div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:14px;justify-content:flex-end">
+        <button class="btn btn-secondary" onclick="关上传()">取消</button>
+        <button class="btn btn-secondary" id="up-later" onclick="稍后分析()">仅上传</button>
+        <button class="btn btn-primary" id="up-go" onclick="跑分析()">上传并分析</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="tf" class="tf hide">
+  <div class="tf-tab" id="tf-tab" onclick="收放浮窗()"><span class="tf-ring"><i id="tf-n">0</i></span></div>
+  <div class="tf-card" id="tf-card">
+    <div class="tf-h"><span>后台任务</span><button class="tf-x" onclick="收放浮窗()">收起</button></div>
+    <div id="tf-list"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast2"></div>
+
+<script src="../../shared/web-shim.js"></script>
+<script>
+"use strict";
+/* ── 数据层：段和素材都从后端来 ──
+   爆款素材归在一个约定的项目里（爆款素材库），一条素材就是它的一个 Part。
+   拆段走的是跟「素材制作 2.0」同一条管线、同一张段表，两边看到的段是同一份。 */
+var API = 'http://127.0.0.1:' + ((window.electronAPI && window.electronAPI.backendPort) || 8764) + '/api/v1';
+var UPLOADS = API.replace('/api/v1', '') + '/uploads';
+var TOKEN = localStorage.getItem('skyart_token') || '';
+var 素材库项目 = null;
+
+async function api(path, opt){
+  var o = Object.assign({headers:{}}, opt || {});
+  o.headers['Authorization'] = 'Bearer ' + TOKEN;
+  if(o.body && !o.headers['content-type']) o.headers['content-type'] = 'application/json';
+  var r = await fetch(API + path, o);
+  if(r.status === 401){ location.href = '../../home.html'; throw new Error('登录已过期'); }
+  if(!r.ok){
+    var d = await r.json().catch(function(){ return {}; });
+    throw new Error(d.detail || ('请求失败 ' + r.status));
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+var D = {素材:[]};
+var 类色 = {'冲突':'#dc2626','情绪':'#64748b','悬念点':'#2563eb','爽点':'#d97706','反转':'#f97316'};
+var $ = function(id){ return document.getElementById(id); };
+function esc(v){ return v == null ? '' : String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function n1(v){ return (Number(v) || 0).toFixed(1); }
+function mmss(t){ t = Math.round(Math.max(0, Number(t) || 0));
+  return String(Math.floor(t/60)).padStart(2,'0') + ':' + String(t%60).padStart(2,'0'); }
+
+var 箭头 = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+var 下载图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><path d="m8 11 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
+var 删除图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M9 6V4h6v2"/><path d="M6 6l1 14h10l1-14"/></svg>';
+var 素材 = {};
+var SEG = {};
+var 有内置 = false;
+var 示范 = null;
+var 当前 = {编号:'', 素材时长:0, 段:[], 片源:''};
+var 当前段 = null;
+var 勾 = {};      // 段ID → true
+var 手改 = {};    // 严格档|段ID|条件序号 → true 写进模板、false 不写
+var 态 = {};      // 编号 → {状态, 进度, 时间, 原因}
+var 可见 = [];
+
+/* Part 的分析状态映射成这一页的说法。段拆出来了才算已完成——
+   ai_status 是 done 但一段都没有的话，界面上是空的，不该说「已完成」。 */
+function _状态(part, 段数){
+  if(part.ai_status === 'processing') return '分析中';
+  if(part.ai_status === 'failed') return '分析失败';
+  return 段数 ? '已完成' : '待分析';
+}
+
+/* 段库那套字段名换成这一页用的。两边差的只有这张表。 */
+function _转段(seg, 编号){
+  var f = seg.fields || {};
+  return {
+    段ID: 编号 + '-' + seg.seg_index, 段序号: seg.seg_index, 素材: 编号,
+    起: seg.start_sec, 止: seg.end_sec, 段时长: seg.duration_sec,
+    这段算哪种戏: seg.seg_type || '', 段的尺度档: seg.intensity || 0,
+    主角是动手还是挨打: f['主角是动手还是挨打'] || '都不是',
+    本能刺激: [].concat(f['本能刺激'] || []),
+    哪种经典桥段: f['哪种经典桥段'] || '都不是',
+    有没有旁人在看: f['有没有旁人在看'] || '无',
+    有没有身份差距: f['有没有身份差距'] || '无',
+    结尾留没留悬念: f['结尾留没留悬念'] || '',
+    留的是什么: f['留的是什么'] || null,
+    最强的一刻: f['最强的一刻'] || '',
+    最强的一刻在第几秒: f['最强的一刻时间'],
+    段落叙述: f['段落叙述'] || '',
+    地点: f['地点'] || '',
+    每分钟几件事: f['每分钟几件事'], 每分钟几句台词: f['每分钟几句台词'],
+    命中的行为: f['命中的行为'] || [],
+    能用: !seg.excluded,
+    帧: '',                    // 段序卡片用 video 抓帧，不存图
+  };
+}
+
+/* 爆款素材归在一个约定的项目里。没有就建一个——不建的话这一页空着，
+   而「上传爆款素材」没地方可传。 */
+async function _素材库项目(){
+  var ps = await api('/admake/projects');
+  var 名 = '爆款素材库';
+  var p = ps.find(function(x){ return x.title === 名 && x.project_kind === 'segments'; });
+  if(!p) p = await api('/admake/projects', {method:'POST', body:JSON.stringify(
+    {title:名, project_kind:'segments', description:'已投放的爆款广告素材，拆段之后提炼成剪辑模板'})});
+  return p;
+}
+
+async function 装数据(){
+  素材库项目 = await _素材库项目();
+  var parts = await api('/admake/projects/' + 素材库项目.id + '/parts');
+  素材 = {}; SEG = {}; 可见 = []; 态 = {};
+  D.素材 = [];
+  for(var i = 0; i < parts.length; i++){
+    var pt = parts[i];
+    var 编号 = pt.name || ('素材' + (i + 1));
+    var segs = [];
+    try { segs = await api('/admake/parts/' + pt.id + '/segments'); } catch(e){ segs = []; }
+    var m = {编号:编号, part_id:pt.id, source_ids:pt.source_ids || '[]',
+             素材时长:pt.duration_sec || 0,
+             片源: pt.file_path ? (UPLOADS + '/' + pt.file_path) : '',
+             段: segs.map(function(sg){ return _转段(sg, 编号); })};
+    m.段.forEach(function(s){ SEG[s.段ID] = s; });
+    素材[编号] = m;
+    D.素材.push(m);
+    可见.push(编号);
+    态[编号] = {状态:_状态(pt, segs.length), 进度:segs.length ? 100 : 0,
+                时间:(pt.created_at || '').slice(5, 16).replace('T', ' ')};
+  }
+  当前 = D.素材[0] || {编号:'', 素材时长:0, 段:[], 片源:''};
+  当前段 = 当前.段[0] || null;
+}
+
+function 状(id){ return (态[id] || {}).状态 || '已完成'; }
+function 完成的(){ return 可见.filter(function(id){ return 状(id) === '已完成'; }); }
+function 待的(){ return 可见.filter(function(id){ return 状(id) === '待分析'; }); }
+function 跑着的(){ return 可见.filter(function(id){ return 状(id) === '分析中'; }); }
+
+/* 顶栏那颗按钮只写当前是谁，状态和进度都在面板里 */
+function 画当前(){
+  var e = 态[当前.编号] || {};
+  $('mat-now').textContent = (当前.编号 === 示范 && 有内置 ? '内置示范　' : '') + 当前.编号 +
+    '　' + mmss(当前.素材时长) +
+    (e.状态 === '已完成' ? '　' + 当前.段.length + ' 段' : '　' + (e.状态 || ''));
+  画提示条();
+}
+
+var 删图2 = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M9 6V4h6v2"/><path d="M6 6l1 14h10l1-14"/></svg>';
+var 跑图 = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4v16l14-8z"/></svg>';
+
+function 画面板(){
+  $('mp-n').textContent = 可见.length;
+  var n = 待的().length;
+  $('mp-runall').classList.toggle('hide', !n);
+  $('mp-runall').textContent = '分析待分析的 ' + n + ' 条';
+  $('mp-list').innerHTML = 可见.map(function(id){
+    var m = 素材[id], e = 态[id] || {}, s = e.状态 || '已完成';
+    var 图 = m.段[0] ? 段封面(m.段[0], m.片源) : '<img alt="">';
+    var 副 = mmss(m.素材时长) +
+      (s === '已完成' ? ' · ' + m.段.length + ' 段 · ' + (e.时间 || '')
+       : s === '分析中' ? ' · ' + Math.round(e.进度 || 0) + '%'
+       : s === '失败'   ? ' · ' + (e.原因 || '')
+       : ' · ' + (e.时间 || ''));
+    var 签 = s === '已完成' ? '<span class="st ok">已完成</span>'
+      : s === '分析中' ? '<span class="st run">分析中</span>'
+      : s === '失败' ? '<span class="st bad">失败</span>'
+      : '<span class="st wait">待分析</span>';
+    var 内置 = 有内置 && id === 示范, 锁 = 内置 || s === '分析中';
+    var 动 = (s === '待分析' || s === '失败')
+      ? '<button class="mib" onclick="event.stopPropagation();开分析(\'' + id + '\')" title="' +
+        (s === '失败' ? '重新分析' : '开始分析') + '">' + 跑图 + '</button>' : '';
+    return '<div class="mrow' + (id === 当前.编号 ? ' on' : '') + '" onclick="选素材(\'' + id + '\')">' +
+      图 +
+      '<div class="mc"><div class="mn">' + (内置 ? '内置示范　' : '') + esc(id) + '</div>' +
+      '<div class="mm">' + 副 + '</div>' +
+      (s === '分析中' ? '<div class="mbar"><i style="width:' + (e.进度 || 0) + '%"></i></div>' : '') +
+      '</div>' +
+      '<span class="mx">' + 签 + 动 +
+        '<button class="mib danger" onclick="event.stopPropagation();删素材(\'' + id + '\')" title="' +
+        (内置 ? '内置示范不能删除' : (s === '分析中' ? '正在分析，跑完才能删' : '删掉这条素材')) +
+        '"' + (锁 ? ' disabled' : '') + '>' + 删图2 + '</button>' +
+      '</span></div>';
+  }).join('');
+}
+
+function 开面板(e){
+  if(e) e.stopPropagation();
+  var 开 = $('mpanel').classList.contains('hide');
+  $('mpanel').classList.toggle('hide', !开);
+  $('mat-btn').classList.toggle('open', 开);
+  if(开) 画面板();
+}
+function 关面板(){ $('mpanel').classList.add('hide'); $('mat-btn').classList.remove('open'); }
+document.addEventListener('click', 关面板);
+
+function 选素材(id){
+  关面板();
+  if(!素材[id] || id === 当前.编号) return;
+  当前 = 素材[id];
+  当前段 = 当前.段[0]; 勾 = {}; 手改 = {}; 展开着 = {}; 开库 = {};
+  名自动 = true;
+  默认全勾(); 画全部();
+}
+/* 删素材＝删掉它的源文件再重合一次 Part。只删 Part 的话，
+   源文件还在，下次合成又会把它变回来。段和剧情点跟着 Part 级联走。 */
+async function 删素材(id){
+  if(状(id) === '分析中'){ 提示('这条正在分析，等它跑完再删'); return; }
+  var m = 素材[id];
+  if(!m){ return; }
+  提示('正在删…');
+  try {
+    var sids = [];
+    try { sids = JSON.parse(m.source_ids || '[]'); } catch(e){ sids = []; }
+    for(var i = 0; i < sids.length; i++)
+      await api('/admake/projects/' + 素材库项目.id + '/sources/' + sids[i], {method:'DELETE'});
+    await api('/admake/projects/' + 素材库项目.id + '/build-parts', {method:'POST'});
+    await 装数据();
+  } catch(e){ 提示('删不掉：' + e.message); return; }
+  if(!D.素材.length){ 提示('素材都删完了，先传一条再用'); 画面板(); 画当前(); 画全部(); return; }
+  默认全勾(); 画全部(); 画面板(); 画当前();
+  提示('已删掉素材：' + id);
+}
+
+/* 看的是内置示范时，顶上挂一条说明；看自己的素材时收起来 */
+function 画提示条(){
+  var 在示范 = 有内置 && 当前.编号 === 示范;
+  $('ftxt').textContent = '这条素材随软件附带，用来说明分析结果长什么样，不能删除或重新分析。';
+  $('fbar').classList.toggle('hide', !在示范);
+  document.body.classList.toggle('firstrun', 在示范);
+  if(在示范) document.body.style.setProperty('--fbar-h', ($('fbar').offsetHeight + 10) + 'px');
+}
+function 高频(){ 提示('高频段序分析规划中'); }
+
+/* ── 后台分析：任务挂在右缘的浮窗上，不占着弹窗等 ── */
+var 跑表 = {};
+/* 拆段跑在后端，这一页只管发起和轮询。进度条按 Part 的状态走，
+   没有细粒度百分比就给个不满的固定值，别让它停在 0 像卡住了。 */
+async function 开分析(id){
+  if(状(id) === '分析中') return;
+  var m = 素材[id];
+  if(!m || !m.part_id){ 提示('这条素材还没合成好'); return; }
+  态[id] = {状态:'分析中', 进度:5};
+  画面板(); 画当前(); 画浮窗();
+  if(当前.编号 === id) 画全部();
+  try {
+    await api('/admake/projects/' + 素材库项目.id + '/ai-analyze?part_id=' + m.part_id,
+              {method:'POST'});
+  } catch(e){
+    态[id] = {状态:'分析失败', 进度:0, 原因:e.message};
+    提示('起不来：' + e.message);
+    画面板(); 画当前(); 画浮窗();
+    if(当前.编号 === id) 画全部();
+    return;
+  }
+  跑表[id] = setInterval(async function(){
+    var st = null;
+    try { st = await api('/admake/projects/' + 素材库项目.id + '/ai-analyze/status'); }
+    catch(e){ return; }
+    var e2 = 态[id] || {};
+    if(st.status === 'processing'){
+      态[id] = {状态:'分析中', 进度:Math.min(92, (e2.进度 || 5) + 3)};
+    } else {
+      clearInterval(跑表[id]); delete 跑表[id];
+      await 装数据();
+      var 段数 = (素材[id] || {段:[]}).段.length;
+      态[id] = {状态:段数 ? '已完成' : '分析失败', 进度:段数 ? 100 : 0,
+                时间:'刚刚', 原因:st.error || ''};
+      提示(段数 ? (id + ' 拆出 ' + 段数 + ' 段') : (id + ' 没拆出段' + (st.error ? '：' + st.error : '')));
+      if(当前.编号 === id){ 当前 = 素材[id] || 当前; 当前段 = 当前.段[0] || null; 默认全勾(); }
+      画全部();
+    }
+    if(!$('mpanel').classList.contains('hide')) 画面板();
+    画浮窗(); 画当前();
+    if(当前.编号 === id) 画全部();
+  }, 3000);
+}
+function 分析全部待的(){
+  var 列 = 待的();
+  if(!列.length) return;
+  列.forEach(开分析);
+  提示('已提交 ' + 列.length + ' 条，进度见右侧');
+}
+var 浮窗收着 = false;
+function 收放浮窗(){ 浮窗收着 = !浮窗收着; 画浮窗(); }
+function 画浮窗(){
+  var 列 = 跑着的();
+  $('tf').classList.toggle('hide', !列.length);
+  if(!列.length){ 浮窗收着 = false; $('tf-list').innerHTML = ''; return; }
+  $('tf').classList.toggle('fold', 浮窗收着);
+  $('tf-n').textContent = 列.length;
+  $('tf-list').innerHTML = 列.map(function(id){
+    var e = 态[id];
+    return '<div class="tfrow" onclick="选素材(\'' + id + '\')">' +
+      '<div class="tl"><span class="tfk">AI 分析</span><b>' + esc(id) + '</b>' +
+      '<span>' + Math.round(e.进度) + '%</span></div>' +
+      '<div class="tb"><i style="width:' + e.进度 + '%"></i></div></div>';
+  }).join('');
+}
+
+function 默认全勾(){ 当前.段.forEach(function(s){ if(s.这段算哪种戏) 勾[s.段ID] = true; }); }
+
+/* ── 段序 ── */
+function 画段序(){
+  var m = 当前;
+  var 未 = m.段.filter(function(x){ return !x.这段算哪种戏; }).length;
+  $('mat-meta').textContent = 未 ? 未 + ' 段未识别出段落类型，不能进模板' : '';
+  var 未标 = m.段.filter(function(s){ return !s.这段算哪种戏; }).length;
+  $('seq-t').textContent = '段序（' + m.段.length + ' 段）';
+  $('seq-s').textContent = 未标 ? 未标 + ' 段未识别出段落类型' : '';
+  $('lane').innerHTML = m.段.map(function(s, i){
+    var lv = Number(s.段的尺度档) || 0, 能勾 = !!s.这段算哪种戏;
+    return '<div class="sc' + (s.段ID === 当前段.段ID ? ' on' : '') + (勾[s.段ID] ? ' picked' : '') +
+      '" data-s="' + s.段ID + '" title="' + esc((s.段落叙述 || '').slice(0, 40)) + '">' +
+      (能勾 ? '<span class="pk" data-pk="' + s.段ID + '">' + (勾[s.段ID] ? '✓' : '') + '</span>' : '') +
+      '<span class="idx">' + (i+1) + '</span>' +
+      (lv >= 3 ? '<span class="lv">档 ' + lv + '</span>' : '') +
+      段封面(s, 当前.片源) +
+      '<span class="cat" style="background:' + (类色[s.这段算哪种戏] || '#8d94a0') + '">' +
+        esc(s.这段算哪种戏 || '未识别') + '</span>' +
+      '<span class="meta">' + n1(s.段时长) + ' 秒</span></div>';
+  }).join('');
+  $('lane').querySelectorAll('[data-s]').forEach(function(el){
+    el.onclick = function(e){
+      if(e.target.closest('[data-pk]')) return;
+      当前段 = SEG[el.dataset.s]; 画段序(); 画字段();
+    };
+  });
+  $('lane').querySelectorAll('[data-pk]').forEach(function(el){
+    el.onclick = function(e){
+      e.stopPropagation();
+      var id = el.dataset.pk;
+      if(勾[id]) delete 勾[id]; else 勾[id] = true;
+      画段序(); 画草稿();
+    };
+  });
+}
+function 全勾(){
+  if(状(当前.编号) !== '已完成'){ 提示('这条素材还没分析完，没有段可选'); return; }
+  默认全勾(); 画段序(); 画草稿();
+}
+function 清勾(){ 勾 = {}; 画段序(); 画草稿(); }
+
+/* ── 内容／结构两栏 ── */
+function 行(k, v){ return '<div class="fr2"><span class="k">' + k + '</span><span class="v">' + v + '</span></div>'; }
+function 画字段(){
+  var s = 当前段, lv = Number(s.段的尺度档) || 0;
+  var i = 当前.段.indexOf(s);
+  $('seg-t').textContent = '段详情 · 第 ' + (i+1) + ' 段　' + s.段ID;
+  $('seg-s').textContent = mmss(s.起) + ' – ' + mmss(s.止) + '　' + n1(s.段时长) + ' 秒';
+  装片(s);
+
+  var 行为 = (s.命中的行为 || []).map(function(b){
+    return '<div class="beh2"><span>' + esc(b.类) + '　' + esc(b.行为) + '</span>' +
+      (b.时间 != null ? '<span class="tm" data-t="' + b.时间 + '">' + mmss(b.时间) + '</span>' : '') +
+      '<span class="lv tagl' + (b.档 >= 3 ? ' l' + b.档 : '') + '">档 ' + (b.档 || 0) + '</span></div>';
+  }).join('') || '<div style="font-size:11.5px;color:var(--text3)">未命中行为词，尺度档记 0</div>';
+
+  $('f-content').innerHTML =
+    行('段落类型', s.这段算哪种戏
+      ? '<span class="tagc" style="background:' + (类色[s.这段算哪种戏] || '#8d94a0') + '">' +
+        esc(s.这段算哪种戏) + '</span>'
+      : '<span class="tagl">未识别</span>') +
+    行('主角角色', esc(主角词(s.主角是动手还是挨打)) +
+      (s.主角是动手还是挨打 && s.主角是动手还是挨打 !== '都不是'
+        ? '<span style="color:var(--text3)">（' + esc(s.主角是动手还是挨打) + '）</span>' : '')) +
+    行('本能刺激', (s.本能刺激 || []).length ? esc(s.本能刺激.join('、')) : '无') +
+    行('尺度档', '<span class="tagl' + (lv >= 3 ? ' l' + lv : '') + '">档 ' + lv + '</span>') +
+    行('经典桥段', esc(s.哪种经典桥段 || '都不是')) +
+    行('旁观者', esc(s.有没有旁人在看 || '无')) +
+    行('身份差距', esc(s.有没有身份差距 || '无')) +
+    行('场景', esc(s.地点 || '—')) +
+    '<div class="fh" style="margin:10px 0 5px">命中行为词</div>' + 行为;
+
+  var 峰 = Number(s.最强的一刻在第几秒) || 0;
+  var 位 = (峰 - s.起) / (s.段时长 || 1);
+  var 越界 = 位 < 0 || 位 > 1;      // 存模板时要按它定「位于前/后四分之一」这条条件，落在段外就不写这条
+  $('f-struct').innerHTML =
+    行('结尾悬念', esc(s.结尾留没留悬念 || '—') + (s.留的是什么 ? '：' + esc(s.留的是什么) : '')) +
+    行('事件密度', n1(s.每分钟几件事) + ' 件/分钟') +
+    行('台词密度', n1(s.每分钟几句台词) + ' 句/分钟') +
+    行('段时长', n1(s.段时长) + ' 秒') +
+    行('建议格位', 越界 ? '—' :
+      (位 < 0.25 ? '落在前四分之一，适合作开场格' : '落在偏后，适合作中段格'));
+  $('f-narr').textContent = s.段落叙述 || '';
+  document.querySelectorAll('[data-t]').forEach(function(el){
+    el.onclick = function(){ 跳到(Number(el.dataset.t)); };
+  });
+}
+
+/* ── 右栏：模板草稿 ── */
+/* 段没有存缩略图。拿 video 定位到段起点当封面：#t= 让浏览器只解到那一帧，
+   metadata 预载不会把整条片子拖下来。muted+playsinline 是移动端浏览器的要求。 */
+function 段封面(s, 片源){
+  if(!片源) return '<img alt="">';
+  var t = Math.max(0.1, (Number(s.起) || 0) + 0.5);
+  return '<video src="' + esc(片源) + '#t=' + t.toFixed(1) + '" preload="metadata" muted playsinline></video>';
+}
+
+var 主角说法 = {'动手':'施加方', '挨打':'承受方', '都不是':'都不是'};
+function 主角词(v){ return 主角说法[v] || v || '都不是'; }
+
+var 严 = '标准';        // 精简／标准／完整
+var 展开着 = {};        // 格序号 → true
+
+/* 每格写哪些条件，由严格程度决定。
+   与题材绑定的三项（经典桥段、旁观者、身份差距）只有严格档才写，
+   跨剧套用时它们最容易把候选卡死。 */
+function 尺度上限(s){
+  var lv = Number(s.段的尺度档) || 0;
+  return 严 === '精简' ? Math.max(lv, 3) : (严 === '标准' ? Math.max(lv, 2) : lv);
+}
+/* 每条除了给人读的文案，还带上写进模板的字段名和值——模板存到后端要的是
+   结构化条件（见 demo/契约.md），不是这句中文。两者在这里一次产出，不做反向解析。
+   块＝内容条件还是结构条件，k＝字段名，v＝值。 */
+function 条件表(s, 末){
+  var 标准 = 严 !== '精简', 完整 = 严 === '完整';
+  var out = [
+    {t:'段落类型为' + s.这段算哪种戏, 默:true,
+     块:'内容条件', k:'最强的一刻属于哪一类', v:[s.这段算哪种戏]},
+    {t:'尺度档不超过 ' + 尺度上限(s), 默:true,
+     块:'内容条件', k:'尺度档上限', v:尺度上限(s)},
+  ];
+  out.push({t:'主角角色为' + 主角词(s.主角是动手还是挨打), 默:标准,
+            块:'内容条件', k:'主角在这一刻是', v:[s.主角是动手还是挨打 || '都不是']});
+  if((s.本能刺激 || []).length)
+    out.push({t:'本能刺激含' + s.本能刺激.join('或'), 默:标准,
+              块:'内容条件', k:'本能刺激', v:s.本能刺激.slice()});
+  var 峰 = Number(s.最强的一刻在第几秒) || 0, 位 = (峰 - s.起) / (s.段时长 || 1);
+  if(位 >= 0 && 位 <= 1){
+    if(位 < 0.25) out.push({t:'最强的一刻位于前四分之一', 默:标准,
+                            块:'结构条件', k:'最强的一刻位置', v:'前四分之一'});
+    else if(位 > 0.75) out.push({t:'最强的一刻位于后四分之一', 默:标准,
+                                 块:'结构条件', k:'最强的一刻位置', v:'后四分之一'});
+  }
+  if(s.哪种经典桥段 && s.哪种经典桥段 !== '都不是')
+    out.push({t:'经典桥段为' + s.哪种经典桥段, 默:完整,
+              块:'内容条件', k:'高转化场景', v:[s.哪种经典桥段]});
+  out.push({t:s.有没有旁人在看 === '有' ? '有旁观者' : '无旁观者', 默:完整,
+            块:'内容条件', k:'有没有旁人在看', v:s.有没有旁人在看 === '有' ? '有' : '无'});
+  out.push({t:s.有没有身份差距 === '有' ? '有身份差距' : '无身份差距', 默:完整,
+            块:'内容条件', k:'阶层落差', v:s.有没有身份差距 === '有' ? '有' : '无'});
+  if(末 && s.结尾留没留悬念)
+    out.push({t:s.结尾留没留悬念 === '留了' ? '结尾留悬念' : '结尾不留悬念', 默:标准,
+              块:'结构条件', k:'结尾留没留悬念', v:s.结尾留没留悬念});
+  return out;
+}
+function 开着(id, j, 默){ var k = 严 + '|' + id + '|' + j; return 手改[k] === undefined ? 默 : 手改[k]; }
+
+function 换档(v){ 严 = v; 展开着 = {}; 画草稿(); }
+function 改过多少(){
+  return Object.keys(手改).filter(function(k){ return k.indexOf(严 + '|') === 0; }).length;
+}
+function 重置条件(){
+  var n = 改过多少();
+  if(!n){ 提示('本档的条件就是默认值，没有改动'); return; }
+  Object.keys(手改).forEach(function(k){ if(k.indexOf(严 + '|') === 0) delete 手改[k]; });
+  画草稿(); 提示('已恢复' + 严 + '档的默认条件，撤销了 ' + n + ' 处改动');
+}
+$('lvl').querySelectorAll('[data-l]').forEach(function(el){
+  el.onclick = function(){
+    $('lvl').querySelectorAll('[data-l]').forEach(function(x){ x.classList.remove('on'); });
+    el.classList.add('on'); 换档(el.dataset.l);
+  };
+});
+
+function 画草稿(){
+  var 段们 = 当前.段.filter(function(s){ return 勾[s.段ID]; });
+  // 一段就是一格，格数和已选段数永远相等，只留后面那个
+  $('d-s').textContent = '已选 ' + 段们.length + ' / ' + 当前.段.length + ' 段';
+  if(!段们.length){
+    $('d-body').innerHTML = '<div class="empty">未勾选段</div>';
+    $('d-name').value = '';
+    $('d-save').disabled = true; $('d-save').style.opacity = .45;
+    return;
+  }
+  $('d-save').disabled = false; $('d-save').style.opacity = 1;
+  var 整条 = 段们.length >= 4;
+  // 自动名带上写入档，换档时跟着变；撞上库里已有的就往后排号，
+  // 否则刚进页面就顶着一条"会覆盖"的红字
+  if(名自动 || !$('d-name').value){
+    var 基 = 当前.编号 + '_' + 严, 拟 = 基, k = 2;
+    while(有同名(拟)){ 拟 = 基 + '（' + k + '）'; k++; }
+    $('d-name').value = 拟;
+    查重();
+  }
+  var 条数 = 0;
+  $('btn-reset').disabled = !改过多少();
+  $('d-body').innerHTML = 段们.map(function(s, i){
+    var 末 = i === 段们.length - 1;
+    var cs = 条件表(s, 末);
+    var 位 = i === 0 ? '开场' : (末 ? '结尾' : '中段');
+    var 尾 = {'动手':' · 主角施加方','挨打':' · 主角承受方'}[s.主角是动手还是挨打] || '';
+    var 开 = cs.filter(function(c, j){ return 开着(s.段ID, j, c.默); }).length;
+    条数 += 开;
+    return '<div class="gcell"><div class="gh' + (展开着[i] ? ' open' : '') + '" data-g="' + i + '"><span class="no">' + (i+1) + '</span>' +
+      段封面(s, 当前.片源) +
+      '<span class="gn">' + 位 + ' · ' + esc(s.这段算哪种戏) + esc(尾) + '</span>' +
+      '<span class="gd" title="原片这一段的长度。出片时每段多长由目标时长现算，模板不带时长条件">' +
+        n1(s.段时长) + ' 秒</span>' +
+      '<span class="gx">条件 ' + 开 + '</span>' + 箭头 + '</div>' +
+      '<div class="gc' + (展开着[i] ? '' : ' hide') + '">' + cs.map(function(c, j){
+        var on = 开着(s.段ID, j, c.默);
+        return '<button data-k="' + s.段ID + '|' + j + '" class="' + (on ? 'on' : '') + '">' +
+          esc(c.t) + '<span class="x">' + (on ? '×' : '＋') + '</span></button>';
+      }).join('') + '</div></div>';
+  }).join('') +
+  '';
+  $('d-body').querySelectorAll('[data-g]').forEach(function(el){
+    el.onclick = function(){
+      var i = el.dataset.g;
+      if(展开着[i]) delete 展开着[i]; else 展开着[i] = true;
+      画草稿();
+    };
+  });
+  $('d-body').querySelectorAll('[data-k]').forEach(function(el){
+    el.onclick = function(e){
+      e.stopPropagation();
+      var a = el.dataset.k.split('|');
+      手改[严 + '|' + el.dataset.k] = !开着(a[0], Number(a[1]), el.classList.contains('on'));
+      画草稿();
+    };
+  });
+}
+/* ── 模板库 ── */
+var 模板库 = [];
+function 建模板(名, 段们, 来源, 来自){
+  return {名:名, 来源:来源 || '爆款模板', 来自:来自 || 当前.编号, 写入档:严,
+    种类:(段们.length >= 4 ? '整条' : '片段'),
+    格:段们.map(function(s, i){
+      var 末 = i === 段们.length - 1;
+      var 位 = i === 0 ? '开场' : (末 ? '结尾' : '中段');
+      var 尾 = {'动手':' · 主角施加方','挨打':' · 主角承受方'}[s.主角是动手还是挨打] || '';
+      var 选中 = 条件表(s, 末).filter(function(c, j){ return 开着(s.段ID, j, c.默); });
+      var 内容 = {}, 结构 = {};
+      选中.forEach(function(c){
+        if(!c.k) return;
+        (c.块 === '结构条件' ? 结构 : 内容)[c.k] = c.v;
+      });
+      return {序:i + 1, 格名:位 + ' · ' + s.这段算哪种戏 + 尾, 段时长:s.段时长, 来自:s.段ID,
+        锁位置: i === 0 ? '第一格' : (末 ? '最后一格' : '不锁'), 取几段:1,
+        内容条件:内容, 结构条件:结构,
+        条件:选中.map(function(c){ return c.t; })};
+    })};
+}
+function 有同名(名){ return 模板库.some(function(t){ return t.名 === 名; }); }
+var 名自动 = true;                 // 名字还是自动生成的，用户一旦自己改过就置 false
+var 刚存 = '';                     // 刚存进库的那个名字，重名提示对它不算警告
+function 改名(){ 名自动 = false; 刚存 = ''; 查重(); }
+function 查重(){
+  var 名 = $('d-name').value.trim();
+  var 重 = 有同名(名), 自己 = 重 && 名 === 刚存;
+  $('d-name').classList.toggle('bad', 重 && !自己);
+  $('d-warn').classList.toggle('hide', !重);
+  $('d-warn').classList.toggle('calm', 自己);
+  $('d-warn').textContent = !重 ? ''
+    : (自己 ? '这个模板刚存进库，再点一次会覆盖它。' : '模板库里已有同名模板，存入会覆盖它。');
+  $('d-save').textContent = 重 ? '覆盖同名模板' : '存入模板库';
+}
+async function 存模板(){
+  var 名 = ($('d-name').value || '').trim();
+  if(!名){ 提示('请先填模板名称'); return; }
+  var 段们 = 当前.段.filter(function(s){ return 勾[s.段ID]; });
+  if(!段们.length){ 提示('先在上面的段序里勾几段'); return; }
+  var t = 建模板(名, 段们);
+  var 旧 = 模板库.find(function(x){ return x.名 === 名; });
+  try {
+    if(旧 && 旧.id) await api('/admake/cut-templates/' + 旧.id, {method:'DELETE'});
+    await api('/admake/cut-templates', {method:'POST', body:JSON.stringify({
+      name: 名, source: '爆款模板',
+      source_note: '拆自素材 ' + (当前.编号 || '') + '，' + 严 + '档写入',
+      kind: t.种类, slots: t.格,
+    })});
+  } catch(e){ 提示('存不进去：' + e.message); return; }
+  提示((旧 ? '已覆盖同名模板：' : '已存入模板库：') + 名 + '（' + t.格.length + ' 格）');
+  刚存 = 名;
+  await 拉模板库();
+  查重();
+}
+
+/* 模板库存在后端，跟「素材制作 2.0」导出面板里选的是同一份。
+   放在这一页的内存里，剪的时候就选不到。 */
+async function 拉模板库(){
+  try {
+    var ts = await api('/admake/cut-templates');
+    模板库 = ts.map(function(t){
+      return {id:t.id, 名:t.name, 来源:t.source, 来自:(t.source_note || '').replace(/^拆自素材 /, '').split('，')[0],
+              种类:t.kind, 内置:t.builtin,
+              格:(t.slots || []).map(function(g){
+                var c = g.内容条件 || {}, q = g.结构条件 || {};
+                var 句 = [];
+                if(c['最强的一刻属于哪一类']) 句.push('段落类型为' + [].concat(c['最强的一刻属于哪一类']).join('或'));
+                if(c['尺度档上限'] != null) 句.push('尺度档不超过 ' + c['尺度档上限']);
+                if(c['主角在这一刻是']) 句.push('主角角色为' + 主角词([].concat(c['主角在这一刻是'])[0]));
+                if(c['本能刺激']) 句.push('本能刺激含' + [].concat(c['本能刺激']).join('或'));
+                if(c['高转化场景']) 句.push('经典桥段为' + [].concat(c['高转化场景']).join('或'));
+                if(c['有没有旁人在看']) 句.push(c['有没有旁人在看'] === '有' ? '有旁观者' : '无旁观者');
+                if(c['阶层落差']) 句.push(c['阶层落差'] === '有' ? '有身份差距' : '无身份差距');
+                if(q['最强的一刻位置']) 句.push('最强的一刻位于' + q['最强的一刻位置']);
+                if(q['结尾留没留悬念']) 句.push(q['结尾留没留悬念'] === '留了' ? '结尾留悬念' : '结尾不留悬念');
+                return {序:g.序, 格名:g.格名 || ('第' + g.序 + '格'), 段时长:g.段时长 || 0,
+                        来自:g.来自 || '', 条件:句};
+              })};
+    });
+  } catch(e){ 模板库 = []; }
+  画库();
+}
+function 画库(){
+  $('lib-n').textContent = 模板库.length;
+  if(!模板库.length){ $('lib-body').innerHTML = '<div class="empty">模板库是空的</div>'; return; }
+  $('lib-body').innerHTML = 模板库.map(function(t, i){
+    return '<div class="lrow"><div class="lh' + (开库[i] ? ' open' : '') + '" data-l="' + i + '">' +
+      箭头 +
+      '<span class="ltag">' + esc(t.种类) + '</span>' +
+      '<span class="ln">' + esc(t.名) + '</span>' +
+      '<span class="lg">' + t.格.length + ' 格 · ' + esc(t.来源) + '</span>' +
+      '<span class="lact">' +
+        '<button class="ib" data-x="' + i + '" title="导出这一个模板">' + 下载图 + '</button>' +
+        (待删 === i
+          ? '<button class="ib warn" data-d="' + i + '">再点一次删除</button>'
+          : '<button class="ib danger" data-d="' + i + '" title="删除这个模板">' + 删除图 + '</button>') +
+      '</span></div>' +
+      (开库[i] ? '<div class="lbody">' +
+        (t.来自 ? '<div class="lfrom">来自素材 ' + esc(t.来自) + '</div>' : '') +
+        t.格.map(function(g){
+        return '<div class="lcell"><span class="n">' + g.序 + '</span><span>' + esc(g.格名) +
+          '<span style="color:var(--text3)">　原片 ' + n1(g.段时长) + ' 秒</span>' +
+          '<br><span style="color:var(--text3)">' + esc(g.条件.join('，')) + '</span></span></div>';
+      }).join('') + '</div>' : '') + '</div>';
+  }).join('');
+  $('lib-body').querySelectorAll('[data-l]').forEach(function(el){
+    el.onclick = function(){ var i = el.dataset.l;
+      if(开库[i]) delete 开库[i]; else 开库[i] = true; 画库(); };
+  });
+  $('lib-body').querySelectorAll('[data-x]').forEach(function(el){
+    el.onclick = function(e){ e.stopPropagation(); 下载([模板库[el.dataset.x]], 模板库[el.dataset.x].名); };
+  });
+  $('lib-body').querySelectorAll('[data-d]').forEach(function(el){
+    el.onclick = function(e){ e.stopPropagation();
+      var i = Number(el.dataset.d);
+      if(待删 !== i){ 待删 = i; 画库(); clearTimeout(删计时);
+        删计时 = setTimeout(function(){ 待删 = -1; 画库(); }, 4000); return; }
+      var t = 模板库[i];
+      if(t.内置){
+        待删 = -1; 画库();
+        提示('随包预置的模板不能删。自己存进来的可以删'); return;
+      }
+      api('/admake/cut-templates/' + t.id, {method:'DELETE'}).then(function(){
+        待删 = -1; 开库 = {};
+        提示('已删除模板：' + t.名);
+        return 拉模板库();
+      }).then(查重).catch(function(e){ 提示('删不掉：' + e.message); }); };
+  });
+}
+var 开库 = {}, 待删 = -1, 删计时;
+function 下载(列, 名){
+  var b = new Blob([JSON.stringify(列, null, 2)], {type:'application/json'});
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(b); a.download = 名 + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+}
+function 导出全部(){
+  if(!模板库.length){ 提示('模板库是空的'); return; }
+  下载(模板库, '模板库_' + 模板库.length + ' 个');
+  提示('已导出 ' + 模板库.length + ' 个模板');
+}
+function 读入(e){
+  var f = e.target.files && e.target.files[0]; if(!f) return;
+  var r = new FileReader();
+  r.onload = function(){
+    try{
+      var d = JSON.parse(r.result); if(!Array.isArray(d)) d = [d];
+      var n = 0;
+      d.forEach(function(t){
+        if(!t || !t.名 || !t.格) return;
+        var 名 = t.名; var k = 2;
+        while(有同名(名)){ 名 = t.名 + '（' + k + '）'; k++; }
+        t.名 = 名; t.来源 = '导入'; 模板库.unshift(t); n++;
+      });
+      画库(); 查重(); 提示(n ? '已导入 ' + n + ' 个模板' : '文件里没有可用的模板');
+    }catch(err){ 提示('这个文件不是模板 JSON'); }
+  };
+  r.readAsText(f); e.target.value = '';
+}
+
+/* 页签切换 */
+$('tabs').querySelectorAll('[data-p]').forEach(function(el){
+  el.onclick = function(){
+    $('tabs').querySelectorAll('[data-p]').forEach(function(x){ x.classList.remove('on'); });
+    el.classList.add('on');
+    $('pane-draft').classList.toggle('hide', el.dataset.p !== 'draft');
+    $('pane-lib').classList.toggle('hide', el.dataset.p !== 'lib');
+    $('d-s').style.display = el.dataset.p === 'draft' ? '' : 'none';
+  };
+});
+
+/* ── 播放器：不切片，在原素材上播这一段的区间 ── */
+var V = $('seg-v');
+function 装片(s){
+  var m = 素材[s.素材] || 当前;
+  if(V.getAttribute('src') !== m.片源){
+    V.setAttribute('src', m.片源); V.load();
+  }
+  跳到(s.起 || 0);
+  改播放字(); 走时();
+}
+function 跳到(秒){
+  var 走 = function(){ try{ V.currentTime = 秒; }catch(e){} 走时(); };
+  if(V.readyState >= 1) 走(); else V.addEventListener('loadedmetadata', 走, {once:true});
+}
+function 播放(){ if(V.paused){ if(V.currentTime >= (当前段.止 || 0) - 0.2) 跳到(当前段.起 || 0); V.play(); } else V.pause(); }
+function 改播放字(){ $('v-play').textContent = V.paused ? '播放' : '暂停'; }
+function 回段首(){ 跳到(当前段.起 || 0); }
+function 走时(){
+  var s = 当前段, 起 = s.起 || 0, 长 = s.段时长 || 1;
+  var t = V.currentTime || 0;
+  if(!V.paused && t > (s.止 || 0)){ V.pause(); 跳到(s.止 || 0); return; }   // 播到段尾就停
+  var 比 = Math.min(Math.max((t - 起) / 长, 0), 1);
+  $('v-fill').style.width = (比 * 100).toFixed(2) + '%';
+  $('v-knob').style.left = (比 * 100).toFixed(2) + '%';
+  $('v-time').textContent = mmss(Math.max(t - 起, 0)) + ' / ' + mmss(长);
+}
+
+/* 进度条：点一下定位，按住拖动 */
+function 拖进度(x){
+  var r = $('v-prog').getBoundingClientRect();
+  var 比 = Math.min(Math.max((x - r.left) / r.width, 0), 1);
+  跳到((当前段.起 || 0) + (当前段.段时长 || 0) * 比);
+}
+var 正在拖 = false;
+$('v-prog').addEventListener('mousedown', function(e){
+  正在拖 = true; V.pause(); 拖进度(e.clientX); e.preventDefault();
+});
+document.addEventListener('mousemove', function(e){ if(正在拖) 拖进度(e.clientX); });
+document.addEventListener('mouseup', function(){ 正在拖 = false; });
+
+/* 快捷键：空格播放暂停，左右各挪 5 秒 */
+document.addEventListener('keydown', function(e){
+  var t = e.target, 标签 = t && t.tagName;
+  if(标签 === 'INPUT' || 标签 === 'TEXTAREA' || 标签 === 'SELECT') return;
+  if(e.code === 'Space'){ e.preventDefault(); 播放(); return; }
+  if(e.code === 'ArrowLeft' || e.code === 'ArrowRight'){
+    e.preventDefault();
+    var 步 = e.code === 'ArrowLeft' ? -5 : 5;
+    var 秒 = Math.min(Math.max((V.currentTime || 0) + 步, 当前段.起 || 0), 当前段.止 || 0);
+    跳到(秒);
+  }
+});
+
+/* ── 上传：一次最多 5 条，排好队再逐条分析 ── */
+var 最多 = 5, 最长 = 30 * 60;
+var 待传 = [];
+var 上移图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 15 6-6 6 6"/></svg>';
+var 下移图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+var 叉图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+function 开上传(){
+  待传 = [];
+  画待传();
+  $('up-modal').classList.add('visible');
+}
+function 关上传(){ $('up-modal').classList.remove('visible'); }
+
+var 可传格式 = ['mp4', 'mov'];
+function 量时长(f, 回){
+  var u = URL.createObjectURL(f), v = document.createElement('video');
+  v.preload = 'metadata';
+  v.onloadedmetadata = function(){ 回(v.duration); URL.revokeObjectURL(u); };
+  v.onerror = function(){ 回(null); URL.revokeObjectURL(u); };
+  v.src = u;
+}
+function 选好文件(e){
+  var fs = [].slice.call(e.target.files || []);
+  e.target.value = '';
+  if(!fs.length) return;
+  var 挡格式 = [], 挡时长 = [], 挡条数 = 0;
+  fs = fs.filter(function(f){
+    var 后 = (f.name.split('.').pop() || '').toLowerCase();
+    if(可传格式.indexOf(后) < 0){ 挡格式.push(f.name); return false; }
+    return true;
+  });
+  var 余 = Math.max(最多 - 待传.length, 0);
+  挡条数 = Math.max(fs.length - 余, 0);
+  fs = fs.slice(0, 余);
+  var 等 = fs.length;
+  var 收 = function(){
+    if(--等) return;
+    画待传();
+    报挡下的(挡格式, 挡时长, 挡条数);
+  };
+  if(!等){ 报挡下的(挡格式, 挡时长, 挡条数); return; }
+  fs.forEach(function(f){
+    量时长(f, function(d){
+      if(d != null && d > 最长) 挡时长.push(f.名 || f.name);
+      else 待传.push({名:f.name, 时长:d, file:f});   // 留住 File，上传要用它
+      收();
+    });
+  });
+}
+function 报挡下的(挡格式, 挡时长, 挡条数){
+  var 话 = [];
+  if(挡格式.length) 话.push(挡格式.length === 1
+    ? 挡格式[0] + ' 不是 mp4 或 mov，没有加进来'
+    : 挡格式.length + ' 个文件不是 mp4 或 mov，没有加进来');
+  if(挡时长.length) 话.push(挡时长.length === 1
+    ? 挡时长[0] + ' 超过 30 分钟，没有加进来'
+    : 挡时长.length + ' 个文件超过 30 分钟，没有加进来');
+  if(挡条数) 话.push('一次最多 ' + 最多 + ' 条，多出来的 ' + 挡条数 + ' 个没有加进来');
+  if(话.length) 提示(话.join('；'));
+}
+function 挪(i, 步){
+  var j = i + 步;
+  if(j < 0 || j >= 待传.length) return;
+  var a = 待传[i]; 待传[i] = 待传[j]; 待传[j] = a;
+  画待传();
+}
+function 删掉(i){
+  var f = 待传.splice(i, 1)[0];
+  画待传();
+  提示('已从队列里删掉：' + f.名);
+}
+function 画待传(){
+  $('up-list').innerHTML = 待传.map(function(f, i){
+    return '<div class="uprow">' +
+      '<span class="upix">' + (i + 1) + '</span>' +
+      '<span class="upn" title="' + esc(f.名) + '">' + esc(f.名) + '</span>' +
+      '<span class="updur">' + (f.时长 == null ? '读取中' : mmss(f.时长)) + '</span>' +
+      '<span class="upact">' +
+        '<button class="uib" onclick="挪(' + i + ',-1)" title="往前排"' + (i === 0 ? ' disabled' : '') + '>' + 上移图 + '</button>' +
+        '<button class="uib" onclick="挪(' + i + ',1)" title="往后排"' + (i === 待传.length - 1 ? ' disabled' : '') + '>' + 下移图 + '</button>' +
+        '<button class="uib danger" onclick="删掉(' + i + ')" title="从队列里删掉">' + 叉图 + '</button>' +
+      '</span></div>';
+  }).join('');
+  var 有 = 待传.length > 0;
+  $('up-go').disabled = !有;
+  $('up-later').disabled = !有;
+}
+
+/* 传上去、合成 Part、重新拉一遍数据。一条素材＝一个 Part。 */
+async function 收进列表(){
+  if(!待传.length) return [];
+  var 旧 = Object.keys(素材);
+  var fd = new FormData();
+  待传.forEach(function(f){ if(f.file) fd.append('files', f.file); });
+  $('up-go').disabled = true; $('up-later').disabled = true;
+  try {
+    await fetch(API + '/admake/projects/' + 素材库项目.id + '/sources',
+      {method:'POST', headers:{Authorization:'Bearer ' + TOKEN}, body:fd})
+      .then(function(r){ if(!r.ok) throw new Error('上传失败 ' + r.status); });
+    await api('/admake/projects/' + 素材库项目.id + '/build-parts', {method:'POST'});
+  } catch(e){
+    提示('传不上去：' + e.message);
+    $('up-go').disabled = false; $('up-later').disabled = false;
+    return [];
+  }
+  待传 = [];
+  关上传();
+  await 装数据();
+  var 新 = Object.keys(素材).filter(function(k){ return 旧.indexOf(k) < 0; });
+  画全部(); 画面板(); 画当前();
+  return 新;
+}
+async function 跑分析(){
+  var 得 = await 收进列表();
+  if(!得.length) return;
+  选素材(得[0]);
+  得.forEach(开分析);
+  提示('已提交 ' + 得.length + ' 条，拆段要几分钟，进度见右侧');
+}
+async function 稍后分析(){
+  var 得 = await 收进列表();
+  if(!得.length) return;
+  选素材(得[0]);
+  提示('已上传 ' + 得.length + ' 条，在素材列表里点开始分析');
+}
+
+var 提示计时;
+function 提示(t){
+  $('toast').textContent = t; $('toast').classList.add('show');
+  clearTimeout(提示计时);
+  提示计时 = setTimeout(function(){ $('toast').classList.remove('show'); }, 3000);
+}
+
+function 画全部(){
+  var 好 = 状(当前.编号) === '已完成';
+  $('three').classList.toggle('hide', !好);
+  $('waitbox').classList.toggle('hide', 好);
+  画当前();
+  if(好){ 画段序(); 画字段(); 画草稿(); return; }
+  画等待();
+  $('seq-t').textContent = '段序';
+  $('seq-s').textContent = '';
+  $('lane').innerHTML = '<div class="empty">分析完成后，这里出现拆好的段</div>';
+  $('mat-meta').textContent = '';
+  勾 = {}; 画草稿();
+  $('d-s').textContent = '';
+}
+function 画等待(){
+  var e = 态[当前.编号] || {}, s = e.状态;
+  $('seg-t').textContent = '段详情';
+  $('seg-s').textContent = '';
+  $('wait-t').textContent = s === '分析中' ? '正在分析这条素材'
+    : (s === '失败' ? '这条素材分析失败' : '这条素材还没分析');
+  $('wait-s').textContent = s === '分析中' ? '分析在后台进行，可以先去看别的素材。'
+    : s === '失败' ? (e.原因 || '没跑通')
+    : '';
+  $('wait-bar').classList.toggle('hide', s !== '分析中');
+  $('wait-fill').style.width = (e.进度 || 0) + '%';
+  $('wait-go').classList.toggle('hide', s === '分析中');
+  $('wait-go').textContent = s === '失败' ? '重新分析' : '开始分析';
+}
+
+/* 起步：没登录先回首页；拉数据、拉模板库，再画。 */
+(async function 起(){
+  if(!TOKEN){ location.href = '../../home.html'; return; }
+  try {
+    await 装数据();
+  } catch(e){
+    提示('连不上后端：' + e.message);
+    return;
+  }
+  默认全勾(); 画全部(); 画面板();
+  await 拉模板库();
+  if(!D.素材.length) 开上传();     // 一条素材都没有，直接把上传弹窗摆出来
+})();
+
+</script>
