@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""把 structure.json 写进 admake_segments 和 admake_plot_points。
+"""把装配好的段写进 admake_segments 和 admake_plot_points。
 
-拆解产物里段的起止是「_起 / _止」，单位是 Part 视频里的绝对秒，跟播放器
-和导轨用的是同一条时间轴，不用换算。
+进来的是 装配.py 的产物，字段名已经换成界面和模板匹配用的那套。段的起止是
+Part 视频里的绝对秒，跟播放器和导轨用的是同一条时间轴，不用换算。
+拆解管线的原始 structure.json 用「_起 / _止」，这里一并认，省得调用方分两种写法。
 
 每次写之前先清掉这个 Part 原有的段：重新分析就是覆盖，留着旧的会让同一个
 Part 出现两套段。剧情点挂在段上，靠外键级联一起走。
@@ -15,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.admake import AdmakePlotPoint, AdmakeSegment
 
 # 单独立列的字段，别在 JSON 里重复存一份
-已成列 = {'段序号', '_起', '_止', '_段时长', '这段算哪种戏', '段的尺度档', '剧情点'}
+已成列 = {'段序号', '起', '止', '段时长', '_起', '_止', '_段时长',
+        '这段算哪种戏', '段的尺度档', '剧情点'}
 
 
 def _数(v, 默=0.0):
@@ -36,14 +38,15 @@ async def 写段库(db: AsyncSession, part_id: int, 产物: dict) -> dict:
 
     点数 = 0
     for i, s in enumerate(段们):
-        起, 止 = _数(s.get('_起')), _数(s.get('_止'))
+        起 = _数(s.get('起', s.get('_起')))
+        止 = _数(s.get('止', s.get('_止')))
         档 = s.get('段的尺度档')
         seg = AdmakeSegment(
             part_id=part_id,
             seg_index=int(s.get('段序号') or (i + 1)),
             start_sec=起,
             end_sec=止,
-            duration_sec=_数(s.get('_段时长'), 止 - 起),
+            duration_sec=_数(s.get('段时长', s.get('_段时长')), 止 - 起),
             seg_type=s.get('这段算哪种戏') or None,
             intensity=int(档) if isinstance(档, (int, float)) else 0,
             fields_json=json.dumps(

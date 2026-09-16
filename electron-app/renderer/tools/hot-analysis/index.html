@@ -1292,7 +1292,7 @@ var 可见 = [];
 /* Part 的分析状态映射成这一页的说法。段拆出来了才算已完成——
    ai_status 是 done 但一段都没有的话，界面上是空的，不该说「已完成」。 */
 function _状态(part, 段数){
-  if(part.ai_status === 'processing') return '分析中';
+  if(part.ai_status === 'analyzing') return '分析中';
   if(part.ai_status === 'failed') return '分析失败';
   return 段数 ? '已完成' : '待分析';
 }
@@ -1322,9 +1322,8 @@ function _转段(seg, 编号){
   };
 }
 
-/* 一条素材＝一个 hot 项目，各自一个 Part。
-   不能共用一个项目：build-parts 每次都把项目里的 Part 全删了重建，
-   多传一条素材就会把之前所有素材分析好的段一起带走。 */
+/* 一条素材＝一个 hot 项目，各自一格片源。
+   素材之间互不相干：删掉一条、重传一条，都不该动到别的素材分析好的段。 */
 async function 装数据(){
   var ps = await api('/admake/projects');
   var 素材们 = ps.filter(function(x){ return x.project_kind === 'hot'; });
@@ -1336,7 +1335,10 @@ async function 装数据(){
     try { parts = await api('/admake/projects/' + proj.id + '/parts'); } catch(e){ parts = []; }
     var pt = parts[0];
     if(!pt) continue;
+    // 同名素材要能并存：编号是这一页各处的键（勾选、状态、进度、段 ID 都挂在它上面），
+    // 重名直接覆盖，先传的那条连同分析好的段都点不开了。
     var 编号 = proj.title;
+    if(素材[编号]) 编号 = proj.title + '（' + proj.id + '）';
     var segs = [];
     try { segs = await api('/admake/parts/' + pt.id + '/segments'); } catch(e){ segs = []; }
     var m = {编号:编号, 项目id:proj.id, part_id:pt.id, source_ids:pt.source_ids || '[]',
@@ -1379,19 +1381,21 @@ function 画面板(){
   $('mp-list').innerHTML = 可见.map(function(id){
     var m = 素材[id], e = 态[id] || {}, s = e.状态 || '已完成';
     var 图 = m.段[0] ? 段封面(m.段[0], m.片源) : '<img alt="">';
+    var 没跑成 = (s === '分析失败' || s === '分析中断');
     var 副 = mmss(m.素材时长) +
       (s === '已完成' ? ' · ' + m.段.length + ' 段 · ' + (e.时间 || '')
        : s === '分析中' ? ' · ' + Math.round(e.进度 || 0) + '%'
-       : s === '失败'   ? ' · ' + (e.原因 || '')
+       : 没跑成 ? ' · ' + (e.原因 || '')
        : ' · ' + (e.时间 || ''));
     var 签 = s === '已完成' ? '<span class="st ok">已完成</span>'
       : s === '分析中' ? '<span class="st run">分析中</span>'
-      : s === '失败' ? '<span class="st bad">失败</span>'
+      : s === '分析失败' ? '<span class="st bad">失败</span>'
+      : s === '分析中断' ? '<span class="st bad">断了</span>'
       : '<span class="st wait">待分析</span>';
     var 内置 = 有内置 && id === 示范, 锁 = 内置 || s === '分析中';
-    var 动 = (s === '待分析' || s === '失败')
+    var 动 = (s === '待分析' || 没跑成)
       ? '<button class="mib" onclick="event.stopPropagation();开分析(\'' + id + '\')" title="' +
-        (s === '失败' ? '重新分析' : '开始分析') + '">' + 跑图 + '</button>' : '';
+        (没跑成 ? '重新分析' : '开始分析') + '">' + 跑图 + '</button>' : '';
     return '<div class="mrow' + (id === 当前.编号 ? ' on' : '') + '" onclick="选素材(\'' + id + '\')">' +
       图 +
       '<div class="mc"><div class="mn">' + (内置 ? '内置示范　' : '') + esc(id) + '</div>' +
@@ -1482,9 +1486,14 @@ async function 开分析(id){
       clearInterval(跑表[id]); delete 跑表[id];
       await 装数据();
       var 段数 = (素材[id] || {段:[]}).段.length;
-      态[id] = {状态:段数 ? '已完成' : '分析失败', 进度:段数 ? 100 : 0,
-                时间:'刚刚', 原因:st.error || ''};
-      提示(段数 ? (id + ' 拆出 ' + 段数 + ' 段') : (id + ' 没拆出段' + (st.error ? '：' + st.error : '')));
+      // 后端重启会把任务记录丢掉，状态变成 idle，而库里这个 Part 还写着分析中。
+      // 这种情况不是失败，是这一趟断了，重新分析能接着已有产物往下跑。
+      var 断了 = st.status === 'idle' && !段数 && 状(id) === '分析中';
+      态[id] = {状态:段数 ? '已完成' : (断了 ? '分析中断' : '分析失败'), 进度:段数 ? 100 : 0,
+                时间:'刚刚', 原因:st.error || (断了 ? '后端重启，任务断了' : '')};
+      提示(段数 ? (id + ' 拆出 ' + 段数 + ' 段')
+                : (断了 ? (id + ' 的分析断了，点开始分析可以接着跑')
+                        : (id + ' 没拆出段' + (st.error ? '：' + st.error : ''))));
       if(当前.编号 === id){ 当前 = 素材[id] || 当前; 当前段 = 当前.段[0] || null; 默认全勾(); }
       画全部();
     }
@@ -2073,6 +2082,7 @@ async function 收进列表(){
       var r = await fetch(API + '/admake/projects/' + proj.id + '/sources',
         {method:'POST', headers:{Authorization:'Bearer ' + TOKEN}, body:fd});
       if(!r.ok) throw new Error('上传失败 ' + r.status);
+      // 爆款素材直接拿上传的原文件当片源，这一步只登记时长和路径，不转码
       await api('/admake/projects/' + proj.id + '/build-parts', {method:'POST'});
     } catch(e){ 失败.push(f.名 + '：' + e.message); }
   }
@@ -2121,17 +2131,21 @@ function 画全部(){
 }
 function 画等待(){
   var e = 态[当前.编号] || {}, s = e.状态;
+  var 没跑成 = (s === '分析失败' || s === '分析中断');
   $('seg-t').textContent = '段详情';
   $('seg-s').textContent = '';
   $('wait-t').textContent = s === '分析中' ? '正在分析这条素材'
-    : (s === '失败' ? '这条素材分析失败' : '这条素材还没分析');
+    : s === '分析失败' ? '这条素材分析失败'
+    : s === '分析中断' ? '这条素材的分析断了'
+    : '这条素材还没分析';
   $('wait-s').textContent = s === '分析中' ? '分析在后台进行，可以先去看别的素材。'
-    : s === '失败' ? (e.原因 || '没跑通')
+    : s === '分析中断' ? '已经跑完的步骤有缓存，重新分析会接着往下跑。'
+    : s === '分析失败' ? (e.原因 || '没跑通')
     : '';
   $('wait-bar').classList.toggle('hide', s !== '分析中');
   $('wait-fill').style.width = (e.进度 || 0) + '%';
   $('wait-go').classList.toggle('hide', s === '分析中');
-  $('wait-go').textContent = s === '失败' ? '重新分析' : '开始分析';
+  $('wait-go').textContent = 没跑成 ? '重新分析' : '开始分析';
 }
 
 /* 起步：没登录先回首页；拉数据、拉模板库，再画。 */

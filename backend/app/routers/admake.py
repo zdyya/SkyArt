@@ -1688,6 +1688,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
     errors: list[str] = []
     part_durations: list[float] = []      # 已完成 Part 的耗时，用于估算剩余时间
     active: dict[int, dict] = {}          # part_id -> {name, stage}，进行中的 Part
+    拆好的: dict[int, str] = {}           # part_id -> Part 视频绝对路径，段库这条线最后统一打分用
     done_counter = {"n": 0}
     db_write_lock = asyncio.Lock()        # SQLite 单写者：并发保存标记时避免 database is locked
 
@@ -1818,13 +1819,13 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 comp_skip_bytes = result.get("comp_skip_bytes", 0)
 
                 if project_kind in _段库类型:
-                    from app.database import AsyncSessionLocal as _S
-                    from app.services.decompose.入库 import 写段库
-                    async with db_write_lock:
-                        async with _S() as _db:
-                            计 = await 写段库(_db, part_id, parsed)
-                    highlights = [None] * 计["段"]          # 下面的日志和计数按条数读，借用它
-                    hooks      = [None] * 计["剧情点"]
+                    # 这里先不写库。剧情分和尺度分的权重要拿整个项目的段一起算，
+                    # 装配成界面用的字段名也在那一步，所以等所有 Part 拆完再统一做。
+                    拆好的[part_id] = (part.file_path if os.path.isabs(part.file_path)
+                                      else os.path.join(settings.UPLOAD_DIR, part.file_path))
+                    段们 = parsed.get("段") or []
+                    highlights = [None] * len(段们)        # 下面的日志和计数按条数读，借用它
+                    hooks      = [None] * sum(len(x.get("剧情点") or []) for x in 段们)
                 else:
                     highlights = parsed.get("highlights", [])
                     hooks      = parsed.get("hooks", [])
@@ -1900,6 +1901,40 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
         _ai_tasks[project_id]["elapsed_seconds"] = int(_time.monotonic() - run_start)
         _ai_tasks[project_id]["active_parts"] = []
         return
+
+    # 段库这条线的最后一步：打剧情分和尺度分，再装配成界面和模板匹配用的字段名。
+    # 权重按取值在整库里的稀缺度定，一个 Part 才几段，必须等整个项目拆完一起算。
+    if project_kind in _段库类型 and 拆好的:
+        try:
+            from app.services.decompose.驱动 import 全项目打分, 工作目录
+            from app.services.decompose.入库 import 写段库
+            根 = os.path.dirname(next(iter(拆好的.values())))
+            装好的 = await asyncio.get_running_loop().run_in_executor(
+                None, 全项目打分, 根)
+            async with db_write_lock:
+                async with AsyncSessionLocal() as _db:
+                    for _pid, _mp4 in 拆好的.items():
+                        段们 = 装好的.get(工作目录(_mp4))
+                        if 段们 is None:
+                            continue
+                        计 = await 写段库(_db, _pid, {"段": 段们})
+                        _wlog(f"入库       : part_id={_pid} 段 {计['段']} 剧情点 {计['剧情点']}\n")
+            log_event("admake.ai_analyze.assemble", project_id=project_id,
+                      n_parts=len(拆好的))
+        except Exception as e:
+            # 走到这里 Part 已经拆完了，只是没落库。状态写成失败，界面上能看出
+            # 要重跑，不然它显示「待分析」，跟没跑过一样。
+            last_error = f"段落入库失败：{str(e)[:200]}"
+            log_failure("admake.ai_analyze.assemble", e, project_id=project_id)
+            async with db_write_lock:
+                async with AsyncSessionLocal() as _db:
+                    for _pid in 拆好的:
+                        _r = await _db.execute(select(AdmakePart).where(AdmakePart.id == _pid))
+                        _p = _r.scalar_one_or_none()
+                        if _p:
+                            _p.ai_status = "failed"
+                            _p.ai_error = last_error[:500]
+                    await _db.commit()
 
     total_elapsed = _time.monotonic() - run_start
     summary = (
@@ -2285,6 +2320,48 @@ def _dispatch_part_build(background_tasks: BackgroundTasks, part_id: int,
         background_tasks.add_task(_build_part, part_id, [s.file_path for s in group], limits)
 
 
+async def _爆款素材建格(pid: int, p: AdmakeProject, db: AsyncSession) -> list[AdmakePartOut]:
+    """爆款素材直接拿上传的原文件当片源，不合成、不转码。
+
+    短剧那条路要把 38 集拼成 9 个物理 mp4，所以有合成这一步。爆款素材上传的就是
+    一条投过的成片，拆段、播放、导出读的都是同一个文件，再转一遍码只是白等十几秒，
+    转码失败还会把整条素材卡在「建片源失败」上。
+
+    已经建过的不重建：Part 一删，它底下分析好的段会跟着级联删掉。
+    """
+    存量 = {}
+    for old in p.parts:
+        try:
+            for sid in json.loads(old.source_ids or "[]"):
+                存量[sid] = old
+        except Exception:
+            pass
+
+    parts: list[AdmakePart] = []
+    新建: list[AdmakePart] = []
+    for i, src in enumerate(p.sources):
+        已有 = 存量.get(src.id)
+        if 已有 is not None:
+            parts.append(已有)
+            continue
+        part = AdmakePart(
+            project_id=pid,
+            name=f"素材{i + 1}",
+            part_index=i,
+            duration_sec=src.duration_sec,
+            status="ready",
+            file_path=src.file_path,
+            source_ids=json.dumps([src.id]),
+        )
+        db.add(part); parts.append(part); 新建.append(part)
+
+    await db.flush()
+    for pt in 新建:
+        await db.refresh(pt)
+    log_event("admake.build_parts.hot", project_id=pid, n_parts=len(parts), n_new=len(新建))
+    return [AdmakePartOut.model_validate(pt) for pt in parts]
+
+
 @router.post("/projects/{pid}/build-parts", response_model=list[AdmakePartOut])
 async def build_parts(
     pid: int,
@@ -2303,6 +2380,8 @@ async def build_parts(
     if not p.sources:
         raise HTTPException(400, "请先上传源视频")
 
+    kind = _project_kind(p)
+
     # Probe duration+resolution+fps for any source that hasn't been probed yet.
     # A failed probe must NOT silently leave duration_sec at 0 — a 0-duration source
     # defeats _group_into_parts' MAX_SEC cap (0 always fits), letting unrelated sources
@@ -2319,16 +2398,19 @@ async def build_parts(
             info = await vid_svc.get_video_info(abs_p)
             src.duration_sec = info["duration"]
             src.width, src.height, src.fps = info["width"], info["height"], info["fps"]
-            try:
-                head_t, tail_t = await asyncio.to_thread(
-                    detect_transitions, abs_p, info["duration"])
-                src.head_trim, src.tail_trim = head_t, tail_t
-                log_event("admake.transition_detected", source_id=src.id,
-                          file=src.original_filename, head_trim=head_t, tail_trim=tail_t,
-                          detected=bool(head_t or tail_t), where="build_parts")
-            except Exception as e2:
-                # 检测失败只是不裁片尾，不该拖垮建 Part
-                log_failure("admake.transition_detect", e2, source_id=src.id)
+            # 爆款素材是一条投出去过的完整广告，片头片尾都算内容，一帧不裁，
+            # 也就不用再抽 120 帧去找转场。
+            if kind != "hot":
+                try:
+                    head_t, tail_t = await asyncio.to_thread(
+                        detect_transitions, abs_p, info["duration"])
+                    src.head_trim, src.tail_trim = head_t, tail_t
+                    log_event("admake.transition_detected", source_id=src.id,
+                              file=src.original_filename, head_trim=head_t, tail_trim=tail_t,
+                              detected=bool(head_t or tail_t), where="build_parts")
+                except Exception as e2:
+                    # 检测失败只是不裁片尾，不该拖垮建 Part
+                    log_failure("admake.transition_detect", e2, source_id=src.id)
         except Exception as e:
             log_failure("admake.probe_duration", e, source_id=src.id, file_path=src.file_path)
             raise HTTPException(400, f"素材时长探测失败，文件可能已损坏：{src.file_path}")
@@ -2342,6 +2424,9 @@ async def build_parts(
         resolutions=[f"{s.width}x{s.height}" for s in p.sources],
         fps_list=[s.fps for s in p.sources],
     )
+
+    if kind == "hot":
+        return await _爆款素材建格(pid, p, db)
 
     for old_part in p.parts:
         await db.delete(old_part)
@@ -3175,6 +3260,13 @@ async def start_ai_analyze(
         if not parts:
             raise HTTPException(400, "所有 Part 视频已分析过，无需重新分析")
 
+    # 任务记录在这里就占上，不等后台任务开跑。后台任务是响应发出去之后才执行的，
+    # 那几百毫秒里状态接口读到的还是上一轮留下的 done，前端会把它当成这一轮跑完了，
+    # 于是弹一句「没拆出段」，而 Part 的 ai_status 已经是 analyzing，界面又写着分析中。
+    _ai_tasks[pid] = {
+        "status": "processing", "progress": 0, "total": len(parts), "error": "",
+        "active_parts": [], "eta_seconds": None, "finished_parts": [],
+    }
     background_tasks.add_task(_run_ai_analyze, pid, [p.id for p in parts], ai_model, project.title, kind)
     return {"project_id": pid, "total": len(parts), "status": "processing", "ai_model": ai_model}
 

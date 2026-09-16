@@ -85,6 +85,18 @@ class _Tee:
     def fileno(self):
         return self._orig.fileno()
 
+    def __getattr__(self, name):
+        """自己没有的属性一律转给原始流。
+
+        拆解管线的几个模块在 import 时就调 sys.stdout.reconfigure(line_buffering=True)，
+        标准输出被这里换成 _Tee 之后就找不到这个方法，整条分析任务当场报
+        「'_Tee' object has no attribute 'reconfigure'」。encoding、buffer、writelines
+        同理，转发一次全都有了。
+        """
+        if name.startswith("_"):
+            raise AttributeError(name)
+        return getattr(self._orig, name)
+
 
 _installed = False
 
