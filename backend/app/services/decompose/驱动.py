@@ -11,6 +11,7 @@
 整套是同步阻塞的（ffmpeg、OCR、模型调用都是），调用方要丢进线程池，别在事件
 循环里直接 await。
 """
+import concurrent.futures as cf
 import glob
 import json
 import os
@@ -73,13 +74,17 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
         if 报阶段:
             报阶段(键, dict(步骤)[键])
 
+    # 认字幕和找镜头都是本地 ffmpeg 加 OCR，谁也不吃谁的产物，串着跑纯粹是排队。
+    # 找镜头先丢进后台，认字幕在前台跑，等切段那一步之前把它收回来——
+    # 一个 6 分钟的 Part 这样能省下找镜头那一分钟。
     到('subtitle')
-    if not 有('sub.tsv'):
-        prep.cmd_sub(mp4)
-
-    到('shots')
-    if not 有('detect.json'):
-        prep.cmd_detect(mp4)
+    with cf.ThreadPoolExecutor(1) as ex:
+        镜头活 = ex.submit(prep.cmd_detect, mp4) if not 有('detect.json') else None
+        if not 有('sub.tsv'):
+            prep.cmd_sub(mp4)
+        到('shots')
+        if 镜头活:
+            镜头活.result()      # 出错在这里抛，不会被吞掉
 
     到('cutting')
     if not 有('round1_input.txt'):

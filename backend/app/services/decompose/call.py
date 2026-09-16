@@ -53,7 +53,12 @@ class Blocked(Exception):
 MODEL = 分析模型()
 if not MODEL.startswith('qwen'):
     raise RuntimeError(f'MODEL 只能是 qwen 开头的名字，现在是 {MODEL}')
-RUNS = int(os.environ.get('RUNS', '3'))
+# 跑几遍取并集。默认 2：拿一部 57 分钟的剧（58 个段、1259 个时刻）离线算过，
+# 三遍里 67.8% 的时刻三遍都认出来、21.0% 两遍认出来、只有 11.3% 是一遍独有。
+# 只跑两遍期望保住 96.2% 的时刻，跑一遍保住 85.5%。两遍省三分之一的钱和调用，
+# 换 3.8% 的时刻，划算；要全召回把 RUNS 设回 3。
+# 注意段内并发跟着它走（SEGPAR 默认 6 // RUNS），改成 2 之后段间并发从 2 升到 3。
+RUNS = int(os.environ.get('RUNS', '2'))
 
 # 阿里云 MaaS 白名单通道，美国 us-east-1。调用规范见 Work/阿里云白名单调用规范.md。
 QWEN_HOST = 'https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com'
@@ -430,8 +435,16 @@ def _gen_qwen(parts, thinking, tag):
                               'content': ''.join(c['text'] for c in content)}]}
         if budget:
             body['thinking_budget'] = budget
+    # 退避按失败原因分两档。网络和网关的错要让对面喘口气，解析失败不用——
+    # 响应已经完整收回来了，只是这次吐的格式不对，等三十秒改变不了下一次的结果。
+    # 实测一部 57 分钟的剧跑下来重试 29 次，其中 25 次是解析失败，
+    # 按老阶梯白等了 12 分半。
+    网络退避 = (0, 30, 60, 120)
+    解析退避 = (0, 2, 5, 10)
     last = None
-    for wait in (0, 30, 60, 120):
+    退避 = 网络退避
+    for 第 in range(4):
+        wait = 退避[第]
         if wait:
             print(f'    {wait} 秒后重试…（上一次：{last}）')
             time.sleep(wait)
@@ -455,10 +468,14 @@ def _gen_qwen(parts, thinking, tag):
             raise          # 同样的内容重试没有意义
         except BadSchema as e:
             last = f'BadSchema: {e}'
+            退避 = 解析退避
             print(f'    {tag} 字段名不对：{e}')
-        except (httpx.HTTPError, KeyError, IndexError, TypeError,
-                json.JSONDecodeError) as e:
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
             last = f'{type(e).__name__}: {e}'
+            退避 = 解析退避
+        except httpx.HTTPError as e:
+            last = f'{type(e).__name__}: {e}'
+            退避 = 网络退避
     raise 拆解失败(f'{tag} 四次都失败：{last}')
 
 

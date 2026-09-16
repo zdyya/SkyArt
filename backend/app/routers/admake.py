@@ -3233,6 +3233,9 @@ async def start_ai_analyze(
     background_tasks: BackgroundTasks,
     only_unanalyzed: bool = Query(False),
     part_id: int | None = Query(None),  # 只重析这一个 Part（列表项「↻ 重析」入口）
+    # 只跑指定的几个 Part，逗号分隔。一个项目十几个 Part 全量跑要几小时，
+    # 先挑两个跑出真实耗时再决定要不要全量。
+    part_ids: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -3257,6 +3260,11 @@ async def start_ai_analyze(
         parts = [p for p in parts if p.id == part_id]
         if not parts:
             raise HTTPException(404, "该 Part 不存在或尚未就绪")
+    elif part_ids:
+        挑 = {int(x) for x in part_ids.split(",") if x.strip().isdigit()}
+        parts = [p for p in parts if p.id in 挑]
+        if not parts:
+            raise HTTPException(404, "指定的 Part 都不存在或尚未就绪")
 
     if only_unanalyzed:
         # 「分析过没有」两种类型看的产物不同：老路数标记点，段路径数段。
