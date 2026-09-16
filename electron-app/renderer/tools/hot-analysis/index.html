@@ -1253,7 +1253,6 @@ body.firstrun .wrap{height:calc(100vh - 52px - var(--fbar-h, 58px));}
 var API = 'http://127.0.0.1:' + ((window.electronAPI && window.electronAPI.backendPort) || 8764) + '/api/v1';
 var UPLOADS = API.replace('/api/v1', '') + '/uploads';
 var TOKEN = localStorage.getItem('skyart_token') || '';
-var 素材库项目 = null;
 
 async function api(path, opt){
   var o = Object.assign({headers:{}}, opt || {});
@@ -1323,28 +1322,24 @@ function _转段(seg, 编号){
   };
 }
 
-/* 爆款素材归在一个约定的项目里。没有就建一个——不建的话这一页空着，
-   而「上传爆款素材」没地方可传。 */
-async function _素材库项目(){
-  var ps = await api('/admake/projects');
-  var 名 = '爆款素材库';
-  var p = ps.find(function(x){ return x.title === 名 && x.project_kind === 'segments'; });
-  if(!p) p = await api('/admake/projects', {method:'POST', body:JSON.stringify(
-    {title:名, project_kind:'segments', description:'已投放的爆款广告素材，拆段之后提炼成剪辑模板'})});
-  return p;
-}
-
+/* 一条素材＝一个 hot 项目，各自一个 Part。
+   不能共用一个项目：build-parts 每次都把项目里的 Part 全删了重建，
+   多传一条素材就会把之前所有素材分析好的段一起带走。 */
 async function 装数据(){
-  素材库项目 = await _素材库项目();
-  var parts = await api('/admake/projects/' + 素材库项目.id + '/parts');
+  var ps = await api('/admake/projects');
+  var 素材们 = ps.filter(function(x){ return x.project_kind === 'hot'; });
   素材 = {}; SEG = {}; 可见 = []; 态 = {};
   D.素材 = [];
-  for(var i = 0; i < parts.length; i++){
-    var pt = parts[i];
-    var 编号 = pt.name || ('素材' + (i + 1));
+  for(var i = 0; i < 素材们.length; i++){
+    var proj = 素材们[i];
+    var parts = [];
+    try { parts = await api('/admake/projects/' + proj.id + '/parts'); } catch(e){ parts = []; }
+    var pt = parts[0];
+    if(!pt) continue;
+    var 编号 = proj.title;
     var segs = [];
     try { segs = await api('/admake/parts/' + pt.id + '/segments'); } catch(e){ segs = []; }
-    var m = {编号:编号, part_id:pt.id, source_ids:pt.source_ids || '[]',
+    var m = {编号:编号, 项目id:proj.id, part_id:pt.id, source_ids:pt.source_ids || '[]',
              素材时长:pt.duration_sec || 0,
              片源: pt.file_path ? (UPLOADS + '/' + pt.file_path) : '',
              段: segs.map(function(sg){ return _转段(sg, 编号); })};
@@ -1353,7 +1348,7 @@ async function 装数据(){
     D.素材.push(m);
     可见.push(编号);
     态[编号] = {状态:_状态(pt, segs.length), 进度:segs.length ? 100 : 0,
-                时间:(pt.created_at || '').slice(5, 16).replace('T', ' ')};
+                时间:(proj.created_at || '').slice(5, 16).replace('T', ' ')};
   }
   当前 = D.素材[0] || {编号:'', 素材时长:0, 段:[], 片源:''};
   当前段 = 当前.段[0] || null;
@@ -1437,11 +1432,7 @@ async function 删素材(id){
   if(!m){ return; }
   提示('正在删…');
   try {
-    var sids = [];
-    try { sids = JSON.parse(m.source_ids || '[]'); } catch(e){ sids = []; }
-    for(var i = 0; i < sids.length; i++)
-      await api('/admake/projects/' + 素材库项目.id + '/sources/' + sids[i], {method:'DELETE'});
-    await api('/admake/projects/' + 素材库项目.id + '/build-parts', {method:'POST'});
+    await api('/admake/projects/' + m.项目id, {method:'DELETE'});
     await 装数据();
   } catch(e){ 提示('删不掉：' + e.message); return; }
   if(!D.素材.length){ 提示('素材都删完了，先传一条再用'); 画面板(); 画当前(); 画全部(); return; }
@@ -1471,7 +1462,7 @@ async function 开分析(id){
   画面板(); 画当前(); 画浮窗();
   if(当前.编号 === id) 画全部();
   try {
-    await api('/admake/projects/' + 素材库项目.id + '/ai-analyze?part_id=' + m.part_id,
+    await api('/admake/projects/' + m.项目id + '/ai-analyze?part_id=' + m.part_id,
               {method:'POST'});
   } catch(e){
     态[id] = {状态:'分析失败', 进度:0, 原因:e.message};
@@ -1482,7 +1473,7 @@ async function 开分析(id){
   }
   跑表[id] = setInterval(async function(){
     var st = null;
-    try { st = await api('/admake/projects/' + 素材库项目.id + '/ai-analyze/status'); }
+    try { st = await api('/admake/projects/' + m.项目id + '/ai-analyze/status'); }
     catch(e){ return; }
     var e2 = 态[id] || {};
     if(st.status === 'processing'){
@@ -2064,28 +2055,33 @@ function 画待传(){
   $('up-later').disabled = !有;
 }
 
-/* 传上去、合成 Part、重新拉一遍数据。一条素材＝一个 Part。 */
+/* 一条一条传：每条建一个项目，传进去，合成它自己的那个 Part。 */
 async function 收进列表(){
   if(!待传.length) return [];
   var 旧 = Object.keys(素材);
-  var fd = new FormData();
-  待传.forEach(function(f){ if(f.file) fd.append('files', f.file); });
   $('up-go').disabled = true; $('up-later').disabled = true;
-  try {
-    await fetch(API + '/admake/projects/' + 素材库项目.id + '/sources',
-      {method:'POST', headers:{Authorization:'Bearer ' + TOKEN}, body:fd})
-      .then(function(r){ if(!r.ok) throw new Error('上传失败 ' + r.status); });
-    await api('/admake/projects/' + 素材库项目.id + '/build-parts', {method:'POST'});
-  } catch(e){
-    提示('传不上去：' + e.message);
-    $('up-go').disabled = false; $('up-later').disabled = false;
-    return [];
+  var 失败 = [];
+  for(var i = 0; i < 待传.length; i++){
+    var f = 待传[i];
+    if(!f.file) continue;
+    var 名 = f.名.replace(/\.[^.]+$/, '').slice(0, 60) || ('素材' + (i + 1));
+    try {
+      var proj = await api('/admake/projects', {method:'POST', body:JSON.stringify(
+        {title:名, project_kind:'hot', description:'已投放的爆款广告素材'})});
+      var fd = new FormData();
+      fd.append('files', f.file);
+      var r = await fetch(API + '/admake/projects/' + proj.id + '/sources',
+        {method:'POST', headers:{Authorization:'Bearer ' + TOKEN}, body:fd});
+      if(!r.ok) throw new Error('上传失败 ' + r.status);
+      await api('/admake/projects/' + proj.id + '/build-parts', {method:'POST'});
+    } catch(e){ 失败.push(f.名 + '：' + e.message); }
   }
   待传 = [];
   关上传();
   await 装数据();
   var 新 = Object.keys(素材).filter(function(k){ return 旧.indexOf(k) < 0; });
-  画全部(); 画面板(); 画当前();
+  默认全勾(); 画全部(); 画面板(); 画当前();
+  if(失败.length) 提示('有 ' + 失败.length + ' 条没传上：' + 失败[0]);
   return 新;
 }
 async function 跑分析(){

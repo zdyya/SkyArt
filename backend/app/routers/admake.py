@@ -71,8 +71,12 @@ _NAMING_BANNED_RE = re.compile(r'[\/\\*?"<>|_]')
 # 而 APFS 单个文件名上限是 255 个字符（按字符数算，中文英文一样，实测确认）。
 _TITLE_MAX_LEN = 100
 
-# 项目类型。marks 是按高光钩子剪，段库那套分析和取数都不走它；segments 是按模板剪。
-_PROJECT_KINDS = ("marks", "segments")
+# 项目类型。marks 是按高光钩子剪；segments 是按模板剪的剧；hot 是爆款素材分析里
+# 传进来的单条广告片，一条一个项目——那一页是不断往里加素材的，跟一部剧一次传齐不同，
+# 共用一个项目的话每加一条 build-parts 都会把之前分析好的段全删了重建。
+_PROJECT_KINDS = ("marks", "segments", "hot")
+# 走段库那条路（拆段、段视图、按模板取数）的类型
+_段库类型 = ("segments", "hot")
 
 
 def _validate_naming_field(value: str, field_label: str, max_len: int, allow_mid_colon: bool) -> None:
@@ -773,7 +777,7 @@ def _build_export_filename(title: str, editor_alias: str, seq: int, kind: str = 
     now = datetime.now()
     clean_title = _sanitize_naming_field(title, _TITLE_MAX_LEN, "未命名项目")
     clean_alias = _sanitize_naming_field(editor_alias, 20, "未署名")
-    牌 = "Sky" if kind == "segments" else "SkyArt"
+    牌 = "Sky" if kind in ("segments", "hot") else "SkyArt"
     return f"{clean_title}_{牌}_{now.month}.{now.day}_{clean_alias}_{seq}"
 
 
@@ -1499,7 +1503,7 @@ async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -
             log_failure("admake.precheck_oss_us", e)
             raise HTTPException(400, f"美区 OSS 连接失败：{str(e)[:120]}")
 
-    if project_kind == "segments":
+    if project_kind in _段库类型:
         # 段库这条路把视频 base64 内联在请求里直连白名单通道，不经美区 OSS——
         # OSS 要平台侧配环境变量，用户机器上是断的。在这里探 OSS 会让分析根本起不来。
         from app.services.decompose.环境 import qwen_key, 拆解失败
@@ -1787,7 +1791,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 result = None
                 for attempt in range(MAX_RETRIES):
                     try:
-                        if project_kind == "segments":
+                        if project_kind in _段库类型:
                             result = await _拆解一个Part(part, on_stage=_set_stage)
                         elif ai_model.startswith("gemini"):
                             result = await _analyze_one_part_gemini(part, on_stage=_set_stage)
@@ -1813,7 +1817,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 comp_bytes      = result["comp_bytes"]
                 comp_skip_bytes = result.get("comp_skip_bytes", 0)
 
-                if project_kind == "segments":
+                if project_kind in _段库类型:
                     from app.database import AsyncSessionLocal as _S
                     from app.services.decompose.入库 import 写段库
                     async with db_write_lock:
@@ -2005,7 +2009,7 @@ async def create_project(
         _validate_naming_field(body.editor_alias, "导出文件命名", 20, allow_mid_colon=False)
     if body.project_kind not in _PROJECT_KINDS:
         raise HTTPException(400, f"未知的项目类型：{body.project_kind}")
-    if body.project_kind == "segments":
+    if body.project_kind in _段库类型:
         from app.services.decompose.环境 import 分析模型
         body.ai_model = 分析模型()      # 这条路只有 qwen 一个选择，不看前端传什么
     p = AdmakeProject(**body.model_dump(), user_id=user.id)
@@ -2079,7 +2083,7 @@ async def update_project(
     改 = body.model_dump(exclude_none=True)
     # 按模板剪的项目不许把模型改回 gemini：它那条路只有 qwen 拆段一条管线，
     # 改了库里的值不会改变实际跑什么，只会让界面上显示一个假的模型名。
-    if _project_kind(p) == "segments":
+    if _project_kind(p) in _段库类型:
         改.pop("ai_model", None)
     for k, v in 改.items():
         setattr(p, k, v)
@@ -3001,7 +3005,7 @@ async def create_project_export(
     # 模式白名单按项目类型分。by_template 不能加进 _EXPORT_MODES——那个元组同时被
     # 预检和这里当白名单用，加进去会让老项目也能选到按模板剪，而老项目没有段，
     # 要一路走到取段才报错。
-    合法模式 = _SEGMENT_EXPORT_MODES if _project_kind(project) == "segments" else _EXPORT_MODES
+    合法模式 = _SEGMENT_EXPORT_MODES if _project_kind(project) in _段库类型 else _EXPORT_MODES
     if body.mode not in 合法模式:
         raise HTTPException(400, f"未知的导出模式：{body.mode}")
     if not 1 <= body.count <= _MAX_EXPORT_COUNT:
@@ -3009,7 +3013,7 @@ async def create_project_export(
     if body.target_duration <= 0:
         raise HTTPException(400, "目标时长必须大于 0")
 
-    if _project_kind(project) == "segments":
+    if _project_kind(project) in _段库类型:
         return await _建段版导出(pid, project, body, background_tasks, user, db)
 
     all_highlights, all_hooks, parts_ordered = await _load_selection_inputs(
@@ -3159,7 +3163,7 @@ async def start_ai_analyze(
     if only_unanalyzed:
         # 「分析过没有」两种类型看的产物不同：老路数标记点，段路径数段。
         # 都数标记点的话按模板剪的项目永远认为一个都没分析过，每次全量重跑一遍。
-        done_table = AdmakeSegment if kind == "segments" else AdmakeMark
+        done_table = AdmakeSegment if kind in _段库类型 else AdmakeMark
         filtered = []
         for p in parts:
             cnt = (await db.execute(

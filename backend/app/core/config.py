@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite+aiosqlite:///./skyart.db"
 
     # File storage
+    # 一律存成绝对路径。装好的 app 由 Electron 传绝对路径进来，从没暴露过问题；
+    # 而相对路径会被拼两次——admake 先 join 出 ./uploads/AdMake/…，video.get_video_info
+    # 看它不是绝对路径又 join 一次，变成 uploads/uploads/AdMake/…，ffprobe 找不到文件，
+    # 报出来的却是「素材时长探测失败，文件可能已损坏」。
     UPLOAD_DIR: str = "./uploads"
 
     # AI API (填入真实 Key 后生效)
@@ -60,6 +64,11 @@ class Settings(BaseSettings):
             except Exception:
                 return [i.strip() for i in v.split(",")]
         return v
+
+    @field_validator("UPLOAD_DIR")
+    @classmethod
+    def _素材目录转绝对(cls, v: str) -> str:
+        return os.path.abspath(os.path.expanduser(v or "./uploads"))
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
