@@ -272,7 +272,7 @@ if __name__ == '__main__':
     只看 = '--看' in sys.argv
     docs, segs, 字幕, 镜头 = 收(root)
     if not segs:
-        raise 拆解失败('这个目录下没有拆解产物')
+        raise 拆解失败('这个 Part 还没拆出段来，先跑一次 AI 分析。')
     w类, w桥段, n = 打分(segs, 字幕, 镜头)
     thr = 门槛(segs)
     print(f'{len(docs)} 个拆解，{len(segs)} 段，{n} 个剧情点')

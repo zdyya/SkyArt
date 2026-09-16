@@ -111,7 +111,7 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
 
     f = os.path.join(wd, 'structure.json')
     if not os.path.exists(f):
-        raise 拆解失败('拆解跑完了却没有 structure.json，工作目录：' + wd)
+        raise 拆解失败('六步都跑完了，却没拿到拆解结果。重新分析一次这个 Part。')
 
     到('rating')
     # 四个维度的分打在段上，段之间互不依赖，按 Part 跑没问题。

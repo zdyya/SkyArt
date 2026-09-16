@@ -934,7 +934,7 @@ const PROJ_ID = parseInt(params.get('projectId') || '0');
 // 项目类型。marks=按高光钩子剪，segments=按模板剪。段视图和段版导出还没接进这一页，
 // 拿不到就按 marks 走，别把老项目挡在门外。
 let PROJ_KIND = 'marks';
-const 段路径未接入 = '按模板剪的分析和导出还没接入，这个项目现在只能看 Part';
+const 段版导出未接入 = '按模板剪还不能导出。现在可以先跑 AI 分析，把片子拆成段。';
 
 let hlGroups   = [];  // [{hs, he}, ...]
 let hookGroups = [];  // [{ks, ke}, ...]
@@ -1033,7 +1033,7 @@ function _markSegmentsNotReady() {
       + 'color:#fff;font-size:13px;line-height:1.5;padding:8px 16px;text-align:center;';
     document.body.appendChild(bar);
   }
-  bar.textContent = '这是按模板剪的项目。段视图、AI 拆段和段版导出还没接进来，现在能做的是看 Part 视频。';
+  bar.textContent = '这是按模板剪的项目。点 AI 分析会把片子拆成一段段。导轨上还看不到这些段，也还不能按模板导出。';
 }
 
 async function init() {
@@ -1912,7 +1912,12 @@ window.addEventListener('beforeunload', e => {
 // 又用另一句覆盖，两句措辞还不一样——改了 HTML 那句等于白改，用户永远看到 JS 这句。
 const AI_PROG_SUBTITLE = '可以收起这个窗口，分析会在后台继续。退出应用会中断分析。';
 
-const AI_STAGE_LABEL = { starting: '准备中', compressing: '压缩视频', uploading: '上传素材', analyzing: 'AI 分析中' };
+const AI_STAGE_LABEL = {
+  starting: '准备中', compressing: '压缩视频', uploading: '上传素材', analyzing: 'AI 分析中',
+  // 段库拆解的六步，键名由 decompose/驱动.py 的「步骤」定，对不上这里会显示成「处理中」
+  subtitle: '认字幕', shots: '找镜头', cutting: '切段',
+  describing: '逐段描述', structure: '理结构', rating: '给段打分',
+};
 
 // 阶段文案带滑入动画，只在内容变化时触发，避免每次轮询都闪
 function setAiStageText(text) {
@@ -2004,15 +2009,18 @@ function showAiResult(s) {
   if (fin.length) {
     const nHl = fin.reduce((a, p) => a + (p.highlights || 0), 0);
     const nHk = fin.reduce((a, p) => a + (p.hooks || 0), 0);
+    const seg = fin[0] && fin[0].kind === 'segments';
     const detail = fin.map(p => {
       const local = allParts.find(x => x.name === p.name);
-      return `${local ? partLabel(local) : (p.name || '')} ${p.highlights || 0}高 ${p.hooks || 0}钩`
+      const n = seg ? `${p.highlights || 0}段 ${p.hooks || 0}剧情点`
+                    : `${p.highlights || 0}高 ${p.hooks || 0}钩`;
+      return `${local ? partLabel(local) : (p.name || '')} ${n}`
              + (p.elapsed ? ` · ${formatElapsed(p.elapsed)}` : '');
     }).join('　｜　');
     // 部分失败时，成功的那几个 Part 的结果照样要报出来——finished_parts 里只有成功的，
     // 全部并到"失败原因"一句里，等于把已经做出来的东西藏了
-    const head = ok ? `共标出 ${nHl} 个高光、${nHk} 个钩子`
-                    : `成功的 ${fin.length} 个 Part 共标出 ${nHl} 个高光、${nHk} 个钩子`;
+    const 产物 = seg ? `${nHl} 个段、${nHk} 个剧情点` : `${nHl} 个高光、${nHk} 个钩子`;
+    const head = ok ? `共拆出 ${产物}` : `成功的 ${fin.length} 个 Part 共拆出 ${产物}`;
     resultText = `${head}\n${detail}`;
     if (!ok) resultText += `\n失败原因：${s.error || '未知错误'}`;
   } else if (ok) {
@@ -2130,7 +2138,6 @@ function hideAiModal() {
 let _aiPollFails = 0; // 状态查询连续失败计数：单次失败可能只是后端瞬时繁忙，任务还在跑
 
 async function startAiAnalysis(onlyUnanalyzed = false) {
-  if (PROJ_KIND === 'segments') { toast(段路径未接入, 'info', 4000); return; }
   if (_aiRunning) { toast('AI 分析已在进行中', 'error'); return; }
   // 先弹窗展示"连接检测中"——后端入口会实测密钥连通性（OSS/模型服务），
   // 缺配置或密钥无效会在这一步秒级返回明确错误，而不是空等到上传阶段才失败
@@ -2260,7 +2267,9 @@ async function pollAiAnalysis() {
         const _fin = Array.isArray(s.finished_parts) ? s.finished_parts : [];
         const _hl = _fin.reduce((a, x) => a + (x.highlights || 0), 0);
         const _hk = _fin.reduce((a, x) => a + (x.hooks || 0), 0);
-        toast(`AI 分析完成：标出 ${_hl} 个高光、${_hk} 个钩子`, 'success', 6000);
+        const _seg = _fin[0] && _fin[0].kind === 'segments';
+        toast(`AI 分析完成：${_seg ? `拆出 ${_hl} 个段、${_hk} 个剧情点`
+                                   : `标出 ${_hl} 个高光、${_hk} 个钩子`}`, 'success', 6000);
       }
     }
   }
@@ -2779,7 +2788,7 @@ async function runPreflight() {
 }
 
 function doExport() {
-  if (PROJ_KIND === 'segments') { toast(段路径未接入, 'info', 4000); return; }
+  if (PROJ_KIND === 'segments') { toast(段版导出未接入, 'info', 5000); return; }
   // 同步入口守卫：必须在弹确认框之前就拦住重入，
   // 否则网络请求耗时窗口内的二次点击（双击）不会被挡住。
   if (_exportSubmitting || _exportRunning) { toast('有一批素材正在导出，完成后再发起下一批', 'info'); return; }

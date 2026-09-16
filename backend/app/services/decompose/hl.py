@@ -138,7 +138,7 @@ if __name__ == '__main__':
     if 集:
         fs = [f for f in fs if any(os.path.basename(os.path.dirname(f)).startswith(e) for e in 集)]
     if not fs:
-        raise 拆解失败('这个目录下没有拆解产物')
+        raise 拆解失败('这个 Part 还没拆出段来，先跑一次 AI 分析。')
     print(f'{len(fs)} 个拆解，模型 {C.MODEL}，段内并发 {PAR}')
     总 = sum(跑(f) for f in fs)
     print(f'\n一共打了 {总} 段')

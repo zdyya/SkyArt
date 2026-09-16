@@ -1838,7 +1838,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 part_durations.append(elapsed)
                 _ai_tasks[project_id]["finished_parts"].append({
                     "name": part.name or f"Part{i + 1}", "highlights": len(highlights),
-                    "hooks": len(hooks), "elapsed": int(elapsed),
+                    "hooks": len(hooks), "elapsed": int(elapsed), "kind": project_kind,
                 })
                 log_event("admake.ai_analyze", part_id=part_id, status="ok",
                           highlights=len(highlights), hooks=len(hooks), elapsed_ms=int(elapsed * 1000))

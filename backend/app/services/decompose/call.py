@@ -715,7 +715,7 @@ def c_round2(wd):
     clips = sorted(c for c in glob.glob(os.path.join(wd, 'round2', 'seg*.mp4'))
                    if re.search(r'seg\d+\.mp4$', c))
     if not clips:
-        raise 拆解失败('没有段切片。先跑 prep.py round2。')
+        raise 拆解失败('切片没生成出来，这一步没法往下走。重新分析一次这个 Part。')
     todo = []
     for c in clips:
         n = re.search(r'seg(\d+)\.mp4$', c).group(1)
@@ -766,7 +766,7 @@ def c_stage2(wd):
         return cite(wd)
     p = os.path.join(wd, 'stage2_input.txt')
     if not os.path.exists(p):
-        raise 拆解失败('没有第二步输入。先跑 prep.py stage2。')
+        raise 拆解失败('理结构要用的文本没生成出来。重新分析一次这个 Part。')
     txt = open(p, encoding='utf-8').read()
     print(f'第二步第一轮 整条脉络：{len(txt)} 字，{MODEL}，'
           f'思考预算 {THINK["stage2"]}')
@@ -938,7 +938,7 @@ def c_profile(wd):
     """
     f = os.path.join(wd, 'stage2_out.json')
     if not os.path.exists(f):
-        raise 拆解失败('没有 stage2_out.json，先跑第二步前四轮。')
+        raise 拆解失败('理结构那一步没出结果，后面接不下去。重新分析一次这个 Part。')
     d = json.load(open(f))
     st1p = os.path.join(wd, 'stage1.json')
     st1 = json.load(open(st1p)) if os.path.exists(st1p) else {'整条': {}, '段': []}
