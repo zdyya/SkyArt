@@ -109,6 +109,59 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .sidebar-section{border-bottom:1px solid var(--border);}
 .marks-section{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
 .marks-body{flex:1;overflow-y:auto;padding:8px 10px;}
+
+/* ── 段视图：右栏「内容分析」与导轨上的段块，照 原型/按模板剪_界面原型.html ── */
+.anno-line{display:flex;gap:8px;font-size:12px;line-height:1.9;}
+.anno-line .k{color:var(--text3);width:92px;flex:none;}
+.anno-line .v{flex:1;min-width:0;}
+.lvtag{border-radius:4px;padding:0 6px;font-size:11px;font-weight:600;background:var(--bg3);color:var(--text2);}
+.lvtag.l3{background:#fff3e4;color:#b45309;}
+.lvtag.l4{background:#fdecec;color:#b91c1c;}
+.cattag{border-radius:4px;padding:0 7px;font-size:11px;font-weight:600;color:#fff;}
+.beh-row{display:flex;align-items:center;gap:8px;font-size:11.5px;padding:3px 0;border-top:1px dashed var(--border);}
+.beh-row:first-child{border-top:0;}
+.beh-row .t{font-family:monospace;color:var(--accent2);cursor:pointer;border-bottom:1px dashed var(--accent2);}
+.beh-row .t:hover{border-bottom-style:solid;}
+.beh-row .lv{margin-left:auto;}
+.pt-row{display:flex;align-items:flex-start;gap:7px;padding:4px 2px;border-bottom:1px solid rgba(0,0,0,.05);font-size:11.5px;cursor:pointer;}
+.pt-row:hover{background:rgba(224,122,67,.07);}
+.pt-row .t{font-family:monospace;color:var(--accent2);flex:0 0 84px;font-size:10.5px;}
+.pt-row .c{flex:0 0 auto;border-radius:3px;padding:0 5px;font-size:10.5px;line-height:16px;}
+.pt-row .w{flex:1;line-height:1.45;}
+.narr{font-size:12px;line-height:1.75;color:var(--text);background:rgba(128,110,95,.07);border-radius:6px;padding:8px 10px;margin:0 0 11px;}
+.segline{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:pointer;
+  border-radius:7px;position:relative;transition:background var(--t-color);}
+.segline:hover{background:var(--bg3);}
+.segline.on{background:rgba(249,115,22,.10);}
+/* 展开时把行和内容焊成一张卡：底色接下去、左边一条竖线贯穿，
+   不然内容是白底、上一行也是白底，会被读成上一行的附属 */
+.segline.open{background:rgba(249,115,22,.10);border-radius:7px 7px 0 0;
+  box-shadow:inset 3px 0 0 var(--accent);}
+.segline.open + .slbody{background:rgba(249,115,22,.06);border-radius:0 0 7px 7px;
+  box-shadow:inset 3px 0 0 var(--accent);border-bottom:none;
+  margin:0 0 8px;padding:8px 10px 12px;}
+#marks-panel.has-open .segline:not(.open){opacity:.55;}
+#marks-panel.has-open .segline:not(.open):hover{opacity:1;}
+.segline.gone{opacity:.42;}
+.segline.gone .sl-n,.segline.gone .sl-t{text-decoration:line-through;}
+.sl-n{font-size:11.5px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;flex:none;}
+.sl-c{flex:none;width:11px;color:var(--text3);font-size:9px;line-height:1;
+  transition:transform var(--t-color);transform:rotate(0deg);}
+.segline.open .sl-c{transform:rotate(90deg);color:var(--accent);}
+.sl-t{margin-left:auto;font-size:10.5px;color:var(--text3);font-family:monospace;flex:none;}
+.sl-x{flex:none;border:1px solid var(--border);background:#fff;color:var(--text3);cursor:pointer;
+  font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;opacity:0;transition:opacity var(--t-color);}
+.segline:hover .sl-x,.segline.gone .sl-x{opacity:1;}
+.sl-x:hover{background:#fdf3f3;color:#b91c1c;}
+.slbody{padding:2px 8px 12px;border-bottom:1px solid var(--border);margin-bottom:4px;}
+.slbody .narr{margin-bottom:8px;}
+.fh3{font-size:11px;font-weight:600;color:var(--text2);margin:11px 0 5px;}
+.cattag.sm,.lvtag.sm{font-size:10px;padding:0 4px;flex:none;}
+#vis-tl .vis-item.segblk{height:32px;border-radius:5px;border-width:1px;font-size:10.5px;
+  font-weight:600;display:flex;align-items:center;cursor:pointer;box-shadow:none;}
+#vis-tl .vis-item.segblk .vis-item-content{padding:0 7px;white-space:nowrap;font-size:10.5px;}
+#vis-tl .vis-item.segblk.cur{box-shadow:0 0 0 2px rgba(255,255,255,.9) inset,0 0 0 1px var(--accent);}
+#vis-tl .vis-item.segblk.gone{opacity:.35;}
 .export-section{flex-shrink:0;}
 
 /* ── 标记组：一段一行 ── */
@@ -934,7 +987,7 @@ const PROJ_ID = parseInt(params.get('projectId') || '0');
 // 项目类型。marks=按高光钩子剪，segments=按模板剪。段视图和段版导出还没接进这一页，
 // 拿不到就按 marks 走，别把老项目挡在门外。
 let PROJ_KIND = 'marks';
-const 段版导出未接入 = '按模板剪还不能导出。现在可以先跑 AI 分析，把片子拆成段。';
+const 段版导出未接入 = '按模板挑段拼片还没接。这里现在能做的是把素材拆成段、逐段核对字段。';
 
 let hlGroups   = [];  // [{hs, he}, ...]
 let hookGroups = [];  // [{ks, ke}, ...]
@@ -970,6 +1023,19 @@ let openSeg = null;
 let visTl = null;      // Timeline 实例（全局唯一，切 Part 换数据/窗口）
 let visItems = null;   // vis.DataSet：hlGroups/hookGroups 的视图投影，单向重建
 const VIS_GROUPS = [{ id: 'hl', content: '高光', order: 1 }, { id: 'hk', content: '钩子', order: 2 }];
+// 段视图只有一条泳道。段首尾相接铺满整条轴，两条泳道没有意义。
+const SEG_GROUPS = [{ id: 'seg', content: '', order: 1 }];
+const SEG_COLOR = {
+  '冲突':   { 底: '#b9542e', 字: '#fff' },
+  '反转':   { 底: '#e07a43', 字: '#fff' },
+  '爽点':   { 底: '#f0b183', 字: '#4a3320' },
+  '悬念点': { 底: '#6b4a2e', 字: '#fff' },
+  '情绪':   { 底: '#a2968a', 字: '#fff' },
+  '未识别': { 底: '#d3d7dd', 字: '#4a4e55' },
+};
+const segColor = v => SEG_COLOR[v] || SEG_COLOR['未识别'];
+let SEGS = [];          // 当前 Part 拆出来的段
+let segOpenId = null;   // 右栏展开的是哪一段
 
 // Auto-save debounce
 let _saveTimer = null;
@@ -1022,18 +1088,18 @@ async function checkFfmpeg() {
   } catch (e) { /* 检测失败不阻塞主流程 */ }
 }
 
-// 按模板剪的项目进到这一页，导轨上不会有任何标记，分析和导出按钮也点不动。
-// 顶部挂一条说明，别让人对着空导轨猜。红色留给 ffmpeg 那条真故障，这条用琥珀色。
-function _markSegmentsNotReady() {
-  let bar = document.getElementById('seg-not-ready-bar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'seg-not-ready-bar';
-    bar.style.cssText = 'position:fixed;top:52px;left:0;right:0;z-index:499;background:#b45309;'
-      + 'color:#fff;font-size:13px;line-height:1.5;padding:8px 16px;text-align:center;';
-    document.body.appendChild(bar);
+// 段项目用的是同一套骨架，改的是右栏装什么、导轨画什么、工具条上放什么。
+function _switchToSegmentView() {
+  const 标题 = document.querySelector('#marks-head .info-card-title');
+  if (标题) 标题.textContent = '内容分析';
+  const 提示 = document.querySelector('#marks-head .marks-hint');
+  if (提示) 提示.textContent = '点一行看这一段的字段、剧情点和行为标记。排除掉的段不进任何一条成片。';
+  // 打点是高光钩子那套的活，段是拆解管线的产物，手动打不出来
+  const 工具条 = document.querySelector('.timeline-toolbar');
+  if (工具条) {
+    工具条.innerHTML = '<span class="tl-hint" style="font-weight:600;color:var(--text2)">段导轨</span>'
+      + '<span class="tl-hint" id="seg-legend" style="margin-left:auto"></span>';
   }
-  bar.textContent = '这是按模板剪的项目。点 AI 分析会把片子拆成一段段。导轨上还看不到这些段，也还不能按模板导出。';
 }
 
 async function init() {
@@ -1041,14 +1107,14 @@ async function init() {
   if (!PROJ_ID) { window.location.href = 'index.html'; return; }
   // Always set up interaction handlers first — must not be inside try/catch
   setupModeListeners();
-  initVisTimeline();
   checkFfmpeg();   // 环境依赖检测：缺 ffmpeg 时顶部红条提示
-  // 项目类型要在渲染之前拿到：段项目的分析和导出入口按它拦。
+  // 项目类型要在建导轨之前拿到：两种类型的导轨泳道不一样，建完再换 vis 不认。
   try {
     const proj = await apiFetch(`/admake/projects/${PROJ_ID}`);
     PROJ_KIND = (proj && proj.project_kind) || 'marks';
   } catch (e) { /* 拉不到就按 marks 走 */ }
-  if (PROJ_KIND === 'segments') _markSegmentsNotReady();
+  if (PROJ_KIND === 'segments') _switchToSegmentView();
+  initVisTimeline();
   try {
     await loadAllParts();
     await restoreAiPolling();   // 后台还在分析就把轮询接回来
@@ -1629,7 +1695,7 @@ function initVisTimeline() {
   const el = document.getElementById('vis-tl');
   if (!el || typeof vis === 'undefined') return;
   visItems = new vis.DataSet([]);
-  visTl = new vis.Timeline(el, visItems, VIS_GROUPS, {
+  visTl = new vis.Timeline(el, visItems, PROJ_KIND === 'segments' ? SEG_GROUPS : VIS_GROUPS, {
     // 只给 min/max，不给 start/end：vis 撤掉初次绘制的 loading 遮罩、把导轨设为可见的
     // 条件里判了 `options.start || options.end`——我们的 start 是 0，在 JS 里是假值，
     // 判断落到 end 上，于是它还要求先发生一次 rangechange。首次进页面只调一次
@@ -2449,7 +2515,144 @@ function fieldLabel(f) {
 }
 
 // ── Marks ───────────────────────────────────────────────────────────────────
+// ── 段视图：右栏内容分析 + 导轨段块。照 原型/按模板剪_界面原型.html ──
+
+async function loadSegments() {
+  if (!activePartId) return;
+  try {
+    SEGS = await apiFetch(`/admake/parts/${activePartId}/segments`);
+  } catch (e) { SEGS = []; toast(e.message, 'error'); }
+  renderSegPanel();
+  renderSegTimeline();
+}
+
+const segNo = s => `P${(allParts.findIndex(p => p.id === activePartId) + 1) || 1}-${s.seg_index}`;
+const mmss = t => { t = Math.round(Math.max(0, Number(t) || 0));
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0'); };
+
+// 一段里的剧情点：拆解管线并过的那份在 fields.剧情片段 里（区间重叠的并成一条，
+// 留分最高的当代表），没有就退回逐条的原始剧情点。
+function segPoints(s) {
+  const 并 = (s.fields || {})['剧情片段'];
+  if (Array.isArray(并) && 并.length) {
+    return 并.map(p => ({ 起: p.起 ?? p.时间 ?? 0, 止: p.止 ?? p.时间 ?? 0,
+                          类: p.哪一类 || '', 话: p.是什么 || '',
+                          还有: (p.同段还有 || []).length }));
+  }
+  return (s.plot_points || []).map(p => ({ 起: p.start_sec ?? p.time_sec ?? 0,
+                                           止: p.end_sec ?? p.time_sec ?? 0,
+                                           类: p.kind || '', 话: p.text || '', 还有: 0 }));
+}
+
+function segFieldsBlock(s) {
+  const f = s.fields || {};
+  const 释 = { '主角立场': '施加方＝动手的一方，承受方＝挨打的一方',
+               '结尾悬念': '这一段最后一个镜头之后，观众有没有一个悬着的问题' };
+  const 行 = (k, v) => `<div class="anno-line"><span class="k"${釋(k)}>${k}</span><span class="v">${v}</span></div>`;
+  function 釋(k) { return 释[k] ? ` title="${esc(释[k])}"` : ''; }
+  const 立场 = { '施加方': '施加方（动手）', '承受方': '承受方（挨打）' };
+  const 主角 = f['主角是动手还是挨打'] || '';
+  const 行为 = (f['命中的行为'] || []).map(b =>
+    `<div class="beh-row"><span>${esc(b.类 || '')}　${esc(b.行为 || '')}</span>` +
+    `<span class="t" data-t="${b.时间 || 0}">${mmss(b.时间 || 0)}</span>` +
+    `<span class="lv lvtag${b.档 >= 3 ? ' l' + b.档 : ''}">档 ${b.档 ? b.档 : '未标'}</span></div>`
+  ).join('') || '<div style="font-size:11px;color:var(--text3)">未命中行为词，尺度档记 0</div>';
+  const 点 = segPoints(s).sort((a, b) => a.起 - b.起).map(p => {
+    const 配 = segColor(p.类);
+    return `<div class="pt-row" data-t="${p.起}">` +
+      `<span class="t">${mmss(p.起)}–${mmss(p.止)}</span>` +
+      `<span class="c" style="background:${配.底};color:${配.字}">${esc(p.类 || '—')}</span>` +
+      `<span class="w">${esc(p.话)}${p.还有 ? `<span style="color:var(--text3)">　+ ${p.还有} 处</span>` : ''}</span></div>`;
+  }).join('') || '<div style="font-size:11px;color:var(--text3)">这一段没有剧情点</div>';
+  return `<div class="narr">${esc(f['段落叙述'] || '（这一段没有叙述）')}</div>` +
+    行('主角立场', esc(立场[主角] || 主角 || '—')) +
+    行('结尾悬念', esc(f['结尾留没留悬念'] || '—') + (f['留的是什么'] ? '：' + esc(f['留的是什么']) : '')) +
+    行('经典桥段', esc(f['哪种经典桥段'] || '都不是')) +
+    '<div class="fh3">这一段里的剧情点</div>' + 点 +
+    '<div class="fh3">行为标记</div>' + 行为;
+}
+
+function renderSegPanel() {
+  const panel = document.getElementById('marks-panel');
+  if (!panel) return;
+  const 在用 = SEGS.filter(s => !s.excluded).length;
+  const st = document.getElementById('marks-status');
+  if (st) st.textContent = SEGS.length ? `在用 ${在用} 段，共 ${SEGS.length} 段` : '';
+  if (!SEGS.length) {
+    panel.innerHTML = '<div style="color:var(--text3);text-align:center;padding:20px;font-size:12px;">'
+      + '这个 Part 还没拆出段<br><small>点右上「AI 分析」把它拆成段</small></div>';
+    return;
+  }
+  panel.innerHTML = SEGS.map(s => {
+    const lv = Number(s.intensity) || 0, 配 = segColor(s.seg_type);
+    const 开 = segOpenId === s.id, 删 = !!s.excluded;
+    const 行 = `<div class="segline${开 ? ' open' : ''}${删 ? ' gone' : ''}" data-seg="${s.id}">` +
+      '<span class="sl-c">▶</span>' +
+      `<span class="sl-n">${esc(segNo(s))}</span>` +
+      (s.seg_type ? `<span class="cattag sm" style="background:${配.底};color:${配.字}">${esc(s.seg_type)}</span>` : '') +
+      `<span class="lvtag sm${lv >= 3 ? ' l' + lv : ''}">档 ${lv}</span>` +
+      `<span class="sl-t">${mmss(s.start_sec)} → ${mmss(s.end_sec)}</span>` +
+      `<button class="sl-x" data-exc="${s.id}">${删 ? '恢复' : '排除'}</button></div>`;
+    return 行 + (开 ? `<div class="slbody">${segFieldsBlock(s)}</div>` : '');
+  }).join('');
+  panel.classList.toggle('has-open', !!segOpenId);
+  panel.querySelectorAll('[data-seg]').forEach(el => {
+    el.onclick = e => {
+      if (e.target.dataset.exc) return;
+      const id = Number(el.dataset.seg);
+      const s = SEGS.find(x => x.id === id);
+      segOpenId = segOpenId === id ? null : id;
+      if (s) _previewSeek(s.start_sec);
+      renderSegPanel(); renderSegTimeline();
+    };
+  });
+  panel.querySelectorAll('[data-exc]').forEach(el => {
+    el.onclick = e => { e.stopPropagation(); toggleSegExcluded(Number(el.dataset.exc)); };
+  });
+  panel.querySelectorAll('[data-t]').forEach(el => {
+    el.onclick = e => { e.stopPropagation(); _previewSeek(Number(el.dataset.t)); };
+  });
+}
+
+// 排除掉的段不进任何一条成片。改的是后端那一列，刷新页面还在。
+async function toggleSegExcluded(id) {
+  const s = SEGS.find(x => x.id === id);
+  if (!s) return;
+  try {
+    const out = await apiFetch(`/admake/segments/${id}`,
+      { method: 'PATCH', body: JSON.stringify({ excluded: !s.excluded }) });
+    Object.assign(s, out);
+    toast(s.excluded ? `${segNo(s)} 已排除，导出时不会用它` : `${segNo(s)} 已恢复`, 'info', 2500);
+    renderSegPanel(); renderSegTimeline();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function renderSegTimeline() {
+  if (!visTl || !visItems) return;
+  visItems.clear();
+  visItems.add(SEGS.map(s => {
+    const 配 = segColor(s.seg_type);
+    const cls = 'segblk' + (s.excluded ? ' gone' : '') + (segOpenId === s.id ? ' cur' : '');
+    return {
+      id: `seg${s.id}`, group: 'seg',
+      start: s.start_sec * SEC_MS, end: s.end_sec * SEC_MS,
+      className: cls,
+      style: `background:${配.底};color:${配.字};border-color:${配.底}`,
+      content: `${segNo(s)}　${Math.round(s.duration_sec)}s` + (s.seg_type ? `　${s.seg_type}` : ''),
+      title: `${segNo(s)}　${mmss(s.start_sec)}–${mmss(s.end_sec)}　`
+             + `${s.seg_type || '未判出'}　档 ${s.intensity || 0}${s.excluded ? '　已排除' : ''}`,
+    };
+  }));
+  const 图例 = document.getElementById('seg-legend');
+  if (图例) {
+    图例.innerHTML = ['冲突', '反转', '爽点', '悬念点', '情绪'].map(k =>
+      `<i style="display:inline-block;width:9px;height:9px;border-radius:2px;vertical-align:-1px;`
+      + `margin:0 3px 0 8px;background:${segColor(k).底}"></i>${k}`).join('');
+  }
+}
+
 async function loadMarks() {
+  if (PROJ_KIND === 'segments') { segOpenId = null; return loadSegments(); }
   if (!activePartId) return;
   try {
     const marks = await apiFetch(`/admake/parts/${activePartId}/marks`);
@@ -2513,6 +2716,7 @@ function focusMarkGroup(type, gi) {
 // 一段标记＝一行。时间只读展示，改时间靠时间轴拖拽或「设起点/设终点」——
 // 敲数字是盲改，拖拽时画面跟着走；帧级精度靠播放到位后点「设起点/设终点」。
 function renderGroups() {
+  if (PROJ_KIND === 'segments') return renderSegPanel();
   const panel = document.getElementById('marks-panel');
   const lines = [
     ...hlGroups.map((g, i)   => markLine('hl', i, g, g.hs, g.he)),
@@ -2555,6 +2759,7 @@ function renderMarksCount() {
 // ── Timeline rendering：hlGroups/hookGroups → vis items 全量重建 ──────────────
 // 任何结构变更后整体重建（清空重加），杜绝增量更新的 id 漂移；段数量几十个，成本可忽略。
 function renderTimeline() {
+  if (PROJ_KIND === 'segments') return renderSegTimeline();
   if (!visItems) return;
   const items = [];
   hlGroups.forEach((g, gi) => {
@@ -2586,6 +2791,7 @@ function renderTimeline() {
 
 // ── Save marks ───────────────────────────────────────────────────────────────
 async function saveMarks() {
+  if (PROJ_KIND === 'segments') return;   // 段由拆解管线产出，这一页不改它的起止
   if (!activePartId) return;
   partsMarks[activePartId] = { hlGroups: hlGroups.map(g=>({...g})), hookGroups: hookGroups.map(g=>({...g})) };
   const marks = [];
