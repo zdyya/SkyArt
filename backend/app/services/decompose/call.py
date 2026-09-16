@@ -30,7 +30,7 @@ import httpx
 # 长任务的进度要等几分钟才看得到，只能拿 lsof 猜它在干什么。
 sys.stdout.reconfigure(line_buffering=True)
 
-from .环境 import 拆解失败, 提示词目录, qwen_key as _环境key
+from .环境 import 拆解失败, 提示词目录, 分析模型, qwen_key as _环境key
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PROMPTS = 提示词目录()
@@ -50,7 +50,7 @@ class Blocked(Exception):
 
 # 拿 W27 对照过 3.1-pro-preview 和 3.8-flash：引用核查指标持平（编造引用
 # 都是 0，时间偏差中位都是 0.2 秒），flash 的剧情点召回少三成，价格低得多。
-MODEL = os.environ.get('MODEL', 'qwen3.8-flash')
+MODEL = 分析模型()
 if not MODEL.startswith('qwen'):
     raise RuntimeError(f'MODEL 只能是 qwen 开头的名字，现在是 {MODEL}')
 RUNS = int(os.environ.get('RUNS', '3'))

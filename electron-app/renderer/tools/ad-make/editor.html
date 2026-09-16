@@ -1089,6 +1089,30 @@ async function checkFfmpeg() {
 }
 
 // 段项目用的是同一套骨架，改的是右栏装什么、导轨画什么、工具条上放什么。
+// 导出面板的模式区：段项目选的不是剪法而是剪辑模板，每格的条件由模板定。
+async function _switchExportPanelToTemplate() {
+  const box = document.getElementById('mode-options');
+  const 标 = box && box.previousElementSibling;
+  if (!box) return;
+  if (标 && 标.classList.contains('exp-label')) 标.textContent = '剪辑模板';
+  box.innerHTML = '<select class="input" id="cut-template" style="flex:1;height:34px">'
+    + '<option value="">加载中…</option></select>';
+  const sel = document.getElementById('cut-template');
+  try {
+    const ts = await apiFetch('/admake/cut-templates');
+    CUT_TEMPLATES = ts;
+    sel.innerHTML = ts.length
+      ? ts.map(t => `<option value="${t.id}">${esc(t.name)}（${t.slots.length} 格 · ${esc(t.source)}）</option>`).join('')
+      : '<option value="">还没有剪辑模板</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">模板列表加载失败</option>';
+  }
+  sel.addEventListener('change', () => { _lastPreflight = null; schedulePreflight(); });
+}
+
+let CUT_TEMPLATES = [];
+const getCutTemplateId = () => Number(document.getElementById('cut-template')?.value) || null;
+
 function _switchToSegmentView() {
   const 标题 = document.querySelector('#marks-head .info-card-title');
   if (标题) 标题.textContent = '内容分析';
@@ -1100,6 +1124,7 @@ function _switchToSegmentView() {
     工具条.innerHTML = '<span class="tl-hint" style="font-weight:600;color:var(--text2)">段导轨</span>'
       + '<span class="tl-hint" id="seg-legend" style="margin-left:auto"></span>';
   }
+  _switchExportPanelToTemplate();
 }
 
 async function init() {
@@ -2863,6 +2888,7 @@ function setupModeListeners() {
 }
 
 function getMode() {
+  if (PROJ_KIND === 'segments') return 'by_template';
   const r = document.querySelector('input[name="mode"]:checked');
   return r ? r.value : 'highlight_shunjian';
 }
@@ -2874,7 +2900,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const tpl = document.getElementById('export-template');
   if (dur) dur.addEventListener('input', schedulePreflight);
   if (tpl) tpl.addEventListener('change', schedulePreflight);
-  if (cnt) cnt.addEventListener('input', () => renderCountNote(_lastPreflight));
+  if (cnt) cnt.addEventListener('input', () => {
+    if (PROJ_KIND === 'segments') renderSegCountNote(_lastPreflight);
+    else renderCountNote(_lastPreflight);
+  });
 });
 
 // ── 导出前预检：建议条数、常用时长 ──────────────────────────────────────
@@ -2920,6 +2949,38 @@ async function loadDurHabits(mode) {
 function schedulePreflight() {
   clearTimeout(_preflightTimer);
   _preflightTimer = setTimeout(runPreflight, 260);   // 防抖：数字输入框逐位敲不该每敲一下发一次
+}
+
+function renderSegCountNote(pf) {
+  const chip = document.getElementById('count-suggest');
+  const note = document.getElementById('count-note');
+  const durNote = document.getElementById('dur-mode-note');
+  const input = document.getElementById('clip-count');
+  if (!chip || !note || !input) return;
+  if (durNote) durNote.style.display = 'none';
+  if (!pf) { chip.style.display = 'none'; note.style.display = 'none'; return; }
+
+  if (pf['拦住了吗']) {
+    chip.style.display = 'none';
+    input.classList.remove('over');
+    note.className = 'exp-hint bad';
+    note.style.display = '';
+    note.textContent = pf['拦住的原因'] || '这个模板在这部剧上挑不出段。';
+    return;
+  }
+  const 推荐 = pf['推荐条数'] || 0;
+  const count = Math.max(1, parseInt(input.value) || 1);
+  chip.style.display = 推荐 ? '' : 'none';
+  if (推荐) chip.textContent = `建议 ${推荐} 条`;
+  input.classList.toggle('over', 推荐 > 0 && count > 推荐);
+  const 格 = (pf['每格'] || []).map(g =>
+    `第${g['序']}格 ${g['格名']}：候选 ${g['通过硬条件']} 段`
+    + (g['最高匹配度'] != null ? `，最高匹配 ${Math.round(g['最高匹配度'] * 100)}%` : '')
+    + `，六成以上 ${g['六成以上']} 段`).join('；');
+  note.className = 'exp-hint' + (推荐 > 0 && count > 推荐 ? ' bad' : '');
+  note.style.display = '';
+  note.textContent = `一条填 ${pf['总段数']} 段，每段约 ${pf['中位段长']} 秒。${格}`
+    + (推荐 > 0 && count > 推荐 ? `　要 ${count} 条超过建议的 ${推荐} 条，多出来的会复用同一批段。` : '');
 }
 
 function renderCountNote(pf) {
@@ -2987,6 +3048,18 @@ async function runPreflight() {
     part_ids: parts.map(p => p.id).join(','),
   });
   if (tpl && tpl.value) q.set('template_id', tpl.value);
+  // 段模式走另一个接口：它按剪辑模板逐格算候选，返回体形状也不一样
+  if (PROJ_KIND === 'segments') {
+    const cid = getCutTemplateId();
+    if (!cid) { _lastPreflight = null; renderSegCountNote(null); return; }
+    q.set('cut_template_id', String(cid));
+    q.set('count', String(Math.max(1, parseInt(document.getElementById('clip-count')?.value) || 1)));
+    try {
+      _lastPreflight = await apiFetch(`/admake/projects/${PROJ_ID}/segment-preflight?${q}`);
+    } catch { _lastPreflight = null; }
+    renderSegCountNote(_lastPreflight);
+    return;
+  }
   try {
     _lastPreflight = await apiFetch(`/admake/projects/${PROJ_ID}/export-preflight?${q}`);
   } catch { _lastPreflight = null; }   // 预检失败不挡导出，只是没有建议值
@@ -2994,7 +3067,7 @@ async function runPreflight() {
 }
 
 function doExport() {
-  if (PROJ_KIND === 'segments') { toast(段版导出未接入, 'info', 5000); return; }
+  if (PROJ_KIND === 'segments' && !getCutTemplateId()) { toast('先选一个剪辑模板', 'info'); return; }
   // 同步入口守卫：必须在弹确认框之前就拦住重入，
   // 否则网络请求耗时窗口内的二次点击（双击）不会被挡住。
   if (_exportSubmitting || _exportRunning) { toast('有一批素材正在导出，完成后再发起下一批', 'info'); return; }
@@ -3044,7 +3117,8 @@ async function _runExport(mode, count, durVal) {
       body: JSON.stringify({ mode, count, target_duration: targetDur,
                              // 全选＝不过滤（传 null 走后端"全部 Part"路径，语义等价且日志更干净）
                              part_ids: checked.length === allParts.length ? null : checked.map(p => p.id),
-                             template_id: Number(document.getElementById('export-template')?.value) || null }),
+                             template_id: Number(document.getElementById('export-template')?.value) || null,
+                             cut_template_id: PROJ_KIND === 'segments' ? getCutTemplateId() : null }),
     });
     const batchIds = new Set(exports.map(e => e.id));
     _exportRunning = true;

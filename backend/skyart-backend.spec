@@ -15,6 +15,9 @@ a = Analysis(
         # 按「跟本模块同目录」找它，所以目标路径必须是 app/services/decompose。
         # 打包会丢执行位，afterPack.js 里补 chmod。
         ('app/services/decompose/ocrbin', 'app/services/decompose'),
+        # 随包发的剪辑模板。模板库空着的话按模板剪没有任何东西可选，等于走不通，
+        # 而写一个模板要填三格条件，不该是用户拿到工具的第一件事。
+        ('app/data', 'app/data'),
     ],
     hiddenimports=[
         'uvicorn.logging',

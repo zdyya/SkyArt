@@ -1010,8 +1010,10 @@ async function openEditModal(pid) {
   const project = allProjects.find(p => p.id === pid);
   if (!project) return;
   document.getElementById('e-pid').value       = pid;
-  document.getElementById('e-kind').textContent =
-    project.project_kind === 'segments' ? '按模板剪' : '按高光钩子剪';
+  const 是段 = project.project_kind === 'segments';
+  document.getElementById('e-kind').textContent = 是段 ? '按模板剪' : '按高光钩子剪';
+  // 按模板剪只有 qwen 拆段一条管线，没得选，那一栏就不摆出来
+  document.getElementById('e-ai-model').closest('.form-group').style.display = 是段 ? 'none' : '';
   document.getElementById('e-title').value     = project.title || '';
   document.getElementById('e-desc').value      = project.description || '';
   // 老项目存的是已废弃的 qwen-vl-max，新下拉里没有这一项。不映射的话 select 会
@@ -1109,10 +1111,10 @@ async function saveEditProject() {
 
 // ── Create project modal ──────────────────────────────────────
 if (PAGE_KIND === 'segments') {
-  document.title = 'SkyArt — 爆款素材分析';
+  document.title = 'SkyArt — 素材制作（按模板剪）';
   document.addEventListener('DOMContentLoaded', () => {
     const t = document.getElementById('page-title');
-    if (t) t.textContent = '爆款素材分析';
+    if (t) t.textContent = '素材制作 · 按模板剪';
   });
 }
 
@@ -1215,7 +1217,9 @@ async function createProject() {
       title,
       description:      document.getElementById('c-desc').value.trim() || null,
       project_kind:     PAGE_KIND,
-      ai_model:         document.getElementById('c-ai-model').value,
+      // 按模板剪只有 qwen 拆段一条管线，模型由后端钉死，这里不送
+      ai_model:         PAGE_KIND === 'segments' ? undefined
+                        : document.getElementById('c-ai-model').value,
       target_platform:  document.getElementById('c-platform').value,
       prompt_template:  document.getElementById('c-prompt').value,
       editor_alias:     alias,

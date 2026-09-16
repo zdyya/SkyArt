@@ -42,6 +42,12 @@ def ocr程序() -> str:
     return str(p)
 
 
+def 分析模型() -> str:
+    """段库拆解用哪个模型。只认 qwen 开头的名字，别处要显示模型名一律问这里。"""
+    m = os.environ.get("MODEL", "qwen3.8-flash")
+    return m if m.startswith("qwen") else "qwen3.8-flash"
+
+
 def qwen_key() -> str:
     """跟 app 其余部分共用一把 key，不再读 ~/.happyhorse.env。
 

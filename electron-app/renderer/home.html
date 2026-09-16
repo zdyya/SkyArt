@@ -473,7 +473,9 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 
   <div class="tools-grid">
     <!-- 爆款素材分析 -->
-    <div class="tool-card hot ll-raise" id="card-hot" onclick="enterHotAnalysis()">
+    <div class="tool-card hot locked" id="card-hot" onclick="enterHotAnalysis()"
+         title="上传爆款广告片、拆段、把段存成剪辑模板。这套界面还没做。">
+      <span class="lock-badge">开发中</span>
       <div class="tool-card-banner">
         <div class="banner-icon"><div class="segs">
           <div class="seg"></div>
@@ -500,8 +502,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
     </div>
 
     <!-- 素材制作（新）：按模板剪。挑段排片还没做，先锁着 -->
-    <div class="tool-card admake locked" id="card-admake-new" onclick="enterAdMakeNew()">
-      <span class="lock-badge">开发中</span>
+    <div class="tool-card admake ll-raise" id="card-admake-new" onclick="enterAdMakeNew()">
       <div class="tool-card-banner">
         <div class="banner-icon"><div class="grid4">
           <div class="cell c1"></div><div class="cell c2"></div>
@@ -980,12 +981,12 @@ function enterAdMake() {
 // 新建出来的也是这一类。老入口不带参数，行为跟以前一样。
 function enterHotAnalysis() {
   if (document.getElementById('card-hot').classList.contains('locked')) return;
-  _navAfterJelly('tools/ad-make/index.html?kind=segments');
+  _navAfterJelly('tools/hot-analysis/index.html');
 }
 
 function enterAdMakeNew() {
-  // 选模板、逐格挑段、批量导出那一套还没接，先不放进去
-  toast('按模板挑段拼片还在做。素材先去「爆款素材分析」拆成段，段库备好了这边才有东西可挑');
+  if (document.getElementById('card-admake-new').classList.contains('locked')) return;
+  _navAfterJelly('tools/ad-make/index.html?kind=segments');
 }
 
 // ── Avatar menu ──────────────────────────────────────────────
@@ -1083,10 +1084,13 @@ document.addEventListener('keydown', e => {
 
 // ── Toast ─────────────────────────────────────────────────────
 function toast(msg, type = 'info', ms = 3000) {
+  const box = document.getElementById('toast-container');
+  // 连点会一条条往上堆，堆到三四条就把页面盖住了。同一句话还在屏幕上就不再加。
+  if ([...box.children].some(x => x.textContent === msg)) return;
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.textContent = msg;
-  document.getElementById('toast-container').appendChild(el);
+  box.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
   setTimeout(() => {
     el.classList.remove('show');

@@ -122,6 +122,33 @@ class AdmakeMark(Base):
     part: Mapped["AdmakePart"] = relationship(back_populates="marks")
 
 
+class AdmakeCutTemplate(Base):
+    """剪辑模板：一张「格」的清单，每格声明这一格要什么样的段。
+
+    跟 AdmakeTemplate（成片模板，管前后贴片、花字、贴纸）是两回事，不要混。
+    导出请求里成片模板叫 template_id，这个叫 cut_template_id。
+    """
+    __tablename__ = "admake_cut_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # 爆款模板＝从跑量素材里拆出来的，剪辑自定义模板＝人写的
+    source: Mapped[str] = mapped_column(String(32), default="爆款模板")
+    source_note: Mapped[str] = mapped_column(String(200), default="")
+    kind: Mapped[str] = mapped_column(String(16), default="整条")   # 整条 / 片段
+    # 格数组的 JSON。照 AdmakeTemplate 的约定：库里存字符串，路由层解析成 dict 再返回
+    config: Mapped[str] = mapped_column(Text, default="[]")
+    builtin: Mapped[bool] = mapped_column(Boolean, default=False)   # 随包预置的，不给删
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
 class AdmakeSegment(Base):
     """AI 从一个 Part 里拆出来的一段戏。
 
@@ -202,6 +229,9 @@ class AdmakeExport(Base):
     duration_sec: Mapped[float] = mapped_column(Float, default=0.0)
     # 这批导出提交时填的目标时长（秒）。用来统计每个人常用哪几档，导出面板拿它做快捷值。
     target_duration: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 按模板剪用的：这一批套的哪个剪辑模板、每一格填了哪个段
+    cut_template_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 模板套用失败原因（成片本体成功、只有模板没套上时非空）——历史里要标出来，
     # 否则批量导出全是"没套模板的白片"也显示就绪，运营不知情
     template_error: Mapped[str | None] = mapped_column(String(300), nullable=True)

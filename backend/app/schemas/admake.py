@@ -147,6 +147,28 @@ class AdmakeExportRequest(BaseModel):
     target_duration: float = 360.0   # 目标成片时长（秒）。选材按离这个值最近排，不是硬约束
     part_ids: list[int] | None = None  # 视频轨上的 Part ID（有序），None 表示使用项目所有 Part
     template_id: int | None = None   # 成片模板（前端预填项目默认模板，可当场改）；None=不套模板
+    # 剪辑模板：按模板剪专用，声明每一格要什么样的段。跟上面那个成片模板是两回事
+    cut_template_id: int | None = None
+
+
+class AdmakeCutTemplateIn(BaseModel):
+    name: str
+    source: str = "剪辑自定义模板"
+    source_note: str = ""
+    kind: str = "整条"
+    slots: list[dict] = []          # 「格」数组，schema 见 demo/契约.md
+
+
+class AdmakeCutTemplateOut(BaseModel):
+    id: int
+    name: str
+    source: str
+    source_note: str
+    kind: str
+    slots: list[dict] = []
+    builtin: bool = False
+    created_at: datetime
+    model_config = {"from_attributes": True}
 
 
 class AdmakeTaskOut(BaseModel):

@@ -19,7 +19,8 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.user import User
 from app.models.admake import (AdmakeProject, AdmakeSource, AdmakePart, AdmakeMark, AdmakeExport,
-                               AdmakeTemplate, AdmakeSegment, AdmakePlotPoint)
+                               AdmakeTemplate, AdmakeSegment, AdmakePlotPoint,
+                               AdmakeCutTemplate)
 from app.schemas.admake import (
     AdmakeProjectCreate, AdmakeProjectUpdate,
     AdmakeProjectOut, AdmakeProjectDetailOut, AdmakeTaskOut,
@@ -27,11 +28,15 @@ from app.schemas.admake import (
     AdmakeMarkIn, AdmakeMarkBatchSave, AdmakeMarkOut,
     AdmakeExportRequest, AdmakeExportOut,
     AdmakeSegmentOut, AdmakePlotPointOut, AdmakeSegmentPatch,
+    AdmakeCutTemplateIn, AdmakeCutTemplateOut,
 )
 from app.core.deps import get_current_user
 from app.core.config import settings
 from app.core.logs import log_failure, log_event
+import sys
+
 from app.services import video as vid_svc
+from app.services import 取段
 from app.services.transition_detect import detect_transitions
 
 router = APIRouter(prefix="/admake", tags=["AdMake"])
@@ -418,6 +423,8 @@ def _estimate_pair_duration(hl: dict, hk: dict, parts_ordered: list[dict]) -> fl
 _MIN_BODY_SEC = 30.0
 
 _EXPORT_MODES = ("highlight_shunjian", "xuanyi_daozhi", "shuanggaoguang")
+# 按模板剪只有一种模式：每一格按模板写的条件挑段。另建白名单，不混进上面那个元组。
+_SEGMENT_EXPORT_MODES = ("by_template",)
 _MAX_EXPORT_COUNT = 30   # 与导出面板里"最多 30"一致
 
 
@@ -791,8 +798,8 @@ def _write_export_log(
         return f"{int(m):02d}:{sec:05.2f}"
 
     mode_label = {"highlight_shunjian": "高光顺剪", "xuanyi_daozhi": "悬疑倒置",
-                  "shuanggaoguang": "双高光顺剪"}.get(mode, mode)
-    seg_label  = {"highlight": "高光", "whitespace": "白场", "hook": "钩子"}
+                  "shuanggaoguang": "双高光顺剪", "by_template": "按模板剪"}.get(mode, mode)
+    seg_label  = {"highlight": "高光", "whitespace": "白场", "hook": "钩子", "segment": "段"}
     completed_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     lines = [
@@ -804,7 +811,18 @@ def _write_export_log(
         f"完成时间：{completed_at}",
         f"导出模式：{mode_label}",
     ]
-    if batch_info:
+    if batch_info and batch_info.get("剪辑模板"):
+        # 按模板剪的选材依据：套的哪个模板、每一格填了哪个段、匹配度多少。
+        # 高光钩子那套的候选池口径在这条路上不存在，下面那段的 n_hl 会直接 KeyError。
+        lines.append(f"批次序号：{batch_info['index']}/{batch_info['count']}")
+        lines.append(f"剪辑模板：{batch_info['剪辑模板']}（{batch_info['格数']} 格，"
+                     f"本条填了 {batch_info['段数']} 段）")
+        if batch_info.get("part_names"):
+            lines.append(f"导出范围：{', '.join(batch_info['part_names'])}")
+        lines.append("每格填了哪个段：")
+        for x in batch_info.get("选段", []):
+            lines.append(f"  {x['格']}　{x['段']}　匹配度 {x['匹配度'] * 100:.0f}%　{x['时长']:.1f} 秒")
+    elif batch_info:
         lines.append(f"批次序号：{batch_info['index']}/{batch_info['count']}")
         pool_line = f"候选池：高光 {batch_info['n_hl']} 个 / 钩子 {batch_info['n_hk']} 个"
         if batch_info.get("n_combos") is not None:
@@ -1982,6 +2000,9 @@ async def create_project(
         _validate_naming_field(body.editor_alias, "导出文件命名", 20, allow_mid_colon=False)
     if body.project_kind not in _PROJECT_KINDS:
         raise HTTPException(400, f"未知的项目类型：{body.project_kind}")
+    if body.project_kind == "segments":
+        from app.services.decompose.环境 import 分析模型
+        body.ai_model = 分析模型()      # 这条路只有 qwen 一个选择，不看前端传什么
     p = AdmakeProject(**body.model_dump(), user_id=user.id)
     if p.export_path is not None and not p.export_path.strip():
         p.export_path = None  # 空字符串归一成 None，与默认目录一致
@@ -2050,7 +2071,12 @@ async def update_project(
         _validate_naming_field(body.title, "项目标题", _TITLE_MAX_LEN, allow_mid_colon=True)
     if body.editor_alias:
         _validate_naming_field(body.editor_alias, "导出文件命名", 20, allow_mid_colon=False)
-    for k, v in body.model_dump(exclude_none=True).items():
+    改 = body.model_dump(exclude_none=True)
+    # 按模板剪的项目不许把模型改回 gemini：它那条路只有 qwen 拆段一条管线，
+    # 改了库里的值不会改变实际跑什么，只会让界面上显示一个假的模型名。
+    if _project_kind(p) == "segments":
+        改.pop("ai_model", None)
+    for k, v in 改.items():
         setattr(p, k, v)
     # 前端用 0 表示"不套模板"：清空默认模板（None 与"未传"无法区分，故用 0 当哨兵）
     if p.default_template_id == 0:
@@ -2707,6 +2733,251 @@ async def export_habits(
     return {"values": sorted(top), "counts": {str(m): tally[m] for m in top}, "from": "history"}
 
 
+# ── 剪辑模板 ─────────────────────────────────────────────────────────────
+
+def _模板出参(t) -> AdmakeCutTemplateOut:
+    try:
+        格 = json.loads(t.config or "[]")
+    except json.JSONDecodeError:
+        格 = []
+    return AdmakeCutTemplateOut(
+        id=t.id, name=t.name, source=t.source, source_note=t.source_note,
+        kind=t.kind, slots=格 if isinstance(格, list) else [],
+        builtin=bool(t.builtin), created_at=t.created_at)
+
+
+async def _种预置模板(db: AsyncSession, user_id: int) -> None:
+    """第一次进模板库时，把随包发的那几个爆款模板灌给这个用户。
+
+    不预置的话模板库是空的，按模板剪没有任何东西可选，等于走不通；
+    而写一个模板要填三格条件，不该是用户拿到工具的第一件事。
+    """
+    有 = (await db.execute(select(func.count(AdmakeCutTemplate.id))
+                          .where(AdmakeCutTemplate.user_id == user_id))).scalar()
+    if 有:
+        return
+    d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+    if getattr(sys, "frozen", False):
+        d = os.path.join(sys._MEIPASS, "app", "data")
+    for fn in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if not fn.endswith(".json"):
+            continue
+        try:
+            t = json.load(open(os.path.join(d, fn), encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        db.add(AdmakeCutTemplate(
+            user_id=user_id, name=t.get("模板名") or fn[:-5],
+            source=t.get("来源") or "爆款模板", source_note=t.get("来源说明") or "",
+            kind=t.get("种类") or "整条",
+            config=json.dumps(t.get("格") or [], ensure_ascii=False),
+            builtin=True))
+    await db.commit()
+
+
+@router.get("/cut-templates", response_model=list[AdmakeCutTemplateOut])
+async def 列剪辑模板(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    await _种预置模板(db, user.id)
+    res = await db.execute(
+        select(AdmakeCutTemplate).where(AdmakeCutTemplate.user_id == user.id)
+        .order_by(AdmakeCutTemplate.builtin.desc(), AdmakeCutTemplate.created_at.desc()))
+    return [_模板出参(t) for t in res.scalars().all()]
+
+
+@router.post("/cut-templates", response_model=AdmakeCutTemplateOut, status_code=201)
+async def 建剪辑模板(
+    body: AdmakeCutTemplateIn,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    if not body.name.strip():
+        raise HTTPException(400, "模板名不能为空")
+    if not body.slots:
+        raise HTTPException(400, "模板至少要有一格")
+    t = AdmakeCutTemplate(
+        user_id=user.id, name=body.name.strip(), source=body.source,
+        source_note=body.source_note, kind=body.kind,
+        config=json.dumps(body.slots, ensure_ascii=False))
+    db.add(t)
+    await db.flush()
+    await db.refresh(t)
+    return _模板出参(t)
+
+
+@router.delete("/cut-templates/{tid}", status_code=204)
+async def 删剪辑模板(
+    tid: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    t = (await db.execute(select(AdmakeCutTemplate).where(
+        AdmakeCutTemplate.id == tid, AdmakeCutTemplate.user_id == user.id))).scalar_one_or_none()
+    if not t:
+        raise HTTPException(404, "模板不存在或无权限")
+    if t.builtin:
+        raise HTTPException(400, "随包预置的模板不能删")
+    await db.delete(t)
+
+
+# ── 按模板剪：取段与出片 ───────────────────────────────────────────────
+
+async def _段库(pid: int, part_ids: list[int] | None, db: AsyncSession):
+    """这个项目在用的段，连它所属的 Part 一起。排除掉的段不参与。
+
+    Part 归属照 _load_selection_inputs 的做法校验：项目 id 会被复用、前端
+    localStorage 里可能残留失效 id，拿去直接查会把别的项目的段捞进来。
+    """
+    res = await db.execute(select(AdmakePart).where(AdmakePart.project_id == pid)
+                           .order_by(AdmakePart.part_index))
+    parts = [p for p in res.scalars().all() if p.file_path]
+    if part_ids:
+        允许 = {p.id for p in parts}
+        挑 = [i for i in part_ids if i in 允许]
+        if not 挑:
+            raise HTTPException(400, "选中的 Part 不属于这个项目（可能已被重建或删除），请重新选择")
+        parts = [p for p in parts if p.id in 挑]
+    if not parts:
+        raise HTTPException(400, "这个项目还没有合成好的 Part 视频")
+
+    出 = []
+    for 序, p in enumerate(parts, 1):
+        segs = (await db.execute(
+            select(AdmakeSegment).where(AdmakeSegment.part_id == p.id)
+            .order_by(AdmakeSegment.seg_index))).scalars().all()
+        for sg in segs:
+            if sg.excluded:
+                continue
+            try:
+                字段 = json.loads(sg.fields_json or "{}")
+            except json.JSONDecodeError:
+                字段 = {}
+            sg.fields = 字段          # 取段模块读 .fields，不碰 fields_json
+            出.append(取段.段字典(sg, p, 序))
+    return 出, parts
+
+
+async def _取剪辑模板(tid: int | None, user: User, db: AsyncSession):
+    if tid is None:
+        raise HTTPException(400, "按模板剪必须选一个剪辑模板")
+    t = (await db.execute(select(AdmakeCutTemplate).where(
+        AdmakeCutTemplate.id == tid, AdmakeCutTemplate.user_id == user.id))).scalar_one_or_none()
+    if not t:
+        raise HTTPException(404, "剪辑模板不存在或无权限")
+    try:
+        格 = json.loads(t.config or "[]")
+    except json.JSONDecodeError:
+        格 = []
+    if not 格:
+        raise HTTPException(400, f"模板「{t.name}」一格都没有")
+    return t, 格
+
+
+@router.get("/projects/{pid}/segment-preflight")
+async def 段版预检(
+    pid: int,
+    cut_template_id: int,
+    target_duration: float = Query(360.0),
+    count: int = Query(3),
+    part_ids: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """导出前算一遍：每格有多少候选、最高匹配度多少、推荐导几条。
+
+    预检和真正导出共用同一套取段函数。各写一遍的话预检报的建议条数会跟实际
+    导出的口径对不上，用户照着建议填却被判超限。
+    """
+    await _get_project(pid, user, db)
+    t, 格 = await _取剪辑模板(cut_template_id, user, db)
+    ids = [int(x) for x in part_ids.split(",") if x.strip().isdigit()] if part_ids else None
+    库, _ = await _段库(pid, ids, db)
+    if not 库:
+        return {"模板": t.name, "拦住了吗": True, "每格": [],
+                "拦住的原因": "这个项目还没有拆出段，先跑一次 AI 分析。", "推荐条数": 0}
+    # 目标时长指成片总长，成片模板的前后贴片也占在里面，选段要用扣掉贴片的长度
+    贴 = await _template_sticker_duration(None, db)
+    d = await asyncio.to_thread(取段.算匹配, 库, 格, max(target_duration - 贴, _MIN_BODY_SEC), count)
+    d["模板"] = t.name
+    return d
+
+
+async def _段版计划(pid: int, body: AdmakeExportRequest, user: User, db: AsyncSession, 贴片: float):
+    """按剪辑模板选段，产出和高光钩子那条路同形状的计划表。"""
+    t, 格 = await _取剪辑模板(body.cut_template_id, user, db)
+    库, parts = await _段库(pid, body.part_ids, db)
+    if not 库:
+        raise HTTPException(400, "这个项目还没有拆出段，先跑一次 AI 分析")
+    目标 = max(body.target_duration - 贴片, _MIN_BODY_SEC)
+    预 = await asyncio.to_thread(取段.算匹配, 库, 格, 目标, body.count)
+    if 预.get("拦住了吗"):
+        raise HTTPException(400, 预.get("拦住的原因") or "这个模板在这部剧上挑不出段")
+    成片 = await asyncio.to_thread(取段.选段, 库, 格, 目标, body.count)
+    if not 成片:
+        raise HTTPException(400, "按这个模板一条都拼不出来")
+    return t, [(取段.排成计划(c["段"]), c) for c in 成片], [p.name for p in parts]
+
+
+async def _建段版导出(pid, project, body, background_tasks, user, db):
+    """按剪辑模板出片。
+
+    只负责选段和建导出行，后面的裁切、拼接、成片模板套用、文件命名、批次目录、
+    导出记录、日志、失败重试全部走 _run_export_multi，跟高光钩子那条路是同一份代码。
+    """
+    # 目标时长指成片总长，成片模板的前后贴片也占在里面。不扣的话贴片有多长、成片
+    # 就超出多长——2026-08-10 那次 188 秒的片尾把 3 分钟目标的成片全导成了 6 分 12 秒。
+    sticker_dur = await _template_sticker_duration(body.template_id, db)
+    剪模板, 计划们, part_names = await _段版计划(pid, body, user, db, sticker_dur)
+
+    submitted_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    batch_dir = _get_batch_dir(pid, project.title, project.export_path)
+    exports_created = []
+    for i, (plan, 片) in enumerate(计划们):
+        # 原子自增素材编号：用 SQL 层 col = col + 1，并发请求下才不会数出重复编号
+        await db.execute(
+            update(AdmakeProject).where(AdmakeProject.id == pid)
+            .values(export_seq=AdmakeProject.export_seq + 1)
+        )
+        await db.refresh(project)
+        filename_stem = _build_export_filename(project.title, project.editor_alias, project.export_seq)
+        export = AdmakeExport(
+            part_id=plan[0].get("part_id") or _锚定Part(plan, pid),
+            project_id=pid, mode=body.mode, status="pending",
+            target_duration=body.target_duration,
+            cut_template_id=剪模板.id,
+            plan_json=json.dumps(plan, ensure_ascii=False),
+        )
+        db.add(export)
+        batch_info = {
+            "index": i + 1, "count": len(计划们), "part_names": part_names,
+            "剪辑模板": 剪模板.name, "格数": len(json.loads(剪模板.config or "[]")),
+            "段数": len(plan), "选段": [
+                {"格": x["slot"], "段": x["seg_id"], "匹配度": x["score"] / 10,
+                 "时长": round(x["end"] - x["start"], 1)} for x in plan],
+        }
+        exports_created.append((export, plan, batch_info, filename_stem))
+
+    await db.flush()
+    for export, plan, batch_info, filename_stem in exports_created:
+        await db.refresh(export)
+        background_tasks.add_task(
+            _run_export_multi,
+            export.id, plan, project.id, project.title,
+            body.target_duration, body.mode, filename_stem, batch_dir,
+            submitted_at, batch_info, body.template_id, sticker_dur,
+        )
+    log_event("admake.export.by_template", project_id=pid, cut_template_id=剪模板.id,
+              count=len(计划们), segs_per_clip=len(计划们[0][0]) if 计划们 else 0)
+    return [AdmakeExportOut.model_validate(e) for e, _, _, _ in exports_created]
+
+
+def _锚定Part(plan, pid):
+    """导出行要挂一个 part_id。段版一条成片跨多个 Part，挂第一段所属的那个。"""
+    return plan[0].get("part_id") if plan else None
+
+
 @router.post("/projects/{pid}/export", response_model=list[AdmakeExportOut], status_code=201)
 async def create_project_export(
     pid: int,
@@ -2720,12 +2991,20 @@ async def create_project_export(
     # 参数在这里就拦住。模式名拼错的话选材会一路走到后台任务里才因为"没有有效片段"失败，
     # 界面上只看到一条导出失败；条数没有上限的话，界面 max=30 挡不住手输的 500——
     # number 输入框允许输入超出 max 的值，而导出开始后不能中途取消。
-    if body.mode not in _EXPORT_MODES:
+    #
+    # 模式白名单按项目类型分。by_template 不能加进 _EXPORT_MODES——那个元组同时被
+    # 预检和这里当白名单用，加进去会让老项目也能选到按模板剪，而老项目没有段，
+    # 要一路走到取段才报错。
+    合法模式 = _SEGMENT_EXPORT_MODES if _project_kind(project) == "segments" else _EXPORT_MODES
+    if body.mode not in 合法模式:
         raise HTTPException(400, f"未知的导出模式：{body.mode}")
     if not 1 <= body.count <= _MAX_EXPORT_COUNT:
         raise HTTPException(400, f"素材数量需在 1~{_MAX_EXPORT_COUNT} 条之间")
     if body.target_duration <= 0:
         raise HTTPException(400, "目标时长必须大于 0")
+
+    if _project_kind(project) == "segments":
+        return await _建段版导出(pid, project, body, background_tasks, user, db)
 
     all_highlights, all_hooks, parts_ordered = await _load_selection_inputs(
         pid, body.part_ids, db)

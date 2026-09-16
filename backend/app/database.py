@@ -60,8 +60,21 @@ async def create_tables():
             "ALTER TABLE admake_exports ADD COLUMN target_duration FLOAT",
             # 项目类型：老库全部项目补成 marks（按高光钩子剪），行为与加列之前一致
             "ALTER TABLE admake_projects ADD COLUMN project_kind VARCHAR(32) DEFAULT 'marks'",
+            # 这一批成片用的剪辑模板，和每一格填了哪个段。换段、复现、回流都要它
+            "ALTER TABLE admake_exports ADD COLUMN cut_template_id INTEGER",
+            "ALTER TABLE admake_exports ADD COLUMN plan_json TEXT",
         ]:
             try:
                 await conn.execute(__import__("sqlalchemy").text(stmt))
             except Exception:
                 pass  # column already exists
+        # 按模板剪只有 qwen 拆段一条管线。这一列早先跟着前端的默认值存成了 gemini，
+        # 实际跑的一直是 qwen——库里的值是错的，界面上照着显示就是假的。
+        try:
+            from app.services.decompose.环境 import 分析模型
+            await conn.execute(__import__("sqlalchemy").text(
+                "UPDATE admake_projects SET ai_model = :m "
+                "WHERE project_kind = 'segments' AND ai_model NOT LIKE 'qwen%'"
+            ), {"m": 分析模型()})
+        except Exception:
+            pass

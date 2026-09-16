@@ -82,6 +82,16 @@ function checkOcrbin() {
   return ok;
 }
 
+// ── 随包的剪辑模板。少了它模板库是空的，按模板剪一个模板都选不到 ──
+function checkCutTemplates() {
+  const fs = require('fs');
+  const d = path.join(resDir, 'backend-bin/_internal/app/data');
+  const n = fs.existsSync(d) ? fs.readdirSync(d).filter(f => f.endsWith('.json')).length : 0;
+  const ok = n > 0;
+  console.log(`打包验证 [${arch}] · 随包剪辑模板 = ${n} 个 — ${ok ? '有 ✓' : '❌ spec 的 datas 漏了 app/data'}`);
+  return ok;
+}
+
 // ── 校验 4：minos（对外发版须 ≤13，本地 macOS 新系统打的包仅自测）──
 function checkMinos() {
   try {
@@ -103,11 +113,13 @@ function checkMinos() {
   const verOk = await checkVersion();   // 最关键：版本对不上直接判包报废
   const ffOk = checkFfmpeg();
   const ocrOk = checkOcrbin();
+  const tplOk = checkCutTemplates();
   const minosOk = checkMinos();
   console.log('');
   if (!verOk) { console.error('→ 版本校验未过，这个包不能用（包内后端不是当前源码）。'); process.exit(1); }
   if (!ffOk) { console.error('→ ffmpeg 校验未过，这个包不能用（包内 ffmpeg 不是目标版本）。'); process.exit(1); }
   if (!ocrOk) { console.error('→ ocrbin 校验未过，段库分析的认字幕这一步会失败。'); process.exit(1); }
+  if (!tplOk) { console.error('→ 剪辑模板校验未过，按模板剪没有模板可选。'); process.exit(1); }
   if (!minosOk) { console.error('→ minos 未过：本地自测可用，对外发版请走 CI。'); process.exit(1); }
   console.log(`✅ 打包验证全部通过 [${arch}]`);
 })();
