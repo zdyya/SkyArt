@@ -830,7 +830,15 @@ def _write_export_log(
             lines.append(f"导出范围：{', '.join(batch_info['part_names'])}")
         lines.append("每格填了哪个段：")
         for x in batch_info.get("选段", []):
-            lines.append(f"  {x['格']}　{x['段']}　匹配度 {x['匹配度'] * 100:.0f}%　{x['时长']:.1f} 秒")
+            # 六成是「这一格声明的条件基本都满足」的线。跨格抢段之后靠后的成片
+            # 会往下够，不标出来只能人工翻日志才看得见。
+            记 = "　⚠ 没到六成" if x["匹配度"] < 0.6 else ""
+            lines.append(f"  {x['格']}　{x['段']}　匹配度 {x['匹配度'] * 100:.0f}%　"
+                         f"{x['时长']:.1f} 秒{记}")
+        低 = batch_info.get("低于六成") or 0
+        if 低:
+            lines.append(f"注意：这一条有 {低} 段没到六成，它们不满足模板里写的条件。"
+                         f"要么把素材数量降到建议条数以内，要么给这几格放宽条件。")
     elif batch_info:
         lines.append(f"批次序号：{batch_info['index']}/{batch_info['count']}")
         pool_line = f"候选池：高光 {batch_info['n_hl']} 个 / 钩子 {batch_info['n_hk']} 个"
@@ -3061,7 +3069,7 @@ async def _建段版导出(pid, project, body, background_tasks, user, db):
         batch_info = {
             "index": i + 1, "count": len(计划们), "part_names": part_names,
             "剪辑模板": 剪模板.name, "格数": len(json.loads(剪模板.config or "[]")),
-            "段数": len(plan), "选段": [
+            "段数": len(plan), "低于六成": 片.get("低于六成", 0), "选段": [
                 {"格": x["slot"], "段": x["seg_id"], "匹配度": x["score"] / 10,
                  "时长": round(x["end"] - x["start"], 1)} for x in plan],
         }

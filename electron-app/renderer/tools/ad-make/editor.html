@@ -3048,7 +3048,8 @@ function renderSegCountNote(pf) {
     + '<table class="slot-table"><thead><tr>'
     + '<th></th><th>格</th><th>要填</th><th>通过硬条件</th><th>六成以上</th><th>最高匹配</th>'
     + '</tr></thead><tbody>' + 行 + '</tbody></table>'
-    + (超 ? `<div class="slot-over">要 ${count} 条超过建议的 ${推荐} 条，多出来的会复用同一批段。</div>` : '');
+    + (超 ? `<div class="slot-over">要 ${count} 条超过建议的 ${推荐} 条。`
+          + `超出的部分只能往下挑匹配度不到六成的段，这些段不满足模板里写的条件。</div>` : '');
 }
 
 function renderCountNote(pf) {
