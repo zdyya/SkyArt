@@ -199,6 +199,23 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .cnt-chip.over{background:#fffbeb;border-color:#fde68a;color:#92400e;}
 .exp-hint.warn{color:var(--yellow);}
 .exp-hint.bad{color:var(--red);}
+/* 预检明细：每格一行。挑不出段的那格整行变淡红，扫一眼就知道卡在哪 */
+.slot-sum{font-size:11px;color:var(--text3);margin-bottom:5px;}
+.slot-table{width:100%;border-collapse:collapse;font-size:11px;color:var(--text2);
+  border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+.slot-table th{font-weight:600;color:var(--text3);background:var(--bg3);
+  padding:5px 8px;text-align:right;white-space:nowrap;}
+.slot-table th:nth-child(2){text-align:left;}
+.slot-table td{padding:5px 8px;text-align:right;border-top:1px solid var(--border);white-space:nowrap;}
+.slot-table td.slot-no{text-align:center;color:var(--text3);width:22px;}
+.slot-table td.slot-name{text-align:left;color:var(--text);font-weight:600;
+  max-width:150px;overflow:hidden;text-overflow:ellipsis;}
+.slot-table td.slot-hit{color:var(--accent2);font-weight:700;}
+.slot-table tr.slot-empty td{background:#fef2f2;color:var(--red);}
+.slot-over{font-size:11px;color:var(--red);margin-top:5px;}
+/* 剪辑模板下拉底下那行：几格、什么来路、勾中的 Part 里有多少段 */
+.exp-sub{font-size:11px;color:var(--text3);margin-top:5px;width:100%;}
+.part-pick-seg{font-style:normal;color:var(--text3);font-size:10px;margin-left:auto;padding-left:6px;flex-shrink:0;}
 #clip-count.over{border-color:var(--yellow);background:#fffbeb;}
 .dur-quick{color:var(--accent2);text-decoration:underline;cursor:pointer;font-size:11px;}
 /* 悬停说明：图标与浮层，写法与模板编辑器一致 */
@@ -985,10 +1002,9 @@ let authToken = localStorage.getItem('skyart_token') || '';
 const params  = new URLSearchParams(window.location.search);
 const PART_ID = parseInt(params.get('partId') || '0');
 const PROJ_ID = parseInt(params.get('projectId') || '0');
-// 项目类型。marks=按高光钩子剪，segments=按模板剪。段视图和段版导出还没接进这一页，
-// 拿不到就按 marks 走，别把老项目挡在门外。
+// 项目类型。marks=按高光钩子剪，segments=按模板剪。拿不到就按 marks 走，
+// 别把老项目挡在门外。
 let PROJ_KIND = 'marks';
-const 段版导出未接入 = '按模板挑段拼片还没接。这里现在能做的是把素材拆成段、逐段核对字段。';
 
 let hlGroups   = [];  // [{hs, he}, ...]
 let hookGroups = [];  // [{ks, ke}, ...]
@@ -1096,8 +1112,12 @@ async function _switchExportPanelToTemplate() {
   const 标 = box && box.previousElementSibling;
   if (!box) return;
   if (标 && 标.classList.contains('exp-label')) 标.textContent = '剪辑模板';
-  box.innerHTML = '<select class="input" id="cut-template" style="flex:1;height:34px">'
-    + '<option value="">加载中…</option></select>';
+  // 模式区原来是三个横排的单选，这里换成一个下拉加一行摘要，得让它换行，
+  // 否则下拉被摘要挤成一个只剩箭头的方块。
+  box.style.flexWrap = 'wrap';
+  box.innerHTML = '<select class="input" id="cut-template" style="flex:1 1 100%;height:34px">'
+    + '<option value="">加载中…</option></select>'
+    + '<div class="exp-sub" id="cut-template-sub"></div>';
   const sel = document.getElementById('cut-template');
   try {
     const ts = await apiFetch('/admake/cut-templates');
@@ -1108,11 +1128,27 @@ async function _switchExportPanelToTemplate() {
   } catch (e) {
     sel.innerHTML = '<option value="">模板列表加载失败</option>';
   }
-  sel.addEventListener('change', () => { _lastPreflight = null; schedulePreflight(); });
+  renderCutTemplateSub();
+  sel.addEventListener('change', () => {
+    renderCutTemplateSub(); _lastPreflight = null; schedulePreflight();
+  });
 }
 
 let CUT_TEMPLATES = [];
 const getCutTemplateId = () => Number(document.getElementById('cut-template')?.value) || null;
+
+// 选中的模板是什么来路、几格、勾中的 Part 里有多少段能挑。段数从 Part 的
+// seg_count 现算，勾选变了要重画。
+function renderCutTemplateSub() {
+  const el = document.getElementById('cut-template-sub');
+  if (!el) return;
+  const t = CUT_TEMPLATES.find(x => x.id === getCutTemplateId());
+  if (!t) { el.textContent = ''; return; }
+  const 段数 = allParts
+    .filter(p => partChecked.has(p.id))
+    .reduce((a, p) => a + (p.seg_count || 0), 0);
+  el.textContent = `${t.slots.length} 格　${t.source}　参与的 Part 里有 ${段数} 段可用`;
+}
 
 function _switchToSegmentView() {
   const 标题 = document.querySelector('#marks-head .info-card-title');
@@ -1204,6 +1240,7 @@ function openExportModal() {
   document.getElementById('export-modal').classList.add('visible');
   resetPartChecked();   // 每次打开都回到全选，上次的选择不带过来
   renderPartPicker();
+  renderCutTemplateSub();   // 段数要等 Part 勾选填好才算得出来
   // 打开时兜底重试：初始化时拉模板列表失败的话，这里再拉一次，避免静默丢默认模板
   if (!_templateOptionsReady) loadTemplateOptions();
   loadExports();
@@ -1263,7 +1300,9 @@ function parseRawMarks(marks) {
 
 // Fetch marks for all track clips not yet in the partsMarks cache
 async function preloadAllMarks() {
-  // 全部 Part 的标注进缓存：左列表统计（N 高光 · N 钩子）靠它
+  // 全部 Part 的标注进缓存：左列表统计（N 高光 · N 钩子）靠它。
+  // 段项目没有标记，这一圈请求全是空响应，白等一轮。
+  if (PROJ_KIND === 'segments') { renderPartsList(); return; }
   await Promise.all(allParts.map(async p => {
     if (partsMarks[p.id]) return;
     try {
@@ -1453,6 +1492,7 @@ function onPartPickClick(ev, idx) {
   const p = allParts[idx];
   if (!p) return;
   if (ev.target.checked) partChecked.add(p.id); else partChecked.delete(p.id);
+  renderCutTemplateSub();
   syncPartPickerHeader();
   schedulePreflight();
 }
@@ -1460,6 +1500,7 @@ function onPartPickClick(ev, idx) {
 function toggleAllPartPick(on) {
   partChecked = on ? new Set(allParts.map(p => p.id)) : new Set();
   renderPartPicker();
+  renderCutTemplateSub();
   schedulePreflight();
 }
 
@@ -1471,6 +1512,7 @@ function renderPartPicker() {
       <input type="checkbox" ${partChecked.has(p.id) ? 'checked' : ''}
              onclick="onPartPickClick(event, ${i})">
       <span>${partLabel(p)}</span>
+      ${PROJ_KIND === 'segments' ? `<i class="part-pick-seg">${p.seg_count || 0} 段</i>` : ''}
     </label>`).join('');
   syncPartPickerHeader();
 }
@@ -2158,10 +2200,11 @@ function showAiChoiceModal(analyzedCount, unanalyzedCount, onPartial, onAll) {
   // 这里数的是有没有标记，不是有没有分析过：AI 跑完也可能一个高光都没挑出来，
   // 那种 Part 在左边列表里挂着「已分析」，写成"还没有分析过"会跟列表对不上。
   const total = analyzedCount + unanalyzedCount;
+  const 产物词 = PROJ_KIND === 'segments' ? '段' : '标记';
   document.getElementById('ai-choice-msg').innerHTML =
-    `${total} 个 Part 里，<strong>${analyzedCount} 个已经有标记</strong>，<strong>${unanalyzedCount} 个还没有标记</strong>。`
-    + `<div class="ai-modal-note">选「全部重新分析」，那 ${analyzedCount} 个已有的标记<b>会被覆盖</b>。</div>`;
-  document.getElementById('ai-choice-partial-btn').textContent = `只分析没标记的 ${unanalyzedCount} 个`;
+    `${total} 个 Part 里，<strong>${analyzedCount} 个已经有${产物词}</strong>，<strong>${unanalyzedCount} 个还没有${产物词}</strong>。`
+    + `<div class="ai-modal-note">选「全部重新分析」，那 ${analyzedCount} 个已有的${产物词}<b>会被覆盖</b>。</div>`;
+  document.getElementById('ai-choice-partial-btn').textContent = `只分析没${产物词}的 ${unanalyzedCount} 个`;
   document.getElementById('ai-choice-all-btn').textContent     = `全部重新分析 ${total} 个`;
   document.getElementById('ai-choice-partial-btn').onclick = () => { hideAiChoiceModal(); onPartial(); };
   document.getElementById('ai-choice-all-btn').onclick     = () => { hideAiChoiceModal(); onAll(); };
@@ -2177,19 +2220,26 @@ async function triggerAiAnalysis() {
   const readyParts = allParts.filter(p => p.status === 'ready');
   if (!readyParts.length) { toast('没有就绪的 Part 视频', 'error'); return; }
 
-  // 确保所有 ready Part 的 marks 都已载入缓存
-  await Promise.all(readyParts.map(async p => {
-    if (partsMarks[p.id]) return;
-    try {
-      partsMarks[p.id] = parseRawMarks(await apiFetch(`/admake/parts/${p.id}/marks`));
-    } catch {
-      partsMarks[p.id] = { hlGroups: [], hookGroups: [] };
-    }
-  }));
+  // 按模板剪的项目产出的是段，不是标记。拿标记数分「跑过没跑过」的话，
+  // 每个 Part 都算没跑过，再点一次分析会把整个项目重跑一遍——一个 Part 十分钟起，
+  // 而且是按次计费的模型调用。
+  const 段项目 = PROJ_KIND === 'segments';
+  if (!段项目) {
+    await Promise.all(readyParts.map(async p => {
+      if (partsMarks[p.id]) return;
+      try {
+        partsMarks[p.id] = parseRawMarks(await apiFetch(`/admake/parts/${p.id}/marks`));
+      } catch {
+        partsMarks[p.id] = { hlGroups: [], hookGroups: [] };
+      }
+    }));
+  }
 
-  const hasMarks    = p => { const m = partsMarks[p.id]; return m && (m.hlGroups.length > 0 || m.hookGroups.length > 0); };
-  const analyzed    = readyParts.filter(hasMarks);
-  const unanalyzed  = readyParts.filter(p => !hasMarks(p));
+  const 有产物 = 段项目
+    ? p => (p.seg_count || 0) > 0
+    : p => { const m = partsMarks[p.id]; return m && (m.hlGroups.length > 0 || m.hookGroups.length > 0); };
+  const analyzed    = readyParts.filter(有产物);
+  const unanalyzed  = readyParts.filter(p => !有产物(p));
 
   if (analyzed.length > 0 && unanalyzed.length > 0) {
     showAiChoiceModal(
@@ -2201,15 +2251,18 @@ async function triggerAiAnalysis() {
     showAiModal(
       '重新分析全部 Part',
       `对 <strong>${readyParts.length} 个 Part</strong> 重新跑一次 AI 分析。`
-        + `<div class="ai-modal-note">这 ${readyParts.length} 个 Part 现在的高光和钩子`
+        + `<div class="ai-modal-note">这 ${readyParts.length} 个 Part 现在的${段项目 ? '段和字段' : '高光和钩子'}`
         + `<b>会被新结果覆盖</b>，手动改过的也一样。</div>`,
       () => startAiAnalysis(false)
     );
   } else {
     showAiModal(
       '开始 AI 分析',
-      `让 AI 看完 <strong>${readyParts.length} 个 Part</strong>，挑出高光和钩子。`
-        + `<div class="ai-modal-note">视频会压缩后<b>上传到云端</b>处理，分析期间别退出应用。</div>`,
+      段项目
+        ? `让 AI 看完 <strong>${readyParts.length} 个 Part</strong>，拆成段并逐段标字段。`
+          + `<div class="ai-modal-note">一个 Part 要跑十分钟上下，分析期间别退出应用。</div>`
+        : `让 AI 看完 <strong>${readyParts.length} 个 Part</strong>，挑出高光和钩子。`
+          + `<div class="ai-modal-note">视频会压缩后<b>上传到云端</b>处理，分析期间别退出应用。</div>`,
       () => startAiAnalysis(false)
     );
   }
@@ -2974,14 +3027,28 @@ function renderSegCountNote(pf) {
   chip.style.display = 推荐 ? '' : 'none';
   if (推荐) chip.textContent = `建议 ${推荐} 条`;
   input.classList.toggle('over', 推荐 > 0 && count > 推荐);
-  const 格 = (pf['每格'] || []).map(g =>
-    `第${g['序']}格 ${g['格名']}：候选 ${g['通过硬条件']} 段`
-    + (g['最高匹配度'] != null ? `，最高匹配 ${Math.round(g['最高匹配度'] * 100)}%` : '')
-    + `，六成以上 ${g['六成以上']} 段`).join('；');
-  note.className = 'exp-hint' + (推荐 > 0 && count > 推荐 ? ' bad' : '');
+  // 每格一行的表，照原型：格、要填几段、通过硬条件、六成以上、最高匹配。
+  // 挤成一段话时，剪辑要在里面找哪一格挑不出段，得一个字一个字读。
+  const 行 = (pf['每格'] || []).map(g => {
+    const 匹 = g['最高匹配度'] != null ? Math.round(g['最高匹配度'] * 100) + '%' : '—';
+    const 空 = g['通过硬条件'] === 0;
+    return `<tr${空 ? ' class="slot-empty"' : ''}>`
+      + `<td class="slot-no">${g['序']}</td>`
+      + `<td class="slot-name">${esc(g['格名'] || '')}</td>`
+      + `<td>${g['取几段']} 段</td>`
+      + `<td>${g['通过硬条件']} 段</td>`
+      + `<td>${g['六成以上']} 段</td>`
+      + `<td class="slot-hit">${匹}</td></tr>`;
+  }).join('');
+  const 超 = 推荐 > 0 && count > 推荐;
+  note.className = 'exp-hint' + (超 ? ' bad' : '');
   note.style.display = '';
-  note.textContent = `一条填 ${pf['总段数']} 段，每段约 ${pf['中位段长']} 秒。${格}`
-    + (推荐 > 0 && count > 推荐 ? `　要 ${count} 条超过建议的 ${推荐} 条，多出来的会复用同一批段。` : '');
+  note.innerHTML =
+    `<div class="slot-sum">一条填 ${pf['总段数']} 段，每段约 ${pf['中位段长']} 秒</div>`
+    + '<table class="slot-table"><thead><tr>'
+    + '<th></th><th>格</th><th>要填</th><th>通过硬条件</th><th>六成以上</th><th>最高匹配</th>'
+    + '</tr></thead><tbody>' + 行 + '</tbody></table>'
+    + (超 ? `<div class="slot-over">要 ${count} 条超过建议的 ${推荐} 条，多出来的会复用同一批段。</div>` : '');
 }
 
 function renderCountNote(pf) {

@@ -49,6 +49,9 @@ class AdmakePartOut(BaseModel):
     ai_status: str = "none"
     ai_error: str | None = None
     source_ids: str
+    # 这个 Part 拆出了几个段。按模板剪的项目没有标记，左侧列表的统计和
+    # 「哪些 Part 分析过」都要靠它，不能再去数标记。
+    seg_count: int = 0
     created_at: datetime
     model_config = {"from_attributes": True}
 

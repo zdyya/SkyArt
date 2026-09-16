@@ -2472,7 +2472,20 @@ async def list_parts(
     res = await db.execute(
         select(AdmakePart).where(AdmakePart.project_id == pid).order_by(AdmakePart.part_index)
     )
-    return [AdmakePartOut.model_validate(pt) for pt in res.scalars().all()]
+    parts = list(res.scalars().all())
+    # 段数现算，不落列。段只由分析写，一个项目几个到几十个 Part，一次 group by 就够；
+    # 落成列要在写段、删段、重建 Part 三处维护，漏一处就显示错数。
+    计 = dict((await db.execute(
+        select(AdmakeSegment.part_id, func.count(AdmakeSegment.id))
+        .where(AdmakeSegment.part_id.in_([p.id for p in parts] or [0]))
+        .group_by(AdmakeSegment.part_id)
+    )).all())
+    出 = []
+    for pt in parts:
+        o = AdmakePartOut.model_validate(pt)
+        o.seg_count = 计.get(pt.id, 0)
+        出.append(o)
+    return 出
 
 
 @router.post("/parts/{part_id}/rebuild", response_model=AdmakePartOut)
