@@ -75,13 +75,10 @@ textarea.input{resize:vertical;min-height:68px;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .badge-blue.pulse{animation:pulse 1.5s infinite;}
 .chip{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text2);}
-.chip.kind{background:rgba(249,115,22,.1);border-color:rgba(249,115,22,.35);color:var(--accent2);}
 .kind-option{position:relative;display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;overflow:hidden;flex:1;transition:background var(--t-color),border-color var(--t-color);}
-.kind-option:not(.selected):hover{border-color:var(--text3);background:var(--bg3);}
 .kind-option::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
 .kind-option.selected{border-color:var(--accent);background:rgba(249,115,22,.07);}
 .kind-option.selected::before{transform:scaleX(1);}
-.kind-option input{width:13px;height:13px;margin-top:2px;accent-color:var(--accent);flex-shrink:0;}
 .kind-name{font-size:13px;color:var(--text);font-weight:500;}
 .kind-desc{font-size:11px;color:var(--text3);margin-top:2px;}
 
@@ -315,7 +312,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
          1.75px，跟红绿灯（中心 y=26）和返回按钮排不到一条中轴线上 -->
     <div style="display:flex;align-items:center;gap:8px;-webkit-app-region:no-drag;">
       <button class="bk" onclick="goHome()" title="返回首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15" style="align-self:center"><path d="m14.5 17-5-5 5-5"/></svg>首页</button>
-      <span class="ptitle">素材制作</span>
+      <span class="ptitle" id="page-title">素材制作</span>
     </div>
     <div class="topbar-right">
       <span id="user-display" style="font-size:13px;color:var(--text2)"></span>
@@ -390,24 +387,13 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     </div>
 
     <div class="form-group">
-      <label class="form-label">项目类型 *</label>
-      <div style="display:flex;gap:8px;" onchange="syncKindPick()">
-        <label class="kind-option selected">
-          <input type="radio" name="c-kind" value="marks" checked>
-          <div>
-            <div class="kind-name">按高光钩子剪</div>
-            <div class="kind-desc">标出高光和钩子，按导出模式拼片</div>
-          </div>
-        </label>
-        <label class="kind-option">
-          <input type="radio" name="c-kind" value="segments">
-          <div>
-            <div class="kind-name">按模板剪</div>
-            <div class="kind-desc">AI 把片子拆成一段段，按剪辑模板挑段拼片</div>
-          </div>
-        </label>
+      <label class="form-label">项目类型</label>
+      <div class="kind-option selected" style="cursor:default;">
+        <div>
+          <div class="kind-name" id="c-kind-name"></div>
+          <div class="kind-desc" id="c-kind-desc"></div>
+        </div>
       </div>
-      <div style="font-size:11px;color:var(--text3)">建完不能改。两种类型标出来的东西不一样，不能互相用。</div>
     </div>
 
     <div class="form-group">
@@ -635,6 +621,14 @@ body.selecting .project-card.busy .busy-tag{display:block;}
 const _PORT = (window.electronAPI && window.electronAPI.backendPort) || 8764;
 const API   = `http://127.0.0.1:${_PORT}/api/v1`;
 let authToken   = localStorage.getItem('skyart_token') || '';
+// 首页两个入口进的是同一个列表页，用 kind 参数分开：
+// 不带参数（老的「素材制作」）=按高光钩子剪，?kind=segments（「爆款素材分析」）=按模板剪。
+// 列表只显示本类型的项目，新建出来的也是本类型。
+const PAGE_KIND = new URLSearchParams(location.search).get('kind') === 'segments' ? 'segments' : 'marks';
+const KIND_TEXT = {
+  marks:    { 名: '按高光钩子剪', 说明: '标出高光和钩子，按导出模式拼片' },
+  segments: { 名: '按模板剪',     说明: 'AI 把片子拆成一段段，按剪辑模板挑段拼片' },
+};
 let currentUser = null;
 let currentRole = null;
 let allProjects = [];
@@ -740,7 +734,8 @@ function enterProject(pid) {
 // ── Projects ─────────────────────────────────────────────────
 async function loadProjects() {
   try {
-    allProjects = await apiFetch('/admake/projects');
+    const 全部 = await apiFetch('/admake/projects');
+    allProjects = 全部.filter(p => (p.project_kind || 'marks') === PAGE_KIND);
     renderProjects();
   } catch (e) { toast(e.message, 'error'); }
 }
@@ -827,7 +822,6 @@ function renderProjects() {
       </div>
       <div class="project-card-body">
         <div class="project-card-meta">
-          ${p.project_kind === 'segments' ? '<span class="chip kind">按模板剪</span>' : ''}
           <span class="chip">${esc(p.target_platform)}</span>
           <span class="chip">源视频 ${p.source_count}</span>
           <span class="chip">Part ${p.part_count}</span>
@@ -1114,21 +1108,19 @@ async function saveEditProject() {
 }
 
 // ── Create project modal ──────────────────────────────────────
-function syncKindPick() {
-  document.querySelectorAll('.kind-option').forEach(el =>
-    el.classList.toggle('selected', el.querySelector('input').checked));
-  // 按模板剪只有一条分析管线（qwen 拆段），没有可选的模型，那一栏就不摆出来。
-  const seg = pickedKind() === 'segments';
-  document.getElementById('c-ai-model-group').style.display = seg ? 'none' : '';
-}
-function pickedKind() {
-  const r = document.querySelector('input[name="c-kind"]:checked');
-  return r ? r.value : 'marks';
+if (PAGE_KIND === 'segments') {
+  document.title = 'SkyArt — 爆款素材分析';
+  document.addEventListener('DOMContentLoaded', () => {
+    const t = document.getElementById('page-title');
+    if (t) t.textContent = '爆款素材分析';
+  });
 }
 
 function openCreateModal() {
-  document.querySelector('input[name="c-kind"][value="marks"]').checked = true;
-  syncKindPick();
+  document.getElementById('c-kind-name').textContent = KIND_TEXT[PAGE_KIND].名;
+  document.getElementById('c-kind-desc').textContent = KIND_TEXT[PAGE_KIND].说明;
+  // 按模板剪只有一条分析管线（qwen 拆段），没有可选的模型，那一栏就不摆出来。
+  document.getElementById('c-ai-model-group').style.display = PAGE_KIND === 'segments' ? 'none' : '';
   document.getElementById('c-title').value = '';
   document.getElementById('c-desc').value  = '';
   document.getElementById('c-alias').value = '';
@@ -1222,7 +1214,7 @@ async function createProject() {
     const body = {
       title,
       description:      document.getElementById('c-desc').value.trim() || null,
-      project_kind:     pickedKind(),
+      project_kind:     PAGE_KIND,
       ai_model:         document.getElementById('c-ai-model').value,
       target_platform:  document.getElementById('c-platform').value,
       prompt_template:  document.getElementById('c-prompt').value,
