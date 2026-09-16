@@ -1822,7 +1822,7 @@ async function 拉模板库(){
     var ts = await api('/admake/cut-templates');
     模板库 = ts.map(function(t){
       return {id:t.id, 名:t.name, 来源:t.source, 来自:(t.source_note || '').replace(/^拆自素材 /, '').split('，')[0],
-              种类:t.kind, 内置:t.builtin,
+              种类:t.kind, 内置:t.builtin, 原:t,
               格:(t.slots || []).map(function(g){
                 var c = g.内容条件 || {}, q = g.结构条件 || {};
                 var 句 = [];
@@ -1890,8 +1890,12 @@ function 画库(){
   });
 }
 var 开库 = {}, 待删 = -1, 删计时;
+/* 导出的是后端存的那份原始条件（name/kind/slots）。界面上那份「段落类型为冲突，
+   尺度档不超过 2」是渲染出来给人看的句子，导出去再导回来就只剩一个没有任何条件的
+   空模板，套到段库上每一格都是满分，剪出来的片子是随机的。 */
 function 下载(列, 名){
-  var b = new Blob([JSON.stringify(列, null, 2)], {type:'application/json'});
+  var 原 = 列.map(function(t){ return t.原 || t; });
+  var b = new Blob([JSON.stringify(原, null, 2)], {type:'application/json'});
   var a = document.createElement('a');
   a.href = URL.createObjectURL(b); a.download = 名 + '.json';
   document.body.appendChild(a); a.click(); a.remove();
@@ -1902,21 +1906,33 @@ function 导出全部(){
   下载(模板库, '模板库_' + 模板库.length + ' 个');
   提示('已导出 ' + 模板库.length + ' 个模板');
 }
+/* 导进来的模板要写进后端。只塞进这一页的内存的话，刷新就没了，
+   「素材制作 2.0」的导出面板里也选不到它，导入等于什么都没发生。 */
 function 读入(e){
   var f = e.target.files && e.target.files[0]; if(!f) return;
   var r = new FileReader();
-  r.onload = function(){
-    try{
-      var d = JSON.parse(r.result); if(!Array.isArray(d)) d = [d];
-      var n = 0;
-      d.forEach(function(t){
-        if(!t || !t.名 || !t.格) return;
-        var 名 = t.名; var k = 2;
-        while(有同名(名)){ 名 = t.名 + '（' + k + '）'; k++; }
-        t.名 = 名; t.来源 = '导入'; 模板库.unshift(t); n++;
-      });
-      画库(); 查重(); 提示(n ? '已导入 ' + n + ' 个模板' : '文件里没有可用的模板');
-    }catch(err){ 提示('这个文件不是模板 JSON'); }
+  r.onload = async function(){
+    var d;
+    try { d = JSON.parse(r.result); }
+    catch(err){ 提示('这个文件不是模板 JSON'); return; }
+    if(!Array.isArray(d)) d = [d];
+    var 待 = d.filter(function(t){ return t && t.name && Array.isArray(t.slots) && t.slots.length; });
+    if(!待.length){ 提示('文件里没有可用的模板。要导入的是从这里「导出」出去的那种 JSON'); return; }
+    var 占名 = 模板库.map(function(t){ return t.名; });
+    var n = 0, 坏 = '';
+    for (var i = 0; i < 待.length; i++) {
+      var t = 待[i], 名 = t.name, k = 2;
+      while(占名.indexOf(名) >= 0){ 名 = t.name + '（' + k + '）'; k++; }
+      try {
+        await api('/admake/cut-templates', {method:'POST', body:JSON.stringify({
+          name: 名, source: '导入', source_note: t.source_note || '',
+          kind: t.kind || '整条', slots: t.slots,
+        })});
+        占名.push(名); n++;
+      } catch(err){ 坏 = err.message; }
+    }
+    await 拉模板库(); 查重();
+    提示(n ? '已导入 ' + n + ' 个模板' : '导不进去：' + 坏);
   };
   r.readAsText(f); e.target.value = '';
 }

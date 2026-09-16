@@ -1,6 +1,6 @@
 {
   "name": "SkyArt",
-  "version": "1.0.7-beta.9",
+  "version": "1.0.7-beta.10",
   "description": "天工短剧 - AI短剧创作平台",
   "main": "main.js",
   "scripts": {
