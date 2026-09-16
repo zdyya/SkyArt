@@ -66,6 +66,9 @@ _NAMING_BANNED_RE = re.compile(r'[\/\\*?"<>|_]')
 # 而 APFS 单个文件名上限是 255 个字符（按字符数算，中文英文一样，实测确认）。
 _TITLE_MAX_LEN = 100
 
+# 项目类型。marks 是按高光钩子剪，段库那套分析和取数都不走它；segments 是按模板剪。
+_PROJECT_KINDS = ("marks", "segments")
+
 
 def _validate_naming_field(value: str, field_label: str, max_len: int, allow_mid_colon: bool) -> None:
     """校验剧名 / 导出文件命名：非法字符全位置禁止；冒号规则按字段区分（剧名允许中间出现）。"""
@@ -1960,6 +1963,8 @@ async def create_project(
     _validate_naming_field(body.title, "项目标题", _TITLE_MAX_LEN, allow_mid_colon=True)
     if body.editor_alias:
         _validate_naming_field(body.editor_alias, "导出文件命名", 20, allow_mid_colon=False)
+    if body.project_kind not in _PROJECT_KINDS:
+        raise HTTPException(400, f"未知的项目类型：{body.project_kind}")
     p = AdmakeProject(**body.model_dump(), user_id=user.id)
     if p.export_path is not None and not p.export_path.strip():
         p.export_path = None  # 空字符串归一成 None，与默认目录一致

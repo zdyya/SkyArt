@@ -8,6 +8,8 @@ class AdmakeProjectCreate(BaseModel):
     prompt_template: str = "默认模板"
     target_platform: str = "TikTok"
     ai_model: str = "gemini-3.5-flash"
+    # marks=按高光钩子剪，segments=按模板剪。建完不可改。
+    project_kind: str = "marks"
     editor_alias: str = ""
     drama_project_id: int | None = None
     export_path: str | None = None
@@ -58,6 +60,7 @@ class AdmakeProjectOut(BaseModel):
     prompt_template: str
     target_platform: str
     ai_model: str = "gemini-3.5-flash"
+    project_kind: str = "marks"
     editor_alias: str = ""
     default_template_id: int | None = None
     export_path: str | None = None

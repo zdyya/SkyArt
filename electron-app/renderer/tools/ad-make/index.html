@@ -75,6 +75,15 @@ textarea.input{resize:vertical;min-height:68px;}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
 .badge-blue.pulse{animation:pulse 1.5s infinite;}
 .chip{background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:2px 8px;font-size:11px;color:var(--text2);}
+.chip.kind{background:rgba(249,115,22,.1);border-color:rgba(249,115,22,.35);color:var(--accent2);}
+.kind-option{position:relative;display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border:1px solid var(--border);border-radius:6px;cursor:pointer;overflow:hidden;flex:1;transition:background var(--t-color),border-color var(--t-color);}
+.kind-option:not(.selected):hover{border-color:var(--text3);background:var(--bg3);}
+.kind-option::before{content:'';position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:0 3px 3px 0;background:var(--accent);transform:scaleX(0);transform-origin:left;transition:transform var(--t-move);}
+.kind-option.selected{border-color:var(--accent);background:rgba(249,115,22,.07);}
+.kind-option.selected::before{transform:scaleX(1);}
+.kind-option input{width:13px;height:13px;margin-top:2px;accent-color:var(--accent);flex-shrink:0;}
+.kind-name{font-size:13px;color:var(--text);font-weight:500;}
+.kind-desc{font-size:11px;color:var(--text3);margin-top:2px;}
 
 /* ── Modal ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:1000;display:flex;align-items:center;justify-content:center;}
@@ -381,6 +390,27 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     </div>
 
     <div class="form-group">
+      <label class="form-label">项目类型 *</label>
+      <div style="display:flex;gap:8px;" onchange="syncKindPick()">
+        <label class="kind-option selected">
+          <input type="radio" name="c-kind" value="marks" checked>
+          <div>
+            <div class="kind-name">按高光钩子剪</div>
+            <div class="kind-desc">标出高光和钩子，按导出模式拼片</div>
+          </div>
+        </label>
+        <label class="kind-option">
+          <input type="radio" name="c-kind" value="segments">
+          <div>
+            <div class="kind-name">按模板剪</div>
+            <div class="kind-desc">AI 把整集拆成段，按剪辑模板选段拼片</div>
+          </div>
+        </label>
+      </div>
+      <div style="font-size:11px;color:var(--text3)">建完不能改。两种类型的分析产物不通用。</div>
+    </div>
+
+    <div class="form-group">
       <label class="form-label">项目标题 *</label>
       <input class="input" id="c-title" placeholder="请输入项目标题">
       <div id="c-title-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
@@ -408,7 +438,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
       <div style="font-size:11px;color:var(--text3);margin-top:4px">导出的成片保存到此目录下的剧名子文件夹；留空用应用默认目录</div>
     </div>
 
-    <div class="form-group">
+    <div class="form-group" id="c-ai-model-group">
       <label class="form-label">AI 分析模型</label>
       <select class="input" id="c-ai-model">
         <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
@@ -698,6 +728,13 @@ document.addEventListener('click', e => {
 function logoutToHome() { clearAuth(); }  // 清 token 后回首页，首页会转到登录态
 
 function enterProject(pid) {
+  // 按模板剪的段视图和模板库还没接进编辑页，先拦住。老编辑页只认高光钩子那套标记，
+  // 让段库项目进去会看到一个空的标记轨道。
+  const p = allProjects.find(x => x.id === pid);
+  if (p && p.project_kind === 'segments') {
+    toast('按模板剪的编辑页还没接入，这个项目暂时打不开', 'error', 3500);
+    return;
+  }
   window.location.href = `editor.html?projectId=${pid}`;
 }
 
@@ -791,6 +828,7 @@ function renderProjects() {
       </div>
       <div class="project-card-body">
         <div class="project-card-meta">
+          ${p.project_kind === 'segments' ? '<span class="chip kind">按模板剪</span>' : ''}
           <span class="chip">${esc(p.target_platform)}</span>
           <span class="chip">源视频 ${p.source_count}</span>
           <span class="chip">Part ${p.part_count}</span>
@@ -1075,7 +1113,21 @@ async function saveEditProject() {
 }
 
 // ── Create project modal ──────────────────────────────────────
+function syncKindPick() {
+  document.querySelectorAll('.kind-option').forEach(el =>
+    el.classList.toggle('selected', el.querySelector('input').checked));
+  // 按模板剪只有一条分析管线（qwen 拆段），没有可选的模型，那一栏就不摆出来。
+  const seg = pickedKind() === 'segments';
+  document.getElementById('c-ai-model-group').style.display = seg ? 'none' : '';
+}
+function pickedKind() {
+  const r = document.querySelector('input[name="c-kind"]:checked');
+  return r ? r.value : 'marks';
+}
+
 function openCreateModal() {
+  document.querySelector('input[name="c-kind"][value="marks"]').checked = true;
+  syncKindPick();
   document.getElementById('c-title').value = '';
   document.getElementById('c-desc').value  = '';
   document.getElementById('c-alias').value = '';
@@ -1169,7 +1221,9 @@ async function createProject() {
     const body = {
       title,
       description:      document.getElementById('c-desc').value.trim() || null,
-      ai_model:         document.getElementById('c-ai-model').value,
+      project_kind:     pickedKind(),
+      ai_model:         pickedKind() === 'segments' ? '段库'
+                        : document.getElementById('c-ai-model').value,
       target_platform:  document.getElementById('c-platform').value,
       prompt_template:  document.getElementById('c-prompt').value,
       editor_alias:     alias,
@@ -1181,6 +1235,7 @@ async function createProject() {
       p = { id: _pendingCreatedPid };
       const upd = { ...body };
       delete upd.drama_project_id;               // 更新接口不改关联
+      delete upd.project_kind;                   // 项目类型建完就定死
       upd.export_path = upd.export_path || '';   // 空 = 清空自定义目录
       await apiFetch(`/admake/projects/${p.id}`, { method: 'PUT', body: JSON.stringify(upd) }).catch(() => {});
     } else {

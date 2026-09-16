@@ -1025,6 +1025,16 @@ async function init() {
   setupModeListeners();
   initVisTimeline();
   checkFfmpeg();   // 环境依赖检测：缺 ffmpeg 时顶部红条提示
+  // 按模板剪的项目还没接进这一页。悬浮任务件和旧链接都能直接跳进来，
+  // 进来之后标记轨道是空的、导出取不到片段，所以在这里先退回列表。
+  try {
+    const proj = await apiFetch(`/admake/projects/${PROJ_ID}`);
+    if (proj && proj.project_kind === 'segments') {
+      toast('按模板剪的编辑页还没接入', 'error', 3500);
+      setTimeout(() => { window.location.href = 'index.html'; }, 1200);
+      return;
+    }
+  } catch (e) { /* 拉不到就照常走，别把老项目挡在门外 */ }
   try {
     await loadAllParts();
     await restoreAiPolling();   // 后台还在分析就把轮询接回来
