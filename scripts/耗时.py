@@ -44,7 +44,18 @@ def 拆解耗时(事):
             continue
         if not n:
             continue
-        d = 活.setdefault(n, {})
+        # 同一个 Part 重跑时目录名不变。一个 Part 一个字典的话，第二遍的「起」会
+        # 盖掉第一遍的，跟第一遍留下的「止」配成一段，量出 1390 秒的 OCR、
+        # 负数的找镜头这种假数。哪一步被写第二次，就开一个新桶。
+        桶 = 活.setdefault(n, [{}])
+        d = 桶[-1]
+        键 = ('认字幕止' if 'sub.tsv' in t else '找镜头止' if 'detect.json' in t
+              else '切段起' if 'round1_input.txt' in t else '切段止' if 'segs.json' in t
+              else '理结构起' if 'stage1.json' in t else '理结构止' if 'structure.json' in t
+              else None)
+        if 键 and 键 in d:
+            d = {}
+            桶.append(d)
         if 'sub.tsv' in t:
             d['认字幕止'] = ts
             if 活.get('_裁'): d['认字幕起'] = 活.pop('_裁')
@@ -64,7 +75,11 @@ def 拆解耗时(事):
     return 活
 
 def 报(活):
-    for n, d in 活.items():
+    展 = []
+    for n, 桶 in 活.items():
+        for i, d in enumerate(桶, 1):
+            展.append((n if len(桶) == 1 else f'{n}（第 {i} 遍）', d))
+    for n, d in 展:
         段 = []
         def 加(名字, a, b):
             if d.get(a) and d.get(b): 段.append((名字, 秒(d[a], d[b])))
@@ -101,9 +116,9 @@ def 合成耗时(事):
                     print(f'  {法}　{用:6.1f} 秒　片长 {长:.0f} 秒　'
                           f'{用/长*60:.1f} 秒/分钟素材' if 长 else f'  {法}　{用:6.1f} 秒')
 
-f = sys.argv[1] if len(sys.argv) > 1 else sorted(glob.glob(
-    '/Users/jimmy/VScode/SkyArt-段库分析/backend/logs/backend-*.log'))[-1]
-事 = 读(f)
+fs = sys.argv[1:] or sorted(glob.glob(
+    '/Users/jimmy/VScode/SkyArt-段库分析/backend/logs/backend-*.log'))[-1:]
+事 = sorted(sum((读(x) for x in fs), []))
 合成耗时(事)
 print('\n— AI 分析 —')
 报(拆解耗时(事))
