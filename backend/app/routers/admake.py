@@ -2997,6 +2997,9 @@ async def 段版预检(
     target_duration: float = Query(360.0),
     count: int = Query(3),
     part_ids: str | None = Query(None),
+    # 成片模板的前后贴片占在目标时长里，导出那边按它扣，预检也必须扣。
+    # 不传就按不套模板算。两边口径不一致时，用户照预检的建议条数填却被导出判超限。
+    template_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -3013,7 +3016,7 @@ async def 段版预检(
         return {"模板": t.name, "拦住了吗": True, "每格": [],
                 "拦住的原因": "这个项目还没有拆出段，先跑一次 AI 分析。", "推荐条数": 0}
     # 目标时长指成片总长，成片模板的前后贴片也占在里面，选段要用扣掉贴片的长度
-    贴 = await _template_sticker_duration(None, db)
+    贴 = await _template_sticker_duration(template_id, db)
     d = await asyncio.to_thread(取段.算匹配, 库, 格, max(target_duration - 贴, _MIN_BODY_SEC), count)
     d["模板"] = t.name
     return d

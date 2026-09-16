@@ -1297,6 +1297,16 @@ function _状态(part, 段数){
   return 段数 ? '已完成' : '待分析';
 }
 
+/* 后端存的是 UTC，序列化出来不带时区后缀，直接截字符串会差八小时。
+   补个 Z 再交给 Date 换算成本地时间。 */
+function 本地时间(s){
+  if(!s) return '';
+  var d = new Date(/[Z+]/.test(s) ? s : s + 'Z');
+  if(isNaN(d)) return String(s).slice(5, 16).replace('T', ' ');
+  return d.toLocaleString('zh-CN', {month:'2-digit', day:'2-digit',
+                                    hour:'2-digit', minute:'2-digit'});
+}
+
 /* 段库那套字段名换成这一页用的。两边差的只有这张表。 */
 function _转段(seg, 编号){
   var f = seg.fields || {};
@@ -1350,7 +1360,7 @@ async function 装数据(){
     D.素材.push(m);
     可见.push(编号);
     态[编号] = {状态:_状态(pt, segs.length), 进度:segs.length ? 100 : 0,
-                时间:(proj.created_at || '').slice(5, 16).replace('T', ' ')};
+                时间:本地时间(proj.created_at)};
   }
   当前 = D.素材[0] || {编号:'', 素材时长:0, 段:[], 片源:''};
   当前段 = 当前.段[0] || null;

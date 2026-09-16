@@ -167,6 +167,22 @@ def 打分(段, 格):
     return 1.0 if not 满 else round(得 / 满, 3)
 
 
+def 位置(格, i, 共几格):
+    """这一格算开场、结尾还是中段。
+
+    模板里写了「锁位置」就听它的，没写按它在数组里的次序定。这个字段以前没有
+    任何代码读，改了不起作用——现在它决定同分时按什么排。
+    """
+    锁 = (格 or {}).get('锁位置')
+    if 锁 == '第一格':
+        return True, False
+    if 锁 == '最后一格':
+        return False, True
+    if 锁 == '不锁':
+        return False, False
+    return i == 0, i == 共几格 - 1
+
+
 def 排序键(段, 格, 第一格, 末格=False):
     """先按匹配度降序，同分再按位置排。
 
@@ -249,7 +265,8 @@ def 算匹配(库, 格们, 目标时长, 要几条=3):
     for i, g in enumerate(格们):
         取几段 = 分配['每格取几段'][i]
         cand = 筛段(库, g, 预算)
-        cand.sort(key=lambda s: 排序键(s, g, i == 0, i == len(格们) - 1))
+        开, 末 = 位置(g, i, len(格们))
+        cand.sort(key=lambda s: 排序键(s, g, 开, 末))
         分 = sorted((打分(s, g) for s in cand), reverse=True)
         够格 = sum(1 for x in 分 if x >= 0.6)
         # 这一格撑得起几条：选段只要还有没用过的段就不回头复用，所以能出的条数是
@@ -303,7 +320,8 @@ def 选段(库, 格们, 目标时长, 要几条=3):
     排好 = []
     for i, g in enumerate(格们):
         cand = 筛段(库, g, 预算)
-        cand.sort(key=lambda s: 排序键(s, g, i == 0, i == len(格们) - 1))
+        开, 末 = 位置(g, i, len(格们))
+        cand.sort(key=lambda s: 排序键(s, g, 开, 末))
         排好.append(cand)
     名次 = [{x['段ID']: j for j, x in enumerate(c)} for c in 排好]
 
