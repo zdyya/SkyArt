@@ -68,7 +68,21 @@ function checkFfmpeg() {
   return allOk;
 }
 
-// ── 校验 3：minos（对外发版须 ≤13，本地 macOS 新系统打的包仅自测）──
+// ── 校验 3：拆解管线的 OCR 程序在不在、能不能跑。缺了的话段库分析第一步就失败 ──
+function checkOcrbin() {
+  const p = path.join(resDir, 'backend-bin/_internal/app/services/decompose/ocrbin');
+  const fs = require('fs');
+  if (!fs.existsSync(p)) {
+    console.error(`打包验证 [${arch}] · ocrbin 不在包里 — ❌ spec 的 datas 漏了 app/services/decompose/ocrbin`);
+    return false;
+  }
+  const mode = fs.statSync(p).mode & 0o777;
+  const ok = (mode & 0o111) !== 0;
+  console.log(`打包验证 [${arch}] · ocrbin 权限 = ${mode.toString(8)} — ${ok ? '可执行 ✓' : '❌ 没有执行位，afterPack 的 chmod 没生效'}`);
+  return ok;
+}
+
+// ── 校验 4：minos（对外发版须 ≤13，本地 macOS 新系统打的包仅自测）──
 function checkMinos() {
   try {
     const out = execSync(`otool -l "${soPath}"`).toString();
@@ -88,10 +102,12 @@ function checkMinos() {
 (async () => {
   const verOk = await checkVersion();   // 最关键：版本对不上直接判包报废
   const ffOk = checkFfmpeg();
+  const ocrOk = checkOcrbin();
   const minosOk = checkMinos();
   console.log('');
   if (!verOk) { console.error('→ 版本校验未过，这个包不能用（包内后端不是当前源码）。'); process.exit(1); }
   if (!ffOk) { console.error('→ ffmpeg 校验未过，这个包不能用（包内 ffmpeg 不是目标版本）。'); process.exit(1); }
+  if (!ocrOk) { console.error('→ ocrbin 校验未过，段库分析的认字幕这一步会失败。'); process.exit(1); }
   if (!minosOk) { console.error('→ minos 未过：本地自测可用，对外发版请走 CI。'); process.exit(1); }
   console.log(`✅ 打包验证全部通过 [${arch}]`);
 })();

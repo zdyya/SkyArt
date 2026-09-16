@@ -10,6 +10,11 @@ a = Analysis(
         ('../prompts', 'prompts'),
         # 成片模板花字字体（app/fonts/*.ttf），编辑页预览 + 导出渲染都要用
         ('app/fonts', 'app/fonts'),
+        # 拆解管线的 OCR 程序。它是编好的 arm64 二进制，不是 .py，PyInstaller
+        # 不会跟着 import 收进来，要显式打进去。decompose/环境.py 的 ocr程序()
+        # 按「跟本模块同目录」找它，所以目标路径必须是 app/services/decompose。
+        # 打包会丢执行位，afterPack.js 里补 chmod。
+        ('app/services/decompose/ocrbin', 'app/services/decompose'),
     ],
     hiddenimports=[
         'uvicorn.logging',
