@@ -16,7 +16,7 @@ class AdmakeProject(Base):
     ai_model: Mapped[str] = mapped_column(String(64), default="gemini-3.5-flash")
     # 项目类型：marks=按高光钩子剪（老功能），segments=按模板剪（段库）。
     # 建项目时定死，之后不改——两种类型的分析产物和取数逻辑不通用。
-    project_kind: Mapped[str] = mapped_column(String(16), default="marks")
+    project_kind: Mapped[str] = mapped_column(String(32), default="marks")
     editor_alias: Mapped[str] = mapped_column(String(20), default="")
     export_seq: Mapped[int] = mapped_column(Integer, default=0)
     # 自定义导出目录（本地绝对路径）。空=用 App 数据目录内的默认导出目录。

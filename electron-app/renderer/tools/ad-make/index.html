@@ -508,6 +508,12 @@ body.selecting .project-card.busy .busy-tag{display:block;}
     <input type="hidden" id="e-pid">
 
     <div class="form-group">
+      <label class="form-label">项目类型</label>
+      <div id="e-kind" style="font-size:13px;color:var(--text2);padding:7px 10px;background:var(--bg3);border:1px solid var(--border);border-radius:6px;"></div>
+      <div style="font-size:11px;color:var(--text3)">建完不能改</div>
+    </div>
+
+    <div class="form-group">
       <label class="form-label">项目标题 *</label>
       <input class="input" id="e-title" placeholder="请输入项目标题">
       <div id="e-title-error" style="font-size:11px;color:var(--red);min-height:14px;"></div>
@@ -728,13 +734,6 @@ document.addEventListener('click', e => {
 function logoutToHome() { clearAuth(); }  // 清 token 后回首页，首页会转到登录态
 
 function enterProject(pid) {
-  // 按模板剪的段视图和模板库还没接进编辑页，先拦住。老编辑页只认高光钩子那套标记，
-  // 让段库项目进去会看到一个空的标记轨道。
-  const p = allProjects.find(x => x.id === pid);
-  if (p && p.project_kind === 'segments') {
-    toast('按模板剪的编辑页还没接入，这个项目暂时打不开', 'error', 3500);
-    return;
-  }
   window.location.href = `editor.html?projectId=${pid}`;
 }
 
@@ -1017,6 +1016,8 @@ async function openEditModal(pid) {
   const project = allProjects.find(p => p.id === pid);
   if (!project) return;
   document.getElementById('e-pid').value       = pid;
+  document.getElementById('e-kind').textContent =
+    project.project_kind === 'segments' ? '按模板剪' : '按高光钩子剪';
   document.getElementById('e-title').value     = project.title || '';
   document.getElementById('e-desc').value      = project.description || '';
   // 老项目存的是已废弃的 qwen-vl-max，新下拉里没有这一项。不映射的话 select 会
@@ -1222,8 +1223,7 @@ async function createProject() {
       title,
       description:      document.getElementById('c-desc').value.trim() || null,
       project_kind:     pickedKind(),
-      ai_model:         pickedKind() === 'segments' ? '段库'
-                        : document.getElementById('c-ai-model').value,
+      ai_model:         document.getElementById('c-ai-model').value,
       target_platform:  document.getElementById('c-platform').value,
       prompt_template:  document.getElementById('c-prompt').value,
       editor_alias:     alias,

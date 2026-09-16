@@ -59,7 +59,7 @@ async def create_tables():
             # 导致「按你常用的时长给快捷值」这件事没有数据来源。
             "ALTER TABLE admake_exports ADD COLUMN target_duration FLOAT",
             # 项目类型：老库全部项目补成 marks（按高光钩子剪），行为与加列之前一致
-            "ALTER TABLE admake_projects ADD COLUMN project_kind VARCHAR(16) DEFAULT 'marks'",
+            "ALTER TABLE admake_projects ADD COLUMN project_kind VARCHAR(32) DEFAULT 'marks'",
         ]:
             try:
                 await conn.execute(__import__("sqlalchemy").text(stmt))

@@ -166,6 +166,12 @@ async def _get_project(pid: int, user: User, db: AsyncSession) -> AdmakeProject:
     return p
 
 
+def _project_kind(project: AdmakeProject) -> str:
+    """项目类型。老库 ALTER 之前建的行读不到这一列，一律当按高光钩子剪。
+    后面每个分支点都调它，别各写各的 getattr——ai_model 就是那么散开的。"""
+    return getattr(project, "project_kind", None) or "marks"
+
+
 async def _get_part(part_id: int, user: User, db: AsyncSession) -> AdmakePart:
     res = await db.execute(
         select(AdmakePart)
@@ -1427,7 +1433,7 @@ async def _delete_oss_us(oss_key: str):
     await loop.run_in_executor(None, _do_delete)
 
 
-async def _precheck_ai_credentials(ai_model: str) -> None:
+async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -> None:
     """AI 分析入口的密钥快速体检：缺配置/密钥无效必须在这里秒级报错。
     真正用到密钥的动作（OSS 上传、调大模型）发生在每个 Part 压缩完之后，
     叠加重试和多 Part 串行，缺密钥要等约 10 分钟才暴露（2026-07-02 事故）。
@@ -1469,6 +1475,16 @@ async def _precheck_ai_credentials(ai_model: str) -> None:
                 return  # 密钥有效但账号无查询 bucket 信息的权限，上传权限无法在此验证，放行
             log_failure("admake.precheck_oss_us", e)
             raise HTTPException(400, f"美区 OSS 连接失败：{str(e)[:120]}")
+
+    if project_kind == "segments":
+        # 段库这条路把视频 base64 内联在请求里直连白名单通道，不经美区 OSS——
+        # OSS 要平台侧配环境变量，用户机器上是断的。在这里探 OSS 会让分析根本起不来。
+        from app.services.decompose.环境 import qwen_key, 拆解失败
+        try:
+            qwen_key()      # 缺 key 时它自己抛，不是返回空
+        except 拆解失败 as e:
+            raise HTTPException(400, str(e))
+        return
 
     if ai_model.startswith("gemini"):
         if not settings.GEMINI_PROXY_URL:
@@ -1629,7 +1645,8 @@ async def _analyze_one_part_gemini(part: AdmakePart, on_stage=None) -> dict:
             asyncio.create_task(_delete_oss_us(oss_key))
 
 
-async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = "gemini-3.5-flash", project_title: str = ""):
+async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = "gemini-3.5-flash",
+                          project_title: str = "", project_kind: str = "marks"):
     from app.database import AsyncSessionLocal
     _ai_tasks[project_id] = {
         "status": "processing", "progress": 0, "total": len(part_ids), "error": "",
@@ -1747,7 +1764,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 result = None
                 for attempt in range(MAX_RETRIES):
                     try:
-                        if ai_model == "段库":
+                        if project_kind == "segments":
                             result = await _拆解一个Part(part, on_stage=_set_stage)
                         elif ai_model.startswith("gemini"):
                             result = await _analyze_one_part_gemini(part, on_stage=_set_stage)
@@ -1773,7 +1790,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 comp_bytes      = result["comp_bytes"]
                 comp_skip_bytes = result.get("comp_skip_bytes", 0)
 
-                if ai_model == "段库":
+                if project_kind == "segments":
                     from app.database import AsyncSessionLocal as _S
                     from app.services.decompose.入库 import 写段库
                     async with db_write_lock:
@@ -2838,7 +2855,8 @@ async def start_ai_analyze(
         raise HTTPException(409, "AI 分析已在进行中，请等待当前任务完成")
     project = await _get_project(pid, user, db)
     ai_model = getattr(project, "ai_model", "gemini-3.5-flash") or "gemini-3.5-flash"
-    await _precheck_ai_credentials(ai_model)
+    kind = _project_kind(project)
+    await _precheck_ai_credentials(ai_model, kind)
     res = await db.execute(
         select(AdmakePart)
         .where(AdmakePart.project_id == pid, AdmakePart.status == "ready")
@@ -2854,18 +2872,21 @@ async def start_ai_analyze(
             raise HTTPException(404, "该 Part 不存在或尚未就绪")
 
     if only_unanalyzed:
+        # 「分析过没有」两种类型看的产物不同：老路数标记点，段路径数段。
+        # 都数标记点的话按模板剪的项目永远认为一个都没分析过，每次全量重跑一遍。
+        done_table = AdmakeSegment if kind == "segments" else AdmakeMark
         filtered = []
         for p in parts:
             cnt = (await db.execute(
-                select(func.count(AdmakeMark.id)).where(AdmakeMark.part_id == p.id)
+                select(func.count(done_table.id)).where(done_table.part_id == p.id)
             )).scalar()
             if cnt == 0:
                 filtered.append(p)
         parts = filtered
         if not parts:
-            raise HTTPException(400, "所有 Part 视频已有时间戳，无需重新分析")
+            raise HTTPException(400, "所有 Part 视频已分析过，无需重新分析")
 
-    background_tasks.add_task(_run_ai_analyze, pid, [p.id for p in parts], ai_model, project.title)
+    background_tasks.add_task(_run_ai_analyze, pid, [p.id for p in parts], ai_model, project.title, kind)
     return {"project_id": pid, "total": len(parts), "status": "processing", "ai_model": ai_model}
 
 

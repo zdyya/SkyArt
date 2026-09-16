@@ -931,6 +931,10 @@ let authToken = localStorage.getItem('skyart_token') || '';
 const params  = new URLSearchParams(window.location.search);
 const PART_ID = parseInt(params.get('partId') || '0');
 const PROJ_ID = parseInt(params.get('projectId') || '0');
+// 项目类型。marks=按高光钩子剪，segments=按模板剪。段视图和段版导出还没接进这一页，
+// 拿不到就按 marks 走，别把老项目挡在门外。
+let PROJ_KIND = 'marks';
+const 段路径未接入 = '按模板剪的分析和导出还没接入，这个项目现在只能看 Part';
 
 let hlGroups   = [];  // [{hs, he}, ...]
 let hookGroups = [];  // [{ks, ke}, ...]
@@ -1018,6 +1022,20 @@ async function checkFfmpeg() {
   } catch (e) { /* 检测失败不阻塞主流程 */ }
 }
 
+// 按模板剪的项目进到这一页，导轨上不会有任何标记，分析和导出按钮也点不动。
+// 顶部挂一条说明，别让人对着空导轨猜。红色留给 ffmpeg 那条真故障，这条用琥珀色。
+function _markSegmentsNotReady() {
+  let bar = document.getElementById('seg-not-ready-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'seg-not-ready-bar';
+    bar.style.cssText = 'position:fixed;top:52px;left:0;right:0;z-index:499;background:#b45309;'
+      + 'color:#fff;font-size:13px;line-height:1.5;padding:8px 16px;text-align:center;';
+    document.body.appendChild(bar);
+  }
+  bar.textContent = '这是按模板剪的项目。段视图、AI 拆段和段版导出还没接进来，现在能做的是看 Part 视频。';
+}
+
 async function init() {
   if (!authToken) { clearAuth(); return; }
   if (!PROJ_ID) { window.location.href = 'index.html'; return; }
@@ -1025,16 +1043,12 @@ async function init() {
   setupModeListeners();
   initVisTimeline();
   checkFfmpeg();   // 环境依赖检测：缺 ffmpeg 时顶部红条提示
-  // 按模板剪的项目还没接进这一页。悬浮任务件和旧链接都能直接跳进来，
-  // 进来之后标记轨道是空的、导出取不到片段，所以在这里先退回列表。
+  // 项目类型要在渲染之前拿到：段项目的分析和导出入口按它拦。
   try {
     const proj = await apiFetch(`/admake/projects/${PROJ_ID}`);
-    if (proj && proj.project_kind === 'segments') {
-      toast('按模板剪的编辑页还没接入', 'error', 3500);
-      setTimeout(() => { window.location.href = 'index.html'; }, 1200);
-      return;
-    }
-  } catch (e) { /* 拉不到就照常走，别把老项目挡在门外 */ }
+    PROJ_KIND = (proj && proj.project_kind) || 'marks';
+  } catch (e) { /* 拉不到就按 marks 走 */ }
+  if (PROJ_KIND === 'segments') _markSegmentsNotReady();
   try {
     await loadAllParts();
     await restoreAiPolling();   // 后台还在分析就把轮询接回来
@@ -2116,6 +2130,7 @@ function hideAiModal() {
 let _aiPollFails = 0; // 状态查询连续失败计数：单次失败可能只是后端瞬时繁忙，任务还在跑
 
 async function startAiAnalysis(onlyUnanalyzed = false) {
+  if (PROJ_KIND === 'segments') { toast(段路径未接入, 'info', 4000); return; }
   if (_aiRunning) { toast('AI 分析已在进行中', 'error'); return; }
   // 先弹窗展示"连接检测中"——后端入口会实测密钥连通性（OSS/模型服务），
   // 缺配置或密钥无效会在这一步秒级返回明确错误，而不是空等到上传阶段才失败
@@ -2764,6 +2779,7 @@ async function runPreflight() {
 }
 
 function doExport() {
+  if (PROJ_KIND === 'segments') { toast(段路径未接入, 'info', 4000); return; }
   // 同步入口守卫：必须在弹确认框之前就拦住重入，
   // 否则网络请求耗时窗口内的二次点击（双击）不会被挡住。
   if (_exportSubmitting || _exportRunning) { toast('有一批素材正在导出，完成后再发起下一批', 'info'); return; }
