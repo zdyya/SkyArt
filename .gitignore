@@ -1,14 +1,15 @@
-# Claude 系统目录
-.claude/
-
-# 本地开发规范，不进版本库
-CLAUDE.md
-
-# 解包的 docx 临时目录
-unpacked_req/
-
-# 临时文件
-临时文件/
+# 根目录默认不进版本库，只放行下面列出的这几项。
+# 以后新增顶层目录，要在这里补一行 !/目录名/，否则提交不上去。
+# 单独放行某个被挡住的文件，用 git add -f 指定它。
+/*
+!/.github/
+!/backend/
+!/electron-app/
+!/prompts/
+!/scripts/
+!/.gitignore
+!/README.md
+!/SkyArt成片后期规范.md
 
 # macOS
 .DS_Store
@@ -36,10 +37,6 @@ electron-app/backend-bin/
 electron-app/node_modules/
 electron-app/skyart.db
 
-# 本地密钥备份与设计草稿，不进版本库
-DE/
+# Electron 运行日志
 electron-app/logs/
 
-# 运行日志与需求草稿，不进版本库
-logs/
-文档/
