@@ -67,6 +67,8 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
     if not os.path.exists(mp4):
         raise 拆解失败(f'找不到 Part 视频 {mp4}')
     wd = 工作目录(mp4)
+    账 = C.新账本()
+    C.当前账本.set(账)
     sub = os.path.join(wd, 'sub.tsv')
     有 = lambda *p: os.path.exists(os.path.join(wd, *p))
 
@@ -78,7 +80,7 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
     # 找镜头先丢进后台，认字幕在前台跑，等切段那一步之前把它收回来——
     # 一个 6 分钟的 Part 这样能省下找镜头那一分钟。
     到('subtitle')
-    with cf.ThreadPoolExecutor(1) as ex:
+    with C._Pool(1) as ex:
         镜头活 = ex.submit(prep.cmd_detect, mp4) if not 有('detect.json') else None
         if not 有('sub.tsv'):
             prep.cmd_sub(mp4)
@@ -87,17 +89,34 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
             镜头活.result()      # 出错在这里抛，不会被吞掉
 
     到('cutting')
-    if not 有('round1_input.txt'):
-        prep.cmd_round1(mp4, sub)
-    if not 有('segs.json'):
-        C.c_round1(wd)
+    if os.environ.get('LOCAL_CUT', '1') == '1':
+        # 不问模型，按黑场和镜头切点本机切段（LOCAL_CUT=0 改回问模型）
+        if not 有('segs.json'):
+            prep.cmd_local_cut(mp4, sub)
+    else:
+        if not 有('round1_input.txt'):
+            prep.cmd_round1(mp4, sub)
+        if not 有('segs.json'):
+            C.c_round1(wd)
 
     到('describing')
     if not 有('round2', 'bounds.json'):
         prep.cmd_round2(mp4, sub, os.path.join(wd, 'segs.json'))
+    扫窗把手 = None
     if not _轮二做完了(wd):
-        C.c_round2(wd)
+        # 提前开扫的窗口在后台接着跑，这里只拿到把手，等到整条脉络发出去之后再收
+        扫窗把手 = C.c_round2(wd)
+    # 从这里往下任何一步出错，都要把还开着的线程池收掉再抛出去。漏一个池，
+    # 解释器退出时会去 join 它的线程，而一次模型调用最长等 1800 秒。
+    打分池 = None
+    try:
+        return _理结构到打分(wd, mp4, 到, 有, 账, 扫窗把手)
+    finally:
+        C.收扫窗(扫窗把手)
 
+
+def _理结构到打分(wd, mp4, 到, 有, 账, 扫窗把手):
+    打分池 = None
     if 跑整条:
         if not 有('round3_input.txt'):
             prep.cmd_round3(mp4)
@@ -107,12 +126,32 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
     到('structure')
     if not 有('stage1.json'):
         prep.cmd_post1(wd)
-    if not 有('stage2_input.txt'):
-        prep.cmd_stage2(wd)
-    if not 有('stage2_out.json'):
-        C.c_stage2(wd)
-    if not 有('structure.json'):
-        prep.cmd_post2(wd)
+    # 给段打分只读逐段描述，不读理结构的产物，却排在理结构后面串行跑，白等 40 多秒。
+    # 在这里先丢到后台打（PAR_RATING=0 关），理结构跑完再把分并回 structure.json。
+    先打的 = None
+    if os.environ.get('PAR_RATING', '1') == '1' and not 有('structure.json'):
+        打分池 = C._Pool(1)
+        先打的 = 打分池.submit(hl.先打, os.path.join(wd, 'stage1.json'))
+    try:
+        if not 有('stage2_input.txt'):
+            prep.cmd_stage2(wd)
+        if not 有('stage2_out.json'):
+            C.c_stage2(wd, 扫窗把手)
+        else:
+            C.收扫窗(扫窗把手)
+        if not 有('structure.json'):
+            prep.cmd_post2(wd)
+        if 先打的 is not None:
+            try:
+                hl.并入(os.path.join(wd, 'structure.json'), 先打的.result())
+            except Exception as e:
+                # 并行打分失败不拦路，下面按老路子补打
+                print(f'  并行打分没成（{type(e).__name__}: {e}），改为串行补打')
+    finally:
+        # 理结构是这条管线最常失败的一步，它一失败就漏一个打分池，而池里还套着
+        # 一个四线程的池在给每段打分，钱照烧，退出照样被卡住。
+        if 打分池 is not None:
+            打分池.shutdown(wait=False)
 
     f = os.path.join(wd, 'structure.json')
     if not os.path.exists(f):
@@ -126,6 +165,9 @@ def 拆一个Part(mp4: str, 报阶段=None, 跑整条=跑整条) -> dict:
     if any(s.get('抓人速度') is None for s in (d.get('段') or [])):
         hl.跑(f)
         d = json.load(open(f, encoding='utf-8'))
+    账['费用美元'] = C.money(账['输入'], 账['输出'] + 账['思考'])
+    账['模型'] = C.MODEL
+    d['_token账'] = 账
     return d
 
 

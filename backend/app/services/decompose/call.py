@@ -58,6 +58,9 @@ if not MODEL.startswith('qwen'):
 # 推理模型读完整个事件列表归纳，事件读法少一批，它能归纳的就少一批。
 # 要提速调 THINK 里的思考预算。
 RUNS = int(os.environ.get('RUNS', '3'))
+# 逐段描述单独定遍数。三遍并集实测只是同一时刻多几种说法，覆盖的时刻数不涨，
+# 这一步又占六成费用，所以允许它比切段少跑。不设就跟 RUNS 一样。
+SEG_RUNS = int(os.environ.get('SEG_RUNS', '1'))    # 2026-09-17 起默认 1 遍，实测三遍只多说法不多覆盖
 
 # 阿里云 MaaS 白名单通道，美国 us-east-1。
 # 接口地址跟 app 其余部分共用「Qwen · API 地址」那一栏，不在这里写死——
@@ -90,21 +93,40 @@ PRICE = {
 }
 USE = {'调用次数': 0, '输入': 0, '输出': 0, '思考': 0, '按轮': {}}
 
+# 每个 Part 单独一本账。app 里 4 个 Part 同时跑，进程级的 USE 分不出谁花的，
+# 所以 驱动.拆一个Part 开跑时往这个 contextvar 里放一个空账本，bill 时两边都记。
+# 线程池默认不带 contextvar 过去，下面的 _Pool 在 submit 时把上下文复制过去。
+import contextvars
+当前账本 = contextvars.ContextVar('当前账本', default=None)
+
+
+def 新账本():
+    return {'调用次数': 0, '输入': 0, '输出': 0, '思考': 0, '按轮': {}}
+
+
+class _Pool(cf.ThreadPoolExecutor):
+    def submit(self, fn, *a, **kw):
+        ctx = contextvars.copy_context()
+        return super().submit(ctx.run, fn, *a, **kw)
+
 
 BILL_LOCK = threading.Lock()      # 窗并发之后多个线程同时记账，不加锁会丢计数
 
 
 def _bill(tag, pin, out, th):
-    USE['调用次数'] += 1
-    USE['输入'] += pin
-    USE['输出'] += out
-    USE['思考'] += th
     k = (tag or '?').split(':')[0]
-    r = USE['按轮'].setdefault(k, {'次': 0, '输入': 0, '输出': 0, '思考': 0})
-    r['次'] += 1
-    r['输入'] += pin
-    r['输出'] += out
-    r['思考'] += th
+    for 账 in (USE, 当前账本.get()):
+        if 账 is None:
+            continue
+        账['调用次数'] += 1
+        账['输入'] += pin
+        账['输出'] += out
+        账['思考'] += th
+        r = 账['按轮'].setdefault(k, {'次': 0, '输入': 0, '输出': 0, '思考': 0})
+        r['次'] += 1
+        r['输入'] += pin
+        r['输出'] += out
+        r['思考'] += th
 
 
 def bill_qwen(tag, u):
@@ -166,14 +188,74 @@ def block(fname, heading):
 
 
 P1 = lambda: block('短剧素材拆解_提示词.md', '## 第一轮：切段')
-P2 = lambda: block('短剧素材拆解_提示词.md', '## 第二轮：逐段详细描述')
+_P2_锚点核对 = """
+
+## 覆盖核对（必做）
+
+上面给了这一段的【字幕转写】和【镜头切点】。写完事件后逐项核对：
+- 每一行台词，前后 1.5 秒内至少有一条事件。没有就补一条，「画面」写那一刻画面上是什么。
+- 连续 3 处以上的密集切点（间隔都在 2 秒内），那一带至少有一条事件。
+- 两处相邻锚点之间隔了 8 秒以上还没有事件的，看一眼视频那一段，有变化就补，没变化不用硬补。
+这一步是保证不漏，不是凑条数：补的每一条都要真有其事，「这一刻发生了什么变化」照常如实写。"""
+
+# 砍下游没有代码读的输出字段（默认开，SLIM_FIELDS=0 关）。「声音」全管线没人读，而且这个
+# 模型不处理音频，写出来的只能是猜的；「理由」「阶层落差依据」也没人读。
+# 「台词」不砍：第七臂试过让模型不写台词、本机按时间回填，字幕行 ±1.5 秒内有事件的
+# 比例从 95% 掉到 76%，事件从 116 条掉到 80 条——模型是拿台词当事件的锚点在数。
+# 回填只补模型漏写的那几条。
+SLIM = os.environ.get('SLIM_FIELDS', '1') == '1'
+
+
+def _瘦身描述提示词(t):
+    n0 = len(t)
+    # 输出格式里的整个「声音」对象（到它的收尾大括号为止）
+    t, k1 = re.subn(r',\n\n  "声音": \{.*?\n  \}\n', '\n', t, count=1, flags=re.S)
+    # 字段说明里四条「声音」规则
+    t, k2 = re.subn(r'- 声音「[^\n]*\n(?:  [^\n]*\n)*', '', t)
+    if not (k1 and k2):
+        raise 拆解失败(f'描述提示词瘦身没对上（{k1},{k2}），提示词文件改过了？')
+    return t
+
+
+def _瘦身定性提示词(t):
+    t, k1 = re.subn(r'\n\s*"阶层落差依据": \[[^\]]*\],?', '', t)
+    t, k2 = re.subn(r',\n\s*"理由": "[^"\n]*"', '', t)
+    t = t.replace('要解释就写在「理由」那一栏', '不要另写解释')
+    if not (k1 and k2):
+        raise 拆解失败(f'定性提示词瘦身没对上（{k1},{k2}），提示词文件改过了？')
+    return t
+
+
+def P2():
+    t = block('短剧素材拆解_提示词.md', '## 第二轮：逐段详细描述')
+    if SLIM:
+        t = _瘦身描述提示词(t)
+    return t + _P2_锚点核对 if os.environ.get('ROUND2_ANCHORS', '1') == '1' else t
 P3 = lambda: block('短剧素材拆解_提示词.md', '## 第三轮：整条素材的呈现形式')
 PR = lambda: block('短剧素材结构推理_提示词.md', '## 第一轮：整条脉络')
-PS = lambda: block('短剧素材结构推理_提示词.md', '## 第二轮：逐段定性')
+PS = lambda: (_瘦身定性提示词 if SLIM else (lambda x: x))(block('短剧素材结构推理_提示词.md', '## 第二轮：逐段定性'))
 PM = lambda: block('短剧素材结构推理_提示词.md', '## 第三轮：悬念对答案')
 PP = lambda: block('短剧素材结构推理_提示词.md', '## 第四轮：整条画像')
 
-WIN = 4      # 第二轮每窗几段。窗口越小召回越高，调用次数也越多
+# 悬念对答案：判断每个悬念点后面有没有给答案。产出只进整条统计里的
+# 「未解悬念点次数」和「悬念到答案的间隔中位」两个字段，段库、模板匹配、界面
+# 都不读，却要多花一次调用、十几秒。研究要它就 ANSWER_PASS=1。
+对答案 = os.environ.get('ANSWER_PASS', '0') == '1'
+
+WIN = int(os.environ.get('SCAN_WIN', '2'))   # 第二轮每窗几段。窗口越小召回越高，调用次数也越多；2026-09-17 起默认 2
+
+
+def 窗口大小(段数):
+    """这一条素材每窗装几段。
+
+    段多的时候装两段：窗数超过并发上限，装一段只会让窗排队，总时间不降反升。
+    段少的时候装一段：所有窗都能同时跑，一次少写一半东西，等待时间跟着减半。
+    2026-09-17 实测一条 107 秒两段的爆款素材，两段一窗跑 250 和 185 秒，
+    一段一窗跑 128 和 148 秒，剧情点 8 比 5 和 8，覆盖率都是 100%。
+    """
+    if os.environ.get('SCAN_WIN'):      # 手动指定就听它的，对照实验用
+        return WIN
+    return 1 if 段数 <= PAR else WIN
 # 一条素材内部同时跑几个窗。窗之间没有依赖，串行跑纯属浪费——W25 十一个窗
 # 串着跑了 13 分钟。跟 batch.py 的素材并发是相乘关系，两个都调大会撞速率墙。
 PAR = int(os.environ.get('SCAN_PAR', '4'))
@@ -191,6 +273,8 @@ PAR = int(os.environ.get('SCAN_PAR', '4'))
 # 剧情点从 21 个掉到 11 个，所以单独给它宽额度。
 THINK = {'stage2': 4096, 'scan': 12288, 'answer': 4096, 'profile': 4096,
          'round1': 2048, 'round2': 3072, 'round3': 1024}
+# 做对照实验时用 THINK_SCAN=6144 这类环境变量临时改某一轮的预算，不设就是上面的数
+THINK = {k: int(os.environ.get(f'THINK_{k.upper()}', v)) for k, v in THINK.items()}
 
 
 # ---------- API ----------
@@ -246,7 +330,7 @@ def gen(prompt, video=None, images=(), text='', thinking=None, tag=''):
 #   再往里一层：('数组名', '子数组名', ('子项必须有的字段', ...))
 SCHEMA = {
     'round1': [('段', ('起',))],
-    'round2': [('段序号', '事件', '段落叙述', '声音'),
+    'round2': [('段序号', '事件', '段落叙述') + (() if SLIM else ('声音',)),
                ('事件', ('时间', '画面'))],
     'round3': [('字幕形式', '语音形式', '结尾字卡形式')],
     'stage2': [('剧情时间线', '题材'),
@@ -355,15 +439,20 @@ def _qwen_stream(url, hdr, body, media):
         body['stream'] = True
         body['stream_options'] = {'include_usage': True}
     buf, usage = [], {}
+    # 结束原因和被丢掉的分片数一起带回去。app 里 4 个 Part 同时跑时一天出了 134 次
+    # JSON 解析失败，单独跑基准 150 次调用只出 2 次，断点多在正文 500 到 2500 字处，
+    # 像是流被提前掐断而不是模型写错。这两个数能把「掐断」和「写错」分开。
+    坏片 = 0
+    fin = None
     with httpx.stream('POST', url, headers=hdr, json=body, timeout=1800) as r:
         if r.status_code >= 400:
             raw = r.read().decode('utf-8', 'replace')
             try:
                 d = json.loads(raw)
                 return (d.get('code') or r.status_code,
-                        str(d.get('message') or raw)[:220], None, None)
+                        str(d.get('message') or raw)[:220], None, None, None)
             except json.JSONDecodeError:
-                return r.status_code, raw[:220], None, None
+                return r.status_code, raw[:220], None, None, None
         for line in r.iter_lines():
             if not line.startswith('data:'):
                 continue
@@ -373,11 +462,13 @@ def _qwen_stream(url, hdr, body, media):
             try:
                 d = json.loads(pay)
             except json.JSONDecodeError:
+                坏片 += 1
                 continue
             if d.get('code'):
-                return d['code'], str(d.get('message'))[:220], None, None
+                return d['code'], str(d.get('message'))[:220], None, None, None
             if media:
                 ch = ((d.get('output') or {}).get('choices') or [{}])[0]
+                fin = ch.get('finish_reason') or fin
                 c = (ch.get('message') or {}).get('content')
                 if isinstance(c, list):
                     buf += [x.get('text') or '' for x in c]
@@ -387,6 +478,7 @@ def _qwen_stream(url, hdr, body, media):
                     usage = d['usage']
             else:
                 ch = (d.get('choices') or [{}])[0]
+                fin = ch.get('finish_reason') or fin
                 piece = (ch.get('delta') or {}).get('content')
                 if piece:
                     buf.append(piece)
@@ -396,7 +488,7 @@ def _qwen_stream(url, hdr, body, media):
                              'output_tokens': u.get('completion_tokens'),
                              'output_tokens_details':
                                  u.get('completion_tokens_details') or {}}
-    return None, None, ''.join(buf), usage
+    return None, None, ''.join(buf), usage, {'结束原因': fin, '坏片': 坏片}
 
 
 # 绿网关掉之后剩下的拦截来自模型自己。它不返回错误码，而是把拒绝的话当正文吐出来，
@@ -408,6 +500,89 @@ def _qwen_stream(url, hdr, body, media):
 # 网关侧的内容拦截码。绿网头带上以后不该再出现，出现了也按拒答处理，重试没有意义。
 拦截码 = ('DataInspectionFailed', 'ContentFilter', 'content_filter',
           'InappropriateContent', 'ResponseContentFilter')
+
+
+def _修JSON(txt):
+    """模型偶尔把 JSON 写坏，最常见的是字串里夹着没转义的英文引号，比如
+    "观众会缺哪个信息": "她"指的是谁"。重试一次要等一两分钟，这里先试着修一下：
+    扫一遍正文，字串里遇到的引号，如果后面跟的不是 , } ] : 或换行后的下一个键，
+    就当它是内容里的引号，加上转义。修不好就返回 None，上层照常重试。"""
+    out = []
+    in_str = False
+    esc = False
+    n = len(txt)
+    i = 0
+    while i < n:
+        c = txt[i]
+        if in_str:
+            if esc:
+                out.append(c); esc = False
+            elif c == '\\':
+                out.append(c); esc = True
+            elif c == '"':
+                j = i + 1
+                while j < n and txt[j] in ' \t\r\n':
+                    j += 1
+                nxt = txt[j] if j < n else ''
+                if nxt in ',}]:' or nxt == '' or (nxt == '"' and '\n' in txt[i:j]):
+                    out.append(c); in_str = False
+                else:
+                    out.append('\\"')       # 字串里的引号，转义掉
+            elif c == '\n':
+                # 字串没收尾就换行了，下一行要是 } ] 或下一个键，说明模型漏了收尾引号
+                j = i + 1
+                while j < n and txt[j] in ' \t\r':
+                    j += 1
+                nxt = txt[j] if j < n else ''
+                if nxt in '}]' or nxt == '':
+                    out.append('"'); in_str = False
+                elif nxt == '"':
+                    out.append('",'); in_str = False     # 下一行是下一个键，补上逗号
+                out.append(c)
+            else:
+                out.append(c)
+        else:
+            if c == '"':
+                in_str = True
+                out.append(c)
+            elif c == ':':
+                # 值的位置上写了个没加引号的词，比如 "在场人数":多人。JSON 不认，
+                # 而重试一次要等几十秒。这里补上引号：只认冒号后面直接跟着的、
+                # 一直到逗号或右括号为止的那一段，且它不是数字、true/false/null，
+                # 也不是 { [ " 开头的正常值。
+                j = i + 1
+                while j < n and txt[j] in ' \t':
+                    j += 1
+                k = j
+                while k < n and txt[k] not in ',}]\n':
+                    k += 1
+                词 = txt[j:k].strip()
+                正常 = (not 词 or 词[0] in '"{[' or 词 in ('true', 'false', 'null'))
+                try:
+                    float(词)
+                    是数 = True
+                except ValueError:
+                    是数 = False
+                if not 正常 and not 是数 and len(词) <= 40:
+                    out.append(':')
+                    out.append(txt[i + 1:j])
+                    out.append('"' + 词.replace('"', '\\"') + '"')
+                    i = k
+                    continue
+                out.append(c)
+            else:
+                out.append(c)
+        i += 1
+    fixed = ''.join(out)
+    # 结尾少了收尾括号也补一下（被截断的除外，那种补了也是残的，上层按 length 处理）
+    depth_o = fixed.count('{') - fixed.count('}')
+    depth_a = fixed.count('[') - fixed.count(']')
+    if 0 < depth_o <= 2 and depth_a == 0:
+        fixed = fixed.rstrip().rstrip(',') + '}' * depth_o
+    try:
+        return json.loads(fixed)
+    except json.JSONDecodeError:
+        return None
 
 
 def _拒答了吗(txt):
@@ -424,16 +599,25 @@ def _gen_qwen(parts, thinking, tag):
            'X-DashScope-DataInspection': QWEN_INSPECT}
     think = thinking is None or thinking != 0
     budget = thinking if isinstance(thinking, int) and thinking > 0 else None
+    # 温度统一 0.2，文本和视频两路都用。2026-09-17 跑了 18 组对照（三条素材 ×
+    # 三档温度 × 两遍）：事件数、台词数、剧情点数三档之间的差都落在同一档自身的
+    # 波动里，覆盖率都是 100%；差别只在 JSON 格式，六次跑里模型默认温度出了 6 处
+    # 需要本机修的坏 JSON，0.2 只有 2 处。质量不动、格式更稳，所以取 0.2。
+    # 要跑对照实验，用 QWEN_TEMPERATURE 覆盖。
+    温度 = os.environ.get('QWEN_TEMPERATURE', '0.2')
+    温度 = float(温度) if 温度 not in (None, '') else None
     if media:
         url = _mm()
         par = {'enable_thinking': think, 'max_tokens': _qwen_max(budget)}
+        if 温度 is not None:
+            par['temperature'] = 温度
         if budget:
             par['thinking_budget'] = budget
         body = {'model': MODEL, 'input': {'messages': [{'role': 'user', 'content': content}]},
                 'parameters': par}
     else:
         url = _txt()
-        body = {'model': MODEL, 'temperature': 0, 'enable_thinking': think,
+        body = {'model': MODEL, 'temperature': 0 if 温度 is None else 温度, 'enable_thinking': think,
                 'max_tokens': _qwen_max(budget),
                 'messages': [{'role': 'user',
                               'content': ''.join(c['text'] for c in content)}]}
@@ -453,7 +637,7 @@ def _gen_qwen(parts, thinking, tag):
             print(f'    {wait} 秒后重试…（上一次：{last}）')
             time.sleep(wait)
         try:
-            code, err, txt, usage = _qwen_stream(url, hdr, body, media)
+            code, err, txt, usage, 流况 = _qwen_stream(url, hdr, body, media)
             if code:
                 last = f'{code} {err}'
                 if str(code) in ('access_denied', 'Model.AccessDenied', 'InvalidApiKey'):
@@ -465,7 +649,13 @@ def _gen_qwen(parts, thinking, tag):
             txt = re.sub(r'^```(?:json)?\s*|\s*```$', '', (txt or '').strip())
             if _拒答了吗(txt):
                 raise Blocked(f'模型拒答：{txt.strip()[:160]}')
-            out = json.loads(txt)
+            try:
+                out = json.loads(txt)
+            except json.JSONDecodeError as e0:
+                out = _修JSON(txt)
+                if out is None:
+                    raise e0
+                print(f'    {tag} 返回的 JSON 有小毛病，本机修好了，不重试（{str(e0)[:60]}）')
             check_schema(out, tag)
             return out
         except Blocked:
@@ -477,6 +667,22 @@ def _gen_qwen(parts, thinking, tag):
         except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
             last = f'{type(e).__name__}: {e}'
             退避 = 解析退避
+            # 诊断：正文多长、流怎么结束的、丢了几片、断口前后是什么字
+            t = txt or ''
+            try:
+                pos = int(getattr(e, 'pos', None) or len(t))
+            except (TypeError, ValueError):
+                pos = len(t)
+            况 = 流况 or {}
+            print(f'    {tag} 解析失败：正文 {len(t)} 字，结束原因 {况.get("结束原因")}，'
+                  f'坏片 {况.get("坏片", 0)}，断口 {pos}：…{t[max(0, pos - 60):pos]!r} ▶ {t[pos:pos + 60]!r}…')
+            if 况.get('结束原因') == 'length':
+                # 被 max_tokens 截断，同样的额度再来一次还是断在那儿
+                if media:
+                    body['parameters']['max_tokens'] = min(32768, body['parameters']['max_tokens'] + 4000)
+                else:
+                    body['max_tokens'] = min(32768, body['max_tokens'] + 4000)
+                print(f'    {tag} 是被 max_tokens 截断的，下一次额度加 4000')
         except httpx.HTTPError as e:
             last = f'{type(e).__name__}: {e}'
             退避 = 网络退避
@@ -607,9 +813,20 @@ def merge(runs):
 
 
 def save(wd, name, obj):
+    """先写同目录下的临时文件，写完再改名顶上去。
+
+    直接往目标文件上写，进程被强杀时会留下半截 JSON；而续跑只看文件在不在，
+    于是这个 Part 每次重新分析都在同一处抛 JSONDecodeError，用户点多少次都好不了。
+    改名在同一个文件系统上是原子的，读到的要么是上一版，要么是完整的新版。
+    """
     p = os.path.join(wd, name)
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    json.dump(obj, open(p, 'w'), ensure_ascii=False, indent=2)
+    tmp = p + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, p)
     print(f'  → {p}')
     return obj
 
@@ -637,7 +854,7 @@ def 跑几遍(做一遍, 遍数=None):
     if n <= 1:
         return [做一遍(0)]
     出, 错 = [], []
-    with cf.ThreadPoolExecutor(n) as ex:
+    with _Pool(n) as ex:
         for f in [ex.submit(做一遍, i) for i in range(n)]:
             try:
                 出.append(f.result())
@@ -687,7 +904,7 @@ def _one_seg(wd, c, n):
     txt = open(c.replace('.mp4', '_input.txt'), encoding='utf-8').read()
     uri, mime = upload(c)
     # 三遍并发发。段之间本来就并发，这里再并发一层，同时打到通道上的请求数
-    # 是 SEGPAR × RUNS；每一路都带着一段 base64 视频，所以 SEGPAR 跟着调小，
+    # 是 SEGPAR × SEG_RUNS；每一路都带着一段 base64 视频，所以 SEGPAR 跟着调小，
     # 乘积维持在原来的量级，别让内存和通道一起吃紧。
     def 一遍(i):
         raw = gen_uri(P2(), uri, mime, text=txt,
@@ -698,8 +915,8 @@ def _one_seg(wd, c, n):
         return g
 
     runs = []
-    with cf.ThreadPoolExecutor(RUNS) as ex:
-        for i, f in enumerate([ex.submit(一遍, i) for i in range(RUNS)]):
+    with _Pool(SEG_RUNS) as ex:
+        for i, f in enumerate([ex.submit(一遍, i) for i in range(SEG_RUNS)]):
             try:
                 runs.append(f.result())
             except Blocked as e:
@@ -713,21 +930,51 @@ def _one_seg(wd, c, n):
         # 已完成永远跳过。
         lg.append(f'    段 {n} 三遍都没拿到，跳过')
         return lg
-    if len(runs) < RUNS:
-        lg.append(f'    段 {n} 只拿到 {len(runs)}/{RUNS} 遍')
+    if len(runs) < SEG_RUNS:
+        lg.append(f'    段 {n} 只拿到 {len(runs)}/{SEG_RUNS} 遍')
     r = merge(runs)
+    if SLIM:
+        _回填台词(wd, n, r)
     mg = r.get('_合并') or {}
-    lg.append(f'    {RUNS} 遍并集：事件 {len(r.get("事件") or [])} 条'
+    lg.append(f'    {SEG_RUNS} 遍并集：事件 {len(r.get("事件") or [])} 条'
               f'（单遍 {[len(x.get("事件") or []) for x in runs]}）'
               f'　读法不同 {mg.get("读法不同的时刻数", 0)} 处'
               f'　只出现一遍 {mg.get("只出现一遍的条数", 0)} 条')
     for e in r.get('事件') or []:
         if e.get('_读法不同'):
-            lg.append(f'      ⚠ {e.get("时间")}s（{e["_出现遍数"]}/{RUNS} 遍）'
+            lg.append(f'      ⚠ {e.get("时间")}s（{e["_出现遍数"]}/{SEG_RUNS} 遍）'
                       f'{(e.get("这一刻发生了什么变化") or "")[:34]}')
     save(wd, f'round2/seg{n}_out.json', r)
     lg.append(f'  → {os.path.join(wd, f"round2/seg{n}_out.json")}')
     return lg
+
+
+def _回填台词(wd, n, r):
+    """瘦身模式下补模型漏写的台词：事件时刻 ±1.5 秒内的字幕行。模型写了的不动。"""
+    try:
+        starts = json.load(open(os.path.join(wd, 'round2', 'bounds.json')))['段边界']
+        a = float(starts[int(n) - 1])
+    except (OSError, KeyError, ValueError, IndexError):
+        return
+    rows = []
+    sp = os.path.join(wd, 'sub.tsv')
+    if not os.path.exists(sp):
+        return
+    for line in open(sp, encoding='utf-8'):
+        p = line.rstrip('\n').split('\t')
+        try:
+            rows.append((float(p[0]) - a, float(p[1]) - a, p[2]))
+        except (ValueError, IndexError):
+            continue
+    填 = 0
+    for e in r.get('事件') or []:
+        t = e.get('时间')
+        if t is None or e.get('台词'):
+            continue
+        hit = [x[2] for x in rows if x[1] >= float(t) - 1.5 and x[0] <= float(t) + 1.5]
+        e['台词'] = ' / '.join(dict.fromkeys(hit)) if hit else None
+        填 += bool(hit)
+    r.setdefault('_合并', {})['台词本机回填'] = 填
 
 
 def c_round2(wd):
@@ -747,14 +994,99 @@ def c_round2(wd):
     # 中位延迟只从 4.5 秒涨到 6.4 秒；带视频的多模态端点并发 11 也全通，
     # 中位 9.4 秒。原来写死 3 是没测过的保守值。默认给 6，留出余量给
     # 同时在跑的别的素材——批次并发乘以 SEGPAR 才是真正打到通道上的数。
-    # 段内已经并发 RUNS 遍，这里的并发数相应除下去，乘积还是原来那个 6
-    par = max(1, int(os.environ.get('SEGPAR', str(max(1, 6 // max(1, RUNS))))))
+    # 段内已经并发 SEG_RUNS 遍，这里的并发数相应除下去，乘积还是原来那个 6
+    par = max(1, int(os.environ.get('SEGPAR', str(max(1, 6 // max(1, SEG_RUNS))))))
     print(f'第二轮逐段描述：{len(clips)} 段，还差 {len(todo)} 段，并发 {par}')
     if not todo:
         return
-    with cf.ThreadPoolExecutor(min(par, len(todo))) as ex:
+    if os.environ.get('EARLY_SCAN', '1') == '1':
+        return _round2_with_early_scan(wd, todo, par)
+    with _Pool(min(par, len(todo))) as ex:
         for lines in ex.map(lambda x: _one_seg(wd, x[0], x[1]), todo):
             print('\n'.join(lines))
+
+
+def _round2_with_early_scan(wd, todo, par):
+    """逐段描述一边出、逐窗定性一边开（默认走，EARLY_SCAN=0 关）。
+
+    现状是理结构要等全部段描述完，先看整条脉络再逐窗扫描，描述和扫描两个最大的
+    环节完全串行。扫描提示词里整条脉络只是「让你知道这几段处在整条什么位置」的
+    背景，这里先用全片字幕转写当背景，一个窗口的几段一描述完就开扫。扫描产物落在
+    stage2_scan/ 下，后面 c_stage2 里的 c_scan 看到已有产物直接读，不再重跑。
+    整条脉络照旧在描述全部结束后跑，供题材和悬念对答案用。
+    """
+    from . import prep as _prep
+    n = len(json.load(open(os.path.join(wd, 'round2', 'bounds.json')))['段边界']) - 1
+    w = 窗口大小(n)
+    wins = {wi: list(range((wi - 1) * w + 1, min(wi * w, n) + 1))
+            for wi in range(1, (n + w - 1) // w + 1)}
+    sp = os.path.join(wd, 'sub.tsv')
+    rows = _prep.load_sub(sp) if os.path.exists(sp) else []
+    tl = ('（整条脉络还没出来。下面是全片的字幕转写，秒数是绝对时间，'
+          '用它判断手上这几段处在整条的什么位置）\n'
+          + '\n'.join(f'{r[0]:.0f}s　{r[2]}' for r in rows))
+    why = {}
+    lock = threading.Lock()
+    started = set()
+    scan_futs = []
+    scan_ex = _Pool(PAR)
+
+    def 段齐了(序号们):
+        return all(os.path.exists(os.path.join(wd, 'round2', f'seg{k:02d}_out.json'))
+                   for k in 序号们)
+
+    def 开能开的窗():
+        for wi, 序号们 in wins.items():
+            with lock:
+                if wi in started or not 段齐了(序号们):
+                    continue
+                started.add(wi)
+            segs = [sg for sg in _prep.read_segs(wd)[0] if sg['_序号'] in 序号们]
+            print(f'  第 {wi} 窗（段 {序号们[0]}–{序号们[-1]}）描述齐了，先开扫')
+            scan_futs.append(scan_ex.submit(_do_win, wd, wi, segs, tl, why, '字幕全文'))
+
+    try:
+        with _Pool(min(par, len(todo))) as ex:
+            futs = {ex.submit(_one_seg, wd, c, k): k for c, k in todo}
+            for f in cf.as_completed(futs):
+                print('\n'.join(f.result()))
+                开能开的窗()
+        开能开的窗()
+    except BaseException:
+        # 描述这一步自己炸了，调用方拿不到把手，也就没人去收扫窗的池。
+        # 在这里收掉再往外抛，否则那几个线程会一直挂着，退出时把进程拖住。
+        收扫窗({'池': scan_ex, '活': scan_futs})
+        raise
+    # 描述跑完就回去，剩下的窗接着在后台扫。调用方拿这个把手，等它之前先把
+    # 整条脉络发出去——那一轮只吃描述文本，不吃扫窗结果，白等一轮的时间。
+    return {'池': scan_ex, '活': scan_futs}
+
+
+def 收扫窗(把手):
+    """等提前开的窗扫完，把结果打出来。没有提前扫就什么也不做。
+
+    调用方可能收两次（正常路径一次，出错兜底一次），收过就直接返回，
+    不要把同一批结果再打印一遍。
+    """
+    if not 把手 or 把手.get('收过'):
+        return
+    把手['收过'] = True
+    try:
+        for f in 把手['活']:
+            try:
+                wi, r, cached = f.result()
+            except Exception as e:
+                # 这一窗没扫成，它的产物文件就不存在，后面 c_scan 会照常重扫一遍。
+                # 不往外抛：这个函数是在 finally 里调的，抛出去会顶掉「整条脉络」
+                # 那一轮已经拿到的结果，把一个只是某个窗失败的 Part 整个判死。
+                print(f'    提前开的某个窗没扫成（{type(e).__name__}: {e}），待会儿重扫')
+                continue
+            pts = sum(len(x.get('段里的剧情点') or []) for x in (r.get('段') or []))
+            print(f'  第 {wi} 窗提前扫完：出 {len(r.get("段") or [])} 段规格，剧情点 {pts} 处')
+    finally:
+        # 池一定要收。工作线程不是守护线程，漏一个，解释器退出时会 join 它，
+        # 而一次模型调用的超时是 1800 秒，退出可以被卡住半小时。
+        把手['池'].shutdown(wait=True)
 
 
 def c_round3(wd):
@@ -769,7 +1101,7 @@ def c_round3(wd):
     save(wd, 'round3_out.json', merge(runs))
 
 
-def c_stage2(wd):
+def c_stage2(wd, 扫窗把手=None):
     """第二步三轮：整条脉络 → 逐段定性 → 悬念对答案。画像是第四轮，单独跑。
 
     可复用单元是段，不是整条。段边界来自 ffmpeg 检出的黑场和场景切换，是
@@ -799,6 +1131,9 @@ def c_stage2(wd):
         print(f'  第一轮被拦：{e}　后面几轮照跑')
         whole = {'_第一轮被拦': str(e)}
         print('  这一条没有题材和剧情时间线，第二轮少了整条脉络这个上下文')
+    finally:
+        # 整条脉络发出去的这段时间，提前开的窗还在扫。到这里才收。
+        收扫窗(扫窗把手)
     out = dict(whole)
     out.update(c_scan(wd, whole.get('剧情时间线') or []))
     save(wd, 'stage2_out.json', out)
@@ -830,6 +1165,77 @@ def _seg_text(sg, i, start):
     return '\n'.join(L)
 
 
+def _ask_win(w, tag, tl, why):
+    """把一组段送去定性。被拦返回 None，跟「这几段没有剧情点」区分开。
+
+    拒绝原因记进 why。少了它，一条素材跑完只剩一个空的 structure.json，
+    看不出是内容被拒还是这条素材本来就没东西。
+    """
+    body = '\n\n'.join(
+        _seg_text(sg, sg.get('_序号') or 0, float(sg.get('_起') or 0))
+        for sg in w)
+    txt = (f'【整条素材的剧情时间线】\n{tl}\n\n'
+           f'【你这一次要处理的段】共 {len(w)} 段\n{body}\n')
+    try:
+        r = gen(PS(), text=txt, thinking=THINK['scan'], tag=tag)
+    except Blocked as e:
+        for sg in w:
+            why[sg.get('_序号')] = str(e)
+        return None
+    if not isinstance(r, dict):
+        return {}
+    return r
+
+
+def _do_win(wd, wi, w, tl, why, 背景=None):
+    """跑一个窗。已经有产物就读回来，不重跑。返回 (窗号, 结果, 是否读的缓存)。
+
+    缓存文件名只带窗号，而窗怎么划会变：有段永久失败时后面的段整体前移，
+    改了并发上限时每窗装几段也会变。光按窗号读，会把甲窗的结果当成乙窗的用，
+    表现是有的段被扫两遍、有的段一遍没扫过，而覆盖率还报 100%。
+    所以把这一窗覆盖的段号写进产物，读的时候对一遍，对不上就当没有缓存。
+    """
+    要的段 = [sg.get('_序号') for sg in w]
+    f = os.path.join(wd, 'stage2_scan', f'win{wi:02d}.json')
+    if os.path.exists(f):
+        try:
+            旧 = json.load(open(f, encoding='utf-8'))
+        except (OSError, json.JSONDecodeError):
+            旧 = None
+        if isinstance(旧, dict):
+            记的段 = 旧.get('_这窗的段')
+            if 记的段 is None or 记的段 == 要的段:
+                return wi, 旧, True
+            print(f'  第 {wi} 窗缓存记的是段 {记的段}，这次要的是段 {要的段}，重扫')
+    r = _ask_win(w, f'scan{wi}', tl, why)
+    if r is None and len(w) > 1:
+        # 整窗被拦不代表每一段都过不去。实测一段边缘素材会把同窗的
+        # 其他段一起拖下水，拆成单段能救回大部分。
+        got, bad = [], []
+        for sg in w:
+            n = sg.get('_序号')
+            one = _ask_win([sg], f'scan{wi}s{n}', tl, why)
+            if one is None:
+                bad.append(n); continue
+            got += one.get('段') or []
+        r = {'段': got, '_被拦的段': bad,
+             '_看成的段': [sg.get('_序号') for sg in w
+                           if sg.get('_序号') not in bad],
+             '_拒绝原因': {str(n): why.get(n) for n in bad}}
+    elif r is None:
+        bad = [sg.get('_序号') for sg in w]
+        r = {'段': [], '_被拦的段': bad, '_看成的段': [],
+             '_拒绝原因': {str(n): why.get(n) for n in bad}}
+    else:
+        r['_看成的段'] = [sg.get('_序号') for sg in w]
+        r['_被拦的段'] = []
+    if 背景:
+        r['_背景'] = 背景
+    r['_这窗的段'] = 要的段
+    save(wd, f'stage2_scan/win{wi:02d}.json', r)
+    return wi, r, False
+
+
 def c_scan(wd, timeline):
     """第二轮按窗出段规格，第三轮给悬念对答案。"""
     segs = read_segs(wd)
@@ -838,70 +1244,21 @@ def c_scan(wd, timeline):
         return {'_覆盖': {'总段数': 0, '看成的段数': 0, '被拦的段': [], '覆盖率': 0.0}}
     tl = '\n'.join(f"第 {e.get('段')} 段：{e.get('这一段推进了什么')}"
                     for e in timeline) or '（第一轮没给时间线）'
-    wins = [segs[i:i + WIN] for i in range(0, len(segs), WIN)]
-    print(f'第二步第二轮 逐段定性：{len(segs)} 段分 {len(wins)} 窗，每窗最多 {WIN} 段')
+    # 这里的窗口大小必须跟提前扫窗那边算出来的一样，否则窗号对不上，
+    # 已经扫好的产物会被当成没扫过重跑一遍。
+    w = 窗口大小(len(segs))
+    wins = [segs[i:i + w] for i in range(0, len(segs), w)]
+    print(f'第二步第二轮 逐段定性：{len(segs)} 段分 {len(wins)} 窗，每窗最多 {w} 段')
     specs, okseg, blkseg = [], [], []
 
     why = {}      # 段号 → 被拒的原因，最后要写进产物，不能只在日志里一闪而过
-
-    def ask(w, tag):
-        """把一组段送去定性。被拦返回 None，跟「这几段没有剧情点」区分开。
-
-        拒绝原因记进 why。少了它，一条素材跑完只剩一个空的 structure.json，
-        看不出是内容被拒还是这条素材本来就没东西。
-        """
-        body = '\n\n'.join(
-            _seg_text(sg, sg.get('_序号') or 0, float(sg.get('_起') or 0))
-            for sg in w)
-        txt = (f'【整条素材的剧情时间线】\n{tl}\n\n'
-               f'【你这一次要处理的段】共 {len(w)} 段\n{body}\n')
-        try:
-            r = gen(PS(), text=txt, thinking=THINK['scan'], tag=tag)
-        except Blocked as e:
-            for sg in w:
-                why[sg.get('_序号')] = str(e)
-            return None
-        if not isinstance(r, dict):
-            return {}
-        return r
-
-    def do_win(iw):
-        """跑一个窗。已经有产物就读回来，不重跑。返回窗号和结果。"""
-        wi, w = iw
-        f = os.path.join(wd, 'stage2_scan', f'win{wi:02d}.json')
-        if os.path.exists(f):
-            return wi, json.load(open(f)), True
-        r = ask(w, f'scan{wi}')
-        if r is None and len(w) > 1:
-            # 整窗被拦不代表每一段都过不去。实测一段边缘素材会把同窗的
-            # 其他段一起拖下水，拆成单段能救回大部分。
-            got, bad = [], []
-            for sg in w:
-                n = sg.get('_序号')
-                one = ask([sg], f'scan{wi}s{n}')
-                if one is None:
-                    bad.append(n); continue
-                got += one.get('段') or []
-            r = {'段': got, '_被拦的段': bad,
-                 '_看成的段': [sg.get('_序号') for sg in w
-                               if sg.get('_序号') not in bad],
-                 '_拒绝原因': {str(n): why.get(n) for n in bad}}
-        elif r is None:
-            bad = [sg.get('_序号') for sg in w]
-            r = {'段': [], '_被拦的段': bad, '_看成的段': [],
-                 '_拒绝原因': {str(n): why.get(n) for n in bad}}
-        else:
-            r['_看成的段'] = [sg.get('_序号') for sg in w]
-            r['_被拦的段'] = []
-        save(wd, f'stage2_scan/win{wi:02d}.json', r)
-        return wi, r, False
-
     jobs = list(enumerate(wins, 1))
     par = min(PAR, len(jobs))
     if par > 1:
         print(f'  {par} 个窗同时跑')
-    with cf.ThreadPoolExecutor(par) as ex:
-        done = sorted(ex.map(do_win, jobs), key=lambda x: x[0])   # 按窗号排回来
+    with _Pool(par) as ex:
+        done = sorted(ex.map(lambda iw: _do_win(wd, iw[0], iw[1], tl, why), jobs),
+                      key=lambda x: x[0])   # 按窗号排回来
     for wi, r, cached in done:
         w = wins[wi - 1]
         okseg += r.get('_看成的段') or []
@@ -930,7 +1287,11 @@ def c_scan(wd, timeline):
            if p.get('哪一类') == '悬念点' and p.get('时间') is not None]
     sus.sort(key=lambda e: float(e['时间']))
     ans = []
-    if sus:
+    if sus and not 对答案:
+        print(f'第二步第三轮 悬念对答案：{len(sus)} 条，这一轮不跑（ANSWER_PASS=1 打开）')
+        ans = [dict(e, 后面给答案了吗=None, 答案在哪=None,
+                    凭什么算给了答案=None, _没跑对答案=True) for e in sus]
+    elif sus:
         txt = (f'【整条素材的剧情时间线】\n{tl}\n\n【悬念点】\n'
                + json.dumps(sus, ensure_ascii=False, indent=1))
         print(f'第二步第三轮 悬念对答案：{len(sus)} 条，{len(txt)} 字')

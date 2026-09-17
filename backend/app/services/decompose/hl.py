@@ -97,19 +97,48 @@ def 打一段(wd, s):
     for k in 维:
         v = r.get(k)
         s[k] = int(v) if isinstance(v, (int, float)) else None
-    s['观众会缺哪个信息'] = r.get('观众会缺哪个信息')
-    s['这一场为什么留得住人'] = r.get('这一场为什么留得住人')
     return 1 if any(s.get(k) is not None for k in 维) else 0
+
+
+def 先打(stage1_path):
+    """理结构还没跑完就先打分（PAR_RATING=1 时用）。
+
+    四个维度只读逐段描述的记录，不读理结构的产物，所以第一步一出 stage1.json 就能
+    开打，跟理结构并行。返回 {段的_序号: 打好的字段}，等 structure.json 出来再并进去。
+    """
+    d = json.load(open(stage1_path, encoding='utf-8'))
+    wd = os.path.dirname(stage1_path)
+    segs = d.get('段') or []
+    with C._Pool(PAR) as ex:
+        list(ex.map(lambda s: 打一段(wd, s), segs))
+    键 = 维
+    return {s.get('_序号'): {k: s.get(k) for k in 键} for s in segs}
+
+
+def 并入(f, 表):
+    """把 先打 的结果写进 structure.json 的段里，按 _序号 对。"""
+    d = json.load(open(f, encoding='utf-8'))
+    n = 0
+    for s in d.get('段') or []:
+        got = 表.get(s.get('_序号'))
+        if got:
+            s.update(got)
+            n += 1
+    json.dump(d, open(f, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    print(f'{os.path.basename(os.path.dirname(f))}　打分并回 {n}/{len(d.get("段") or [])} 段（与理结构并行打的）')
+    return n
 
 
 def 跑(f):
     d = json.load(open(f, encoding='utf-8'))
     wd = os.path.dirname(f)
     segs = d.get('段') or []
-    with cf.ThreadPoolExecutor(PAR) as ex:
-        n = sum(ex.map(lambda s: 打一段(wd, s), segs))
+    # 只补没打上分的段。并行打分那条路偶尔有一段解析失败，不该为它把六段全部重打一遍。
+    缺 = [s for s in segs if all(s.get(k) is None for k in 维)]
+    with C._Pool(PAR) as ex:
+        n = sum(ex.map(lambda s: 打一段(wd, s), 缺))
     json.dump(d, open(f, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-    print(f'{os.path.basename(wd)}　{len(segs)} 段　打分 {n} 段')
+    print(f'{os.path.basename(wd)}　{len(segs)} 段　补打分 {n}/{len(缺)} 段')
     return n
 
 
@@ -122,7 +151,7 @@ def 看(root):
             print(f'{os.path.basename(os.path.dirname(f))[:3]} 段{s.get("段序号")}　'
                   f'{s.get("_起"):>6.1f}→{s.get("_止"):<6.1f}　'
                   + '　'.join(f'{k[:2]}{s.get(k)}' for k in 维)
-                  + f'　{s.get("这一场为什么留得住人") or ""}')
+                  )
 
 
 if __name__ == '__main__':

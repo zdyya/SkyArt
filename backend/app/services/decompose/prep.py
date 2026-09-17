@@ -391,6 +391,48 @@ def clean_starts(raw, dur):
     return bounds, hit
 
 
+def cmd_local_cut(mp4, sub):
+    """不问模型，用本机数据切段（默认走这里，LOCAL_CUT=0 改回问模型）。
+
+    模型切段每 15 秒看一帧，三遍之间只有黑场那几处一致，其余边界每遍都不同。
+    这里的规则：强黑场一律是边界；黑场之间的块超过上限时，在 25 到 70 秒的范围里
+    挑一个落在字幕空档的镜头切点，离 45 秒最近的优先；没有落在空档的就挑最近的切点。
+    起点列表交给 cmd_round2 的 clean_starts 做同样的去重并短段。
+    """
+    d, wd = duration(mp4), workdir(mp4)
+    det = json.load(open(os.path.join(wd, 'detect.json')))
+    cuts = sorted(float(c) for c in det.get('镜头切换') or [])
+    fades = sorted(float(c) for c in det.get('强黑场') or [])
+    rows = load_sub(sub)
+    目标, 下限, 上限 = 45.0, 25.0, 70.0
+
+    def 在空档(t):
+        return not any(r[0] - 0.3 <= t <= r[1] + 0.3 for r in rows)
+
+    段 = [{'起': 0.0, '边界依据': '素材开头'}]
+    hard = [f for f in fades if 下限 / 2 < f < d - 下限 / 2]
+    块 = [0.0] + hard + [d]
+    for i in range(len(块) - 1):
+        a, b = 块[i], 块[i + 1]
+        if i > 0:
+            段.append({'起': round(a, 1), '边界依据': f'黑场 {a:.1f} 秒'})
+        cur = a
+        while b - cur > 上限:
+            候 = [c for c in cuts if cur + 下限 <= c <= cur + 上限]
+            if not 候:
+                候 = [c for c in cuts if cur + 下限 <= c <= b - 下限 / 2] or [cur + 目标]
+            空 = [c for c in 候 if 在空档(c)]
+            pick = min(空 or 候, key=lambda c: abs(c - (cur + 目标)))
+            段.append({'起': round(pick, 1),
+                       '边界依据': '镜头切点，落在字幕空档' if pick in 空 else '镜头切点'})
+            cur = pick
+    out = {'段': 段, '人物': [], '_合并': {'遍数': 0, '本地切段': True}}
+    q = os.path.join(wd, 'segs.json')
+    json.dump(out, open(q, 'w'), ensure_ascii=False, indent=1)
+    print(f'本地切段：黑场 {len(hard)} 处，共 {len(段)} 个起点 → {q}')
+    return out
+
+
 def cmd_round2(mp4, sub, segs_json):
     d, wd = duration(mp4), workdir(mp4)
     segs = json.load(open(segs_json))
@@ -405,13 +447,26 @@ def cmd_round2(mp4, sub, segs_json):
         out = os.path.join(wd, 'round2', f'seg{n:02d}.mp4')
         clip(mp4, a, b, out)
         seg_rows = [(r[0], r[1], r[2]) for r in rows if r[1] > a and r[0] < b]
+        # 镜头切点当锚点一起发下去（默认开，ROUND2_ANCHORS=0 关）。三遍并集实测只是把同一批
+        # 时刻各说三遍（273 条事件落在 33 个时刻上），覆盖率该靠确定的锚点核对，
+        # 不该靠多跑几遍碰运气。切点本地 ffmpeg 数出来的，不花钱。
+        锚 = ''
+        if os.environ.get('ROUND2_ANCHORS', '1') == '1':
+            try:
+                det = json.load(open(os.path.join(wd, 'detect.json')))
+                cuts = [round(c - a, 1) for c in (det.get('镜头切换') or []) if a < c < b]
+                if cuts:
+                    锚 = ('\n【镜头切点】ffmpeg 数出来的，秒数已从 0 起算，共 %d 处：\n%s\n'
+                          % (len(cuts), '、'.join(f'{c:.1f}' for c in cuts)))
+            except Exception:
+                锚 = ''
         txt = f"""【段序号】{n}
 【这一段的时长】{sd:.1f} 秒
 【视频】seg{n:02d}.mp4，时间码已经从 0 起算，直接按视频里的时间报
 
 【字幕转写】格式为「起-止（秒）＋台词」，时间码已重算成从 0 起算
 {fmt_sub(seg_rows, offset=a)}
-"""
+{锚}"""
         open(os.path.join(wd, 'round2', f'seg{n:02d}_input.txt'), 'w',
              encoding='utf-8').write(txt)
         print(f'段{n:02d}  {a:7.1f}-{b:7.1f}  {sd:6.1f}s  台词 {len(seg_rows):3d} 条  → seg{n:02d}.mp4')
@@ -475,16 +530,25 @@ def read_segs(wd):
         a, b = starts[i], starts[i + 1]
         sg['_序号'], sg['_起'], sg['_止'] = i + 1, a, round(b, 1)
         sg['_段时长'] = round(b - a, 1)
-        for e in sg.get('事件') or []:
-            e['绝对时间'] = round(snap(float(e['时间']) + a, det['镜头切换']), 1)
-        for e in sg.get('屏幕上的文字') or []:
-            e['绝对时间'] = round(float(e['时间']) + a, 1)
-            if e.get('持续到第几秒') is not None:
-                e['绝对消失时间'] = round(float(e['持续到第几秒']) + a, 1)
-                e['挂了多久'] = round(float(e['持续到第几秒']) - float(e['时间']), 1)
+        # 模型偶尔漏写某一项的「时间」，或写成非数字。少一条记录不该让整个 Part 失败，
+        # 丢掉那一条继续；事件的时间 check_schema 已经卡过，这里主要防屏幕文字和人物。
+        def _秒(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+        sg['事件'] = [e for e in sg.get('事件') or [] if _秒(e.get('时间')) is not None]
+        for e in sg['事件']:
+            e['绝对时间'] = round(snap(_秒(e['时间']) + a, det['镜头切换']), 1)
+        sg['屏幕上的文字'] = [e for e in sg.get('屏幕上的文字') or [] if _秒(e.get('时间')) is not None]
+        for e in sg['屏幕上的文字']:
+            e['绝对时间'] = round(_秒(e['时间']) + a, 1)
+            if _秒(e.get('持续到第几秒')) is not None:
+                e['绝对消失时间'] = round(_秒(e['持续到第几秒']) + a, 1)
+                e['挂了多久'] = round(_秒(e['持续到第几秒']) - _秒(e['时间']), 1)
         for pr in sg.get('人物') or []:
-            if pr.get('首次出现') is not None:
-                pr['绝对时间'] = round(float(pr['首次出现']) + a, 1)
+            if _秒(pr.get('首次出现')) is not None:
+                pr['绝对时间'] = round(_秒(pr['首次出现']) + a, 1)
         segs.append(sg)
     return segs, d, det
 
@@ -751,8 +815,10 @@ def cmd_post2(wd):
             [p['主角在这一刻是'] for p in allpts
              if p.get('主角在这一刻是') in ('施加方', '承受方')]),
 
-        '未解悬念点次数': sum(1 for e in r2.get('悬念点') or []
-                             if e.get('后面给答案了吗') == '没给'),
+        # 对答案那一轮没跑时这个数不是 0，是没问过。报 0 会被当成「悬念都给了答案」
+        '未解悬念点次数': (None if any(e.get('_没跑对答案') for e in r2.get('悬念点') or [])
+                        else sum(1 for e in r2.get('悬念点') or []
+                                 if e.get('后面给答案了吗') == '没给')),
         # 悬念抛出到给答案隔了多久。间隔短说明素材自己把话说完了，
         # 间隔长说明它把观众吊着。没给答案的不计入。
         '悬念到答案的间隔中位': (lambda g: round(sorted(g)[len(g) // 2], 1) if g else None)(

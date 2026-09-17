@@ -251,7 +251,14 @@ def 收(root):
     files = sorted(glob.glob(os.path.join(root, '*_拆解', 'structure.json')))
     docs, segs, 字幕, 镜头 = [], [], {}, {}
     for f in files:
-        d = json.load(open(f))
+        # 一个 Part 刚拆完就入库，这时同项目别的 Part 还在跑，它们的 structure.json
+        # 可能正在写、或者四个维度的分还没打上。这两种都跳过，等它们自己拆完再算。
+        try:
+            d = json.load(open(f))
+        except (OSError, ValueError):
+            continue
+        if any('抓人速度' not in s for s in (d.get('段') or [])):
+            continue
         docs.append((f, d))
         wd = os.path.dirname(f)
         subs = 读字幕(wd)

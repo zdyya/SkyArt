@@ -7,6 +7,9 @@ Part 视频里的绝对秒，跟播放器和导轨用的是同一条时间轴，
 
 每次写之前先清掉这个 Part 原有的段：重新分析就是覆盖，留着旧的会让同一个
 Part 出现两套段。剧情点挂在段上，靠外键级联一起走。
+
+一个 Part 拆完先写一次，整批跑完按全项目权重再写一次。两次之间用户可能已经
+把某几段排除掉了，重写时按段序号把「排除」标记带过去。
 """
 import json
 
@@ -30,9 +33,17 @@ def _数(v, 默=0.0):
 async def 写段库(db: AsyncSession, part_id: int, 产物: dict) -> dict:
     段们 = 产物.get('段') or []
 
-    旧 = (await db.execute(
-        select(AdmakeSegment.id).where(AdmakeSegment.part_id == part_id))).scalars().all()
-    if 旧:
+    旧行 = (await db.execute(
+        select(AdmakeSegment.id, AdmakeSegment.seg_index, AdmakeSegment.excluded)
+        .where(AdmakeSegment.part_id == part_id))).all()
+    # 这一趟一段都没拆出来，而库里还有上一趟的结果：保留旧的，不要清空。
+    # 模型整条被拒、切片转码失败这些情况下，管线照样会产出一个「段: []」的
+    # 结果并报成功，照着写下去等于一次失败的重新分析把好数据抹了。
+    if not 段们 and 旧行:
+        return {'段': 0, '剧情点': 0, '保住了旧的': len(旧行)}
+    排除过 = {r.seg_index for r in 旧行 if r.excluded}
+    if 旧行:
+        旧 = [r.id for r in 旧行]
         await db.execute(delete(AdmakePlotPoint).where(AdmakePlotPoint.segment_id.in_(旧)))
         await db.execute(delete(AdmakeSegment).where(AdmakeSegment.part_id == part_id))
 
@@ -41,9 +52,11 @@ async def 写段库(db: AsyncSession, part_id: int, 产物: dict) -> dict:
         起 = _数(s.get('起', s.get('_起')))
         止 = _数(s.get('止', s.get('_止')))
         档 = s.get('段的尺度档')
+        序 = int(s.get('段序号') or (i + 1))
         seg = AdmakeSegment(
             part_id=part_id,
-            seg_index=int(s.get('段序号') or (i + 1)),
+            seg_index=序,
+            excluded=序 in 排除过,
             start_sec=起,
             end_sec=止,
             duration_sec=_数(s.get('段时长', s.get('_段时长')), 止 - 起),
