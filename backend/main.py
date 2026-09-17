@@ -24,7 +24,7 @@ from app.core.logs import setup_logging, log_event, machine_profile
 # 打包版启动时 main.js 拿 app.getVersion() 和后端 / 返回的版本比对，不等就拒绝连接
 # （防「壳新芯旧」，见 KNOWLEDGE #19）。这两处曾经各走各的，一个 beta.3 一个 beta.6。
 # 改完必须重跑 PyInstaller——npm run pack 不会重编后端，包里带的还是上一次编的版本。
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 # 尽早安装日志 tee（捕获含 uvicorn 在内的全部 stdout/stderr → 按天滚动日志文件）
 setup_logging()
@@ -106,10 +106,29 @@ def _install_orphan_guard():
         threading.Thread(target=_watch_ppid, daemon=True, name="guard-ppid").start()
 
 
+def _端口已被占用(port: int) -> bool:
+    """试着绑一下端口。绑不上说明已经有一个后端在跑。"""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("0.0.0.0", port))
+            return False
+        except OSError:
+            return True
+
+
 async def _sweep_stale_tasks():
     """启动清扫：上一次进程退出时卡在进行中的任务（导出/Part 合成/AI 分析）没有任何
     执行器会接手，永远停在 pending/processing——统一标记 failed，任务中心和编辑器
     才不会把两周前的尸体当"正在执行"展示。"""
+    # Electron 有时会连着拉起两个后端进程，第二个绑不上端口马上退出。它要是在退出前
+    # 跑了这段清扫，正在跑的分析会被标成失败——2026-09-17 上午的「Part 4 失败」就是这样来的。
+    # 清扫只能由真正能起来的那个进程做。
+    port = int(os.environ.get("PORT", 8764))
+    if _端口已被占用(port):
+        print(f"🧹  端口 {port} 已被占用，本进程起不来，跳过启动清扫")
+        return
     from sqlalchemy import update, or_
     from app.database import AsyncSessionLocal
     from app.models.admake import AdmakeExport, AdmakePart
@@ -217,14 +236,12 @@ async def system_config_status():
         ("美区 OSS Secret", settings.OSS_SECRET_SkyArt_US),
         ("美区 OSS Bucket", settings.OSS_BUCKET_SkyArt_US),
     ])
-    # Qwen 链路查的是 QWEN_API_KEY 加美区 OSS 三项，与 HappyHorse 无关
-    # （HappyHorse 是短剧成片那条线的 key，见 KNOWLEDGE #15）。两者混用会让
-    # 面板在两个方向上都判错：配好 Qwen显示没配，只配 HappyHorse 显示已配好。
+    # Qwen 链路只要一把 key。视频 base64 内联在请求里直连白名单通道，不经美区 OSS——
+    # 面板原来把 OSS 三项也列进来，用户照着去填一堆用不上的东西，还以为功能没配好。
+    # （HappyHorse 是短剧成片那条线的 key，与这里无关，见 KNOWLEDGE #15。两者混用会让
+    # 面板在两个方向上都判错：配好 Qwen 显示没配，只配 HappyHorse 显示已配好。）
     ai_qwen = _missing([
         ("Qwen API Key", settings.QWEN_API_KEY),
-        ("美区 OSS AccessKey", settings.OSS_KEY_SkyArt_US),
-        ("美区 OSS Secret", settings.OSS_SECRET_SkyArt_US),
-        ("美区 OSS Bucket", settings.OSS_BUCKET_SkyArt_US),
     ])
     drama_video = _missing([
         ("HappyHorse API Key", settings.HAPPYHORSE_API_KEY),
@@ -330,17 +347,22 @@ async def system_selfcheck(deep: int = 0):
 
     # ⑦ 深检：实测连通。只探到「能不能连上」为止，不做任何写操作
     if deep:
-        t0 = _t.monotonic()
-        try:
-            from app.routers.admake import _precheck_ai_credentials
-            await _precheck_ai_credentials("gemini")
-            # 这个毫秒数是密钥探测的往返耗时（美区 OSS get_bucket_info + DashScope /models），
-            # 不是 AI 分析本身的耗时——写清楚，不然会被当成"分析要花这么久"
-            add("net_ai", "AI 链路连通", "ok",
-                f"实测通过 · 密钥探测往返 {int((_t.monotonic()-t0)*1000)} ms")
-        except Exception as e:
-            msg = getattr(e, "detail", None) or str(e)
-            add("net_ai", "AI 链路连通", "warn", str(msg)[:120], "网络或密钥有问题，AI 分析会失败")
+        from app.routers.admake import _precheck_ai_credentials
+        # 两条链路分开探：素材制作 1.0 走 Gemini 加美区 OSS，段库分析和爆款分析走
+        # Qwen 白名单通道直连。2026-09-17 业务机器的 Qwen key 填错，这里只探 Gemini，
+        # 自检全绿，点分析等了十分钟才报错。
+        for 键, 名, 模型, 类型 in (
+            ("net_ai", "AI 链路连通（Gemini）", "gemini", "marks"),
+            ("net_ai_qwen", "AI 链路连通（Qwen）", "qwen", "segments"),
+        ):
+            t0 = _t.monotonic()
+            try:
+                await _precheck_ai_credentials(模型, project_kind=类型)
+                # 这个毫秒数是密钥探测的往返耗时，不是 AI 分析本身的耗时
+                add(键, 名, "ok", f"实测通过 · 密钥探测往返 {int((_t.monotonic()-t0)*1000)} ms")
+            except Exception as e:
+                msg = getattr(e, "detail", None) or str(e)
+                add(键, 名, "warn", str(msg)[:120], "网络或密钥有问题，这条链路的 AI 分析会失败")
 
     order = {"fail": 2, "warn": 1, "ok": 0}
     worst = max((order[i["level"]] for i in items), default=0)
@@ -350,4 +372,7 @@ async def system_selfcheck(deep: int = 0):
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8764))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    # 只听本机。界面和后端在同一台机器上，外面没有人需要连它；听 0.0.0.0 的话，
+    # 同一个 Wi-Fi 下任何人都能用随包内置的 admin 账号登进来，把这台机器上的
+    # 项目和成片列出来、下载走、删掉。
+    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")

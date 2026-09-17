@@ -876,7 +876,9 @@ body{margin:0;background:var(--bg);}
   font-size:12.5px;color:var(--text);padding:0 9px;font-family:inherit;}
 
 .drop{border:1.5px dashed var(--border);border-radius:10px;padding:22px;text-align:center;
-  font-size:12.5px;color:var(--text3);background:var(--bg3);margin-bottom:12px;cursor:pointer;}
+  font-size:12.5px;color:var(--text3);background:var(--bg3);margin-bottom:12px;cursor:pointer;
+  transition:border-color .12s,background .12s,color .12s;}
+.drop.on{border-color:var(--accent);background:rgba(249,115,22,.07);color:var(--text);}
 .uprow{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--border);font-size:12px;}
 .uprow:first-child{border-top:0;}
 .upn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -1099,6 +1101,7 @@ body.firstrun .wrap{height:calc(100vh - 52px - var(--fbar-h, 58px));}
   <div class="mph">
     <span class="mpt">素材<i id="mp-n">0</i></span>
     <button class="btn btn-primary btn-sm hide" id="mp-runall" onclick="分析全部待的()">分析待分析的</button>
+    <span id="mp-avg" style="font-size:11.5px;color:var(--text3);margin-left:10px"></span>
   </div>
   <div class="mplist" id="mp-list"></div>
 </div>
@@ -1178,7 +1181,7 @@ body.firstrun .wrap{height:calc(100vh - 52px - var(--fbar-h, 58px));}
         <div class="drow grp">
           <span class="dl">模板写入条件</span>
           <div class="seg3" id="lvl">
-            <button data-l="精简" title="只写段落类型和尺度档上限。换一部剧最容易找到段，出来的片结构像、细节不像">精简</button>
+            <button data-l="精简" title="只写段落类型和尺度档。换一部剧最容易找到段，出来的片结构像、细节不像">精简</button>
             <button data-l="标准" class="on" title="再写入主角角色、本能刺激。与题材绑定的三项不写">标准</button>
             <button data-l="完整" title="把这一段的字段尽量写满。最接近原片，能匹配上的段也最少">完整</button>
           </div>
@@ -1219,7 +1222,10 @@ body.firstrun .wrap{height:calc(100vh - 52px - var(--fbar-h, 58px));}
         <div class="ai-modal-title" style="margin-bottom:0">上传爆款素材</div>
         <button class="btn btn-ghost btn-sm" onclick="关上传()">✕</button>
       </div>
-      <div class="drop" onclick="$('up-file').click()">
+      <div class="drop" onclick="$('up-file').click()"
+        ondragover="event.preventDefault();this.classList.add('on')"
+        ondragleave="this.classList.remove('on')"
+        ondrop="event.preventDefault();this.classList.remove('on');拖进来(event.dataTransfer.files)">
         拖入文件或点击选择
         <span class="droph">mp4、mov，一次最多 5 条，单条不超过 30 分钟</span>
       </div>
@@ -1275,6 +1281,73 @@ function n1(v){ return (Number(v) || 0).toFixed(1); }
 function mmss(t){ t = Math.round(Math.max(0, Number(t) || 0));
   return String(Math.floor(t/60)).padStart(2,'0') + ':' + String(t%60).padStart(2,'0'); }
 
+/* ── 分析耗时：记本机历史，用来估这一条还要多久 ──────────────────────────
+   每条素材长短不一，绝对秒数没法直接拿来估下一条，所以记的是「每分钟素材要跑多少秒」。
+   只存在本机，换台机器重新攒，攒不够 1 条就不显示预估，不瞎报一个数。 */
+var 耗时键 = 'hot_分析耗时_秒每分';
+function 读耗时(){
+  try { return JSON.parse(localStorage.getItem(耗时键) || '[]').filter(function(x){ return x > 0; }); }
+  catch(e){ return []; }
+}
+function 记耗时(素材秒, 用时秒){
+  if(!(素材秒 > 0) || !(用时秒 > 0)) return;
+  try {
+    var a = 读耗时();
+    a.push(用时秒 / (素材秒 / 60));
+    localStorage.setItem(耗时键, JSON.stringify(a.slice(-20)));   // 只留最近 20 次
+  } catch(e){ /* 无痕模式等场景写不进去，不影响主流程 */ }
+}
+function 平均秒每分(){
+  var a = 读耗时();
+  if(!a.length) return 0;
+  return a.reduce(function(x, y){ return x + y; }, 0) / a.length;
+}
+/* 没跑过的机器上没有历史，退回实测经验值：一分钟素材约一分钟。
+   有历史就用历史，机器快慢差得远。 */
+var 没历史时每分钟约 = 60;
+function 估要多久(素材秒){
+  var r = 平均秒每分() || 没历史时每分钟约;
+  return 素材秒 > 0 ? r * (素材秒 / 60) : 0;
+}
+
+/* 后端逐步上报到了哪一步，这里把六步换成进度条上的位置。
+   占比是实测的：逐段描述和理结构两步占掉七成多，认字幕次之，其余几步都很快。
+   不按阶段走的话，进度条只能按「已跑 / 预估」空转，跟实际做到哪一步对不上。 */
+var 阶段表 = [
+  ['subtitle',   '认字幕',   0.14],
+  ['shots',      '找镜头',   0.04],
+  ['cutting',    '切段',     0.04],
+  ['describing', '逐段描述', 0.42],
+  ['structure',  '理结构',   0.31],
+  ['rating',     '给段打分', 0.05],
+];
+function 阶段位置(键){
+  var 起 = 0;
+  for(var i = 0; i < 阶段表.length; i++){
+    if(阶段表[i][0] === 键) return {名:阶段表[i][1], 起:起, 占:阶段表[i][2]};
+    起 += 阶段表[i][2];
+  }
+  return null;
+}
+/* 一条素材跑到哪了。st 是后端状态接口的返回。 */
+function 跑到哪了(st, 预估){
+  var a = (st.active_parts || [])[0] || {};
+  var 位 = 阶段位置(a.stage);
+  var 已跑 = st.started_ts ? Math.max(0, Date.now() / 1000 - st.started_ts) : 0;
+  if(!位) return {进度: 预估 ? Math.min(92, 已跑 / 预估 * 100) : 5, 阶段:'', 已跑:已跑, 预估:预估};
+  // 这一步预计多久 = 总预估 × 这一步的占比。走到九成就压住，宁可最后跳一下，
+  // 也不要进度条先跑满再干等着。
+  var 该步预计 = (预估 || 0) * 位.占;
+  var 步内 = 该步预计 > 0 ? Math.min(0.92, (a.stage_elapsed || 0) / 该步预计) : 0.5;
+  return {进度: Math.min(99, (位.起 + 位.占 * 步内) * 100),
+          阶段: 位.名, 已跑: 已跑, 预估: 预估};
+}
+function 说时长(秒){
+  秒 = Math.round(秒);
+  if(秒 < 60) return 秒 + ' 秒';
+  return '约 ' + Math.ceil(秒 / 60) + ' 分钟';
+}
+
 var 箭头 = '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
 var 下载图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v10"/><path d="m8 11 4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>';
 var 删除图 = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M9 6V4h6v2"/><path d="M6 6l1 14h10l1-14"/></svg>';
@@ -1322,10 +1395,11 @@ function _转段(seg, 编号){
     结尾留没留悬念: f['结尾留没留悬念'] || '',
     留的是什么: f['留的是什么'] || null,
     最强的一刻: f['最强的一刻'] || '',
-    最强的一刻在第几秒: f['最强的一刻时间'],
+    最强的一刻在第几秒: f['最强的一刻在第几秒'],   // 段库里就叫这个名字
     段落叙述: f['段落叙述'] || '',
     地点: f['地点'] || '',
     每分钟几件事: f['每分钟几件事'], 每分钟几句台词: f['每分钟几句台词'],
+    抓人速度: f['抓人速度'],       // 开场那一格要拿它写条件
     命中的行为: f['命中的行为'] || [],
     能用: !seg.excluded,
     帧: '',                    // 段序卡片用 video 抓帧，不存图
@@ -1361,11 +1435,19 @@ async function 装数据(){
     可见.push(编号);
     // 失败原因从 Part 上带出来。不带的话刷新一次就只剩「这条素材分析失败」，
     // 库里明明记着原因（缺 key、打包漏了 OCR、模型三遍全失败），界面不去取。
-    态[编号] = {状态:_状态(pt, segs.length), 进度:segs.length ? 100 : 0,
-                时间:本地时间(proj.created_at), 原因:pt.ai_error || ''};
+    // 还在跑的素材，进度、阶段、已跑这些是轮询一点点攒出来的，重新装数据时
+    // 不要抹掉：别的素材跑完触发一次装数据，这条的进度条会从 60% 掉回 0。
+    var 旧 = 态[编号] || {};
+    var 新状态 = _状态(pt, segs.length);
+    态[编号] = 新状态 === '分析中' && 旧.状态 === '分析中'
+      ? 旧
+      : {状态:新状态, 进度:segs.length ? 100 : 0,
+         时间:本地时间(proj.created_at), 原因:pt.ai_error || ''};
   }
   当前 = D.素材[0] || {编号:'', 素材时长:0, 段:[], 片源:''};
   当前段 = 当前.段[0] || null;
+  // 刷新页面、或者别处起的分析，这里接着盯。不接管的话进度停在 0 不动。
+  可见.forEach(function(id){ if(状(id) === '分析中') 盯着(id); });
 }
 
 function 状(id){ return (态[id] || {}).状态 || '已完成'; }
@@ -1390,15 +1472,28 @@ function 画面板(){
   var n = 待的().length;
   $('mp-runall').classList.toggle('hide', !n);
   $('mp-runall').textContent = '分析待分析的 ' + n + ' 条';
+  // 平均每条要多久：攒够本机历史才显示，没历史就空着，不摆一个猜的数
+  var 均 = 平均秒每分();
+  var 均元 = $('mp-avg');
+  if(均元) 均元.textContent = 均 ? '本机平均每分钟素材跑 ' + Math.round(均) + ' 秒（近 ' + 读耗时().length + ' 次）' : '';
   $('mp-list').innerHTML = 可见.map(function(id){
     var m = 素材[id], e = 态[id] || {}, s = e.状态 || '已完成';
     var 图 = m.段[0] ? 段封面(m.段[0], m.片源) : '<img alt="">';
     var 没跑成 = (s === '分析失败' || s === '分析中断');
+    var 跑况 = '';
+    if(s === '分析中'){
+      跑况 = ' · ' + (e.阶段 ? e.阶段 + ' ' : '') + Math.round(e.进度 || 0) + '%';
+      if(e.已跑) 跑况 += ' · 已跑 ' + mmss(e.已跑);
+      if(e.预估 && e.预估 > e.已跑) 跑况 += ' · 还需 ' + 说时长(e.预估 - e.已跑);
+    } else if(s === '待分析'){
+      var 预 = 估要多久(m.素材时长);
+      if(预) 跑况 = ' · 预计 ' + 说时长(预);
+    }
     var 副 = mmss(m.素材时长) +
       (s === '已完成' ? ' · ' + m.段.length + ' 段 · ' + (e.时间 || '')
-       : s === '分析中' ? ' · ' + Math.round(e.进度 || 0) + '%'
+       : s === '分析中' ? 跑况
        : 没跑成 ? ' · ' + (e.原因 || '')
-       : ' · ' + (e.时间 || ''));
+       : 跑况 || (' · ' + (e.时间 || '')));
     var 签 = s === '已完成' ? '<span class="st ok">已完成</span>'
       : s === '分析中' ? '<span class="st run">分析中</span>'
       : s === '分析失败' ? '<span class="st bad">失败</span>'
@@ -1474,7 +1569,7 @@ async function 开分析(id){
   if(状(id) === '分析中') return;
   var m = 素材[id];
   if(!m || !m.part_id){ 提示('这条素材还没合成好'); return; }
-  态[id] = {状态:'分析中', 进度:5};
+  态[id] = {状态:'分析中', 进度:5, 起:Date.now()};
   画面板(); 画当前(); 画浮窗();
   if(当前.编号 === id) 画全部();
   try {
@@ -1487,20 +1582,40 @@ async function 开分析(id){
     if(当前.编号 === id) 画全部();
     return;
   }
+  盯着(id);
+}
+
+/* 轮询一条素材的分析。开分析之后要盯，刷新页面回来发现还在跑也要盯——
+   以前只有开分析那一次会起轮询，刷新一次进度就停在 0，直到再刷新一次才跳成完成。 */
+function 盯着(id){
+  if(跑表[id]) return;
+  var m = 素材[id];
+  if(!m) return;
   跑表[id] = setInterval(async function(){
     var st = null;
     try { st = await api('/admake/projects/' + m.项目id + '/ai-analyze/status'); }
     catch(e){ return; }
     var e2 = 态[id] || {};
     if(st.status === 'processing'){
-      态[id] = {状态:'分析中', 进度:Math.min(92, (e2.进度 || 5) + 3)};
+      var r = 跑到哪了(st, 估要多久(m.素材时长));
+      if(!r.已跑 && e2.起) r.已跑 = (Date.now() - e2.起) / 1000;
+      态[id] = {状态:'分析中', 进度:Math.max(r.进度, 1), 起:e2.起 || (st.started_ts * 1000),
+                已跑:r.已跑, 预估:r.预估, 阶段:r.阶段};
     } else {
       clearInterval(跑表[id]); delete 跑表[id];
-      await 装数据();
+      var 原状态 = 状(id);
+      if(e2.起) 记耗时(m.素材时长, (Date.now() - e2.起) / 1000);
+      // 装数据 里任何一个接口抖一下，下面改状态和重画都不会执行，这条素材就永远
+      // 停在「分析中 92%」，刷新页面才好。
+      try { await 装数据(); } catch(err){ 提示('刷新列表失败：' + err.message); }
       var 段数 = (素材[id] || {段:[]}).段.length;
       // 后端重启会把任务记录丢掉，状态变成 idle，而库里这个 Part 还写着分析中。
       // 这种情况不是失败，是这一趟断了，重新分析能接着已有产物往下跑。
-      var 断了 = st.status === 'idle' && !段数 && 状(id) === '分析中';
+      // 断了的判断要在装数据之前取。装数据 把库里仍写着 analyzing 的素材重新标成
+      // 「分析中」，还会给它重新起一个定时器，于是这里每 3 秒判一次「断了」、
+      // 弹一次提示、再拉一遍全部项目，直到用户刷新页面。
+      var 断了 = st.status === 'idle' && !段数 && 原状态 === '分析中';
+      if (跑表[id]) { clearInterval(跑表[id]); delete 跑表[id]; }
       态[id] = {状态:段数 ? '已完成' : (断了 ? '分析中断' : '分析失败'), 进度:段数 ? 100 : 0,
                 时间:'刚刚', 原因:st.error || (断了 ? '后端重启，任务断了' : '')};
       提示(段数 ? (id + ' 拆出 ' + 段数 + ' 段')
@@ -1531,7 +1646,7 @@ function 画浮窗(){
   $('tf-list').innerHTML = 列.map(function(id){
     var e = 态[id];
     return '<div class="tfrow" onclick="选素材(\'' + id + '\')">' +
-      '<div class="tl"><span class="tfk">AI 分析</span><b>' + esc(id) + '</b>' +
+      '<div class="tl"><span class="tfk">' + (e.阶段 || 'AI 分析') + '</span><b>' + esc(id) + '</b>' +
       '<span>' + Math.round(e.进度) + '%</span></div>' +
       '<div class="tb"><i style="width:' + e.进度 + '%"></i></div></div>';
   }).join('');
@@ -1644,21 +1759,20 @@ var 展开着 = {};        // 格序号 → true
 
 /* 每格写哪些条件，由严格程度决定。
    与题材绑定的三项（经典桥段、旁观者、身份差距）只有严格档才写，
-   跨剧套用时它们最容易把候选卡死。 */
-function 尺度上限(s){
-  var lv = Number(s.段的尺度档) || 0;
-  return 严 === '精简' ? Math.max(lv, 3) : (严 === '标准' ? Math.max(lv, 2) : lv);
-}
+   跨剧套用时它们最容易把候选卡死。
+   尺度档写的是这一段本身的档，匹配时同档满分、差一档一半。以前写成「不超过 N」
+   当上限用，大尺度的模板会放小尺度的段进来、把更大尺度的段挡在外面，跟用户
+   复刻大尺度模板的目的相反。 */
 /* 每条除了给人读的文案，还带上写进模板的字段名和值——模板存到后端要的是
    结构化条件，界面上那句中文只是给人看的。两者在这里一次产出，不做反向解析。
    块＝内容条件还是结构条件，k＝字段名，v＝值。 */
-function 条件表(s, 末){
+function 条件表(s, 末, 开){
   var 标准 = 严 !== '精简', 完整 = 严 === '完整';
   var out = [
     {t:'段落类型为' + s.这段算哪种戏, 默:true,
      块:'内容条件', k:'最强的一刻属于哪一类', v:[s.这段算哪种戏]},
-    {t:'尺度档不超过 ' + 尺度上限(s), 默:true,
-     块:'内容条件', k:'尺度档上限', v:尺度上限(s)},
+    {t:'尺度档为 ' + (Number(s.段的尺度档) || 0), 默:true,
+     块:'内容条件', k:'尺度档', v:Number(s.段的尺度档) || 0},
   ];
   out.push({t:'主角角色为' + 主角词(s.主角是动手还是挨打), 默:标准,
             块:'内容条件', k:'主角在这一刻是', v:[s.主角是动手还是挨打 || '都不是']});
@@ -1682,6 +1796,14 @@ function 条件表(s, 末){
   if(末 && s.结尾留没留悬念)
     out.push({t:s.结尾留没留悬念 === '留了' ? '结尾留悬念' : '结尾不留悬念', 默:标准,
               块:'结构条件', k:'结尾留没留悬念', v:s.结尾留没留悬念});
+  /* 只有开场那一格写。爆款的开场之所以是开场，靠的是前三秒就有事发生；不写这一条，
+     套到别的剧上会挑出一个结构对得上、但开头平平的段。原片打几分就要几分，
+     让一分的余地，卡死在整数上会把候选清空。 */
+  if(开 && s.抓人速度 != null){
+    var 门 = Math.max(1, Math.round(Number(s.抓人速度)) - 1);
+    out.push({t:'抓人速度不低于 ' + 门, 默:true,
+              块:'结构条件', k:'抓人速度下限', v:门});
+  }
   return out;
 }
 function 开着(id, j, 默){ var k = 严 + '|' + id + '|' + j; return 手改[k] === undefined ? 默 : 手改[k]; }
@@ -1727,7 +1849,7 @@ function 画草稿(){
   $('btn-reset').disabled = !改过多少();
   $('d-body').innerHTML = 段们.map(function(s, i){
     var 末 = i === 段们.length - 1;
-    var cs = 条件表(s, 末);
+    var cs = 条件表(s, 末, i === 0);
     var 位 = i === 0 ? '开场' : (末 ? '结尾' : '中段');
     var 尾 = {'动手':' · 主角施加方','挨打':' · 主角承受方'}[s.主角是动手还是挨打] || '';
     var 开 = cs.filter(function(c, j){ return 开着(s.段ID, j, c.默); }).length;
@@ -1770,7 +1892,7 @@ function 建模板(名, 段们, 来源, 来自){
       var 末 = i === 段们.length - 1;
       var 位 = i === 0 ? '开场' : (末 ? '结尾' : '中段');
       var 尾 = {'动手':' · 主角施加方','挨打':' · 主角承受方'}[s.主角是动手还是挨打] || '';
-      var 选中 = 条件表(s, 末).filter(function(c, j){ return 开着(s.段ID, j, c.默); });
+      var 选中 = 条件表(s, 末, i === 0).filter(function(c, j){ return 开着(s.段ID, j, c.默); });
       var 内容 = {}, 结构 = {};
       选中.forEach(function(c){
         if(!c.k) return;
@@ -1829,7 +1951,8 @@ async function 拉模板库(){
                 var c = g.内容条件 || {}, q = g.结构条件 || {};
                 var 句 = [];
                 if(c['最强的一刻属于哪一类']) 句.push('段落类型为' + [].concat(c['最强的一刻属于哪一类']).join('或'));
-                if(c['尺度档上限'] != null) 句.push('尺度档不超过 ' + c['尺度档上限']);
+                if(c['尺度档'] != null) 句.push('尺度档为 ' + c['尺度档']);
+                else if(c['尺度档上限'] != null) 句.push('尺度档为 ' + c['尺度档上限']);
                 if(c['主角在这一刻是']) 句.push('主角角色为' + 主角词([].concat(c['主角在这一刻是'])[0]));
                 if(c['本能刺激']) 句.push('本能刺激含' + [].concat(c['本能刺激']).join('或'));
                 if(c['高转化场景']) 句.push('经典桥段为' + [].concat(c['高转化场景']).join('或'));
@@ -1837,7 +1960,8 @@ async function 拉模板库(){
                 if(c['阶层落差']) 句.push(c['阶层落差'] === '有' ? '有身份差距' : '无身份差距');
                 if(q['最强的一刻位置']) 句.push('最强的一刻位于' + q['最强的一刻位置']);
                 if(q['结尾留没留悬念']) 句.push(q['结尾留没留悬念'] === '留了' ? '结尾留悬念' : '结尾不留悬念');
-                return {序:g.序, 格名:g.格名 || ('第' + g.序 + '格'), 段时长:g.段时长 || 0,
+                if(q['抓人速度下限'] != null) 句.push('抓人速度不低于 ' + q['抓人速度下限']);
+                return {序:g.序, 格名:g.格名 || ('第' + g.序 + '格'), 段时长:g.段时长 || null,
                         来自:g.来自 || '', 条件:句};
               })};
     });
@@ -1863,7 +1987,7 @@ function 画库(){
         (t.来自 ? '<div class="lfrom">来自素材 ' + esc(t.来自) + '</div>' : '') +
         t.格.map(function(g){
         return '<div class="lcell"><span class="n">' + g.序 + '</span><span>' + esc(g.格名) +
-          '<span style="color:var(--text3)">　原片 ' + n1(g.段时长) + ' 秒</span>' +
+          (g.段时长 > 0 ? '<span style="color:var(--text3)">　原片 ' + n1(g.段时长) + ' 秒</span>' : '') +
           '<br><span style="color:var(--text3)">' + esc(g.条件.join('，')) + '</span></span></div>';
       }).join('') + '</div>' : '') + '</div>';
   }).join('');
@@ -1893,7 +2017,7 @@ function 画库(){
 }
 var 开库 = {}, 待删 = -1, 删计时;
 /* 导出的是后端存的那份原始条件（name/kind/slots）。界面上那份「段落类型为冲突，
-   尺度档不超过 2」是渲染出来给人看的句子，导出去再导回来就只剩一个没有任何条件的
+   尺度档为 2」是渲染出来给人看的句子，导出去再导回来就只剩一个没有任何条件的
    空模板，套到段库上每一格都是满分，剪出来的片子是随机的。 */
 function 下载(列, 名){
   var 原 = 列.map(function(t){ return t.原 || t; });
@@ -2028,6 +2152,16 @@ function 量时长(f, 回){
 function 选好文件(e){
   var fs = [].slice.call(e.target.files || []);
   e.target.value = '';
+  收下文件(fs);
+}
+
+// 拖进来的和点选的走同一条校验：格式、条数、时长三道一条都不能漏，
+// 否则拖进来的文件能绕过限制，传到一半才在后端报错。
+function 拖进来(files){
+  收下文件([].slice.call(files || []));
+}
+
+function 收下文件(fs){
   if(!fs.length) return;
   var 挡格式 = [], 挡时长 = [], 挡条数 = 0;
   fs = fs.filter(function(f){
@@ -2116,7 +2250,10 @@ async function 收进列表(){
   }
   待传 = [];
   关上传();
-  await 装数据();
+  // 弹窗已经关了。这一步再失败就什么都不显示，用户以为没传上，回头又传一遍，
+  // 项目里多出一批重复的素材。
+  try { await 装数据(); }
+  catch(e){ 提示('传上去了，但列表没刷出来：' + e.message + '，重开这一页看看'); return []; }
   var 新 = Object.keys(素材).filter(function(k){ return 旧.indexOf(k) < 0; });
   默认全勾(); 画全部(); 画面板(); 画当前();
   if(失败.length) 提示('有 ' + 失败.length + ' 条没传上：' + 失败[0]);
@@ -2144,7 +2281,10 @@ function 提示(t){
 }
 
 function 画全部(){
-  var 好 = 状(当前.编号) === '已完成';
+  // 一条素材都没有时，当前是个空壳、当前段是 null。状('') 默认返回「已完成」，
+  // 于是走进画段序/画字段那一支，第一行就拿 null 取字段，异常从初始化里穿出去：
+  // 上传弹窗不弹、模板库不加载，页面看着是空白的三栏，点什么都没反应。
+  var 好 = !!当前.编号 && 状(当前.编号) === '已完成' && !!当前段;
   $('three').classList.toggle('hide', !好);
   $('waitbox').classList.toggle('hide', 好);
   画当前();

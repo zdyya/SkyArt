@@ -1,3 +1,4 @@
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.core.config import settings
@@ -5,8 +6,25 @@ from app.core.config import settings
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _每条连接都这么设(dbapi_conn, _):
+    """SQLite 的三个开关，每开一条连接都要设一遍。
+
+    外键：模型里写的 ondelete=CASCADE 在 SQLite 上默认不生效，删项目会留下
+    一堆挂在已删 Part 上的段；而 SQLite 的主键会重用已删除的 id，新建的 Part
+    拿到同一个 id 就把上一个项目的段认领过来了。
+    WAL：读写可以并行，导出后台任务写库的同时用户点开列表不会撞上 database is locked。
+    等锁超时：默认 5 秒，慢一点的写就报错，给到 30 秒。
+    """
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA foreign_keys=ON")
+    cur.execute("PRAGMA journal_mode=WAL")
+    cur.execute("PRAGMA busy_timeout=30000")
+    cur.close()
 
 AsyncSessionLocal = async_sessionmaker(
     engine,
@@ -53,6 +71,10 @@ async def create_tables():
             "ALTER TABLE admake_projects ADD COLUMN export_path VARCHAR(500)",
             # 模板套用失败原因（导出成功但模板没套上时非空）
             "ALTER TABLE admake_exports ADD COLUMN template_error VARCHAR(300)",
+            # 这一条导出为什么失败。界面上原来只显示「失败」两个字
+            "ALTER TABLE admake_exports ADD COLUMN fail_reason VARCHAR(500)",
+            # AI 分析跑完的时间，首页「今天分析完几个 Part」按它数
+            "ALTER TABLE admake_parts ADD COLUMN ai_done_at DATETIME",
             # 用户的默认模板：新建项目和导出面板没选模板时预填它
             "ALTER TABLE admake_templates ADD COLUMN is_default BOOLEAN DEFAULT 0",
             # 这批导出用的目标时长。以前只写进成片旁边的 .log.txt，数据库里查不到，
@@ -76,5 +98,20 @@ async def create_tables():
                 "UPDATE admake_projects SET ai_model = :m "
                 "WHERE project_kind = 'segments' AND ai_model NOT LIKE 'qwen%'"
             ), {"m": 分析模型()})
+        except Exception:
+            pass
+        # 清掉挂在已删除 Part 上的段和剧情点。删项目原来不清段，而 SQLite 会重用
+        # 已删除的 id，新建的 Part 拿到同一个 id 就把上一个项目的段认领过来：
+        # 界面上看到别人的段，「只分析没分析过的」还会跳过这些 Part。
+        try:
+            t = __import__("sqlalchemy").text
+            await conn.execute(t(
+                "DELETE FROM admake_plot_points WHERE segment_id NOT IN "
+                "(SELECT id FROM admake_segments)"))
+            r = await conn.execute(t(
+                "DELETE FROM admake_segments WHERE part_id NOT IN "
+                "(SELECT id FROM admake_parts)"))
+            if r.rowcount:
+                print(f"🧹  清掉 {r.rowcount} 条挂在已删除 Part 上的段")
         except Exception:
             pass

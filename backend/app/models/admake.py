@@ -84,6 +84,10 @@ class AdmakePart(Base):
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/processing/ready/failed
     ai_status: Mapped[str] = mapped_column(String(32), default="none")  # none/analyzing/done/failed
     ai_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # AI 分析是什么时候跑完的。Part 表原来只有状态没有时间，首页要数「今天分析完
+    # 几个」只能去数标记的创建时间，而人工拖一个标记点按保存就会把那个时间刷新，
+    # 今天没分析过也显示分析完了 1 个。
+    ai_done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of AdmakeSource IDs
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -235,6 +239,9 @@ class AdmakeExport(Base):
     # 模板套用失败原因（成片本体成功、只有模板没套上时非空）——历史里要标出来，
     # 否则批量导出全是"没套模板的白片"也显示就绪，运营不知情
     template_error: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # 这一条为什么失败。只有 status=failed 时才有值。以前失败原因只写进后端日志，
+    # 界面上就一个「失败」，用户没法知道是片源丢了还是磁盘满了
+    fail_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

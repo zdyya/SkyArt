@@ -6,10 +6,11 @@ import os
 import pathlib
 import re
 import shutil
+import threading
 import time as _time
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Query
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +24,7 @@ from app.models.admake import (AdmakeProject, AdmakeSource, AdmakePart, AdmakeMa
                                AdmakeCutTemplate)
 from app.schemas.admake import (
     AdmakeProjectCreate, AdmakeProjectUpdate,
-    AdmakeProjectOut, AdmakeProjectDetailOut, AdmakeTaskOut,
+    AdmakeProjectOut, AdmakeProjectDetailOut, AdmakeTaskOut, AdmakeHomeSummaryOut,
     AdmakeSourceOut, AdmakePartOut,
     AdmakeMarkIn, AdmakeMarkBatchSave, AdmakeMarkOut,
     AdmakeExportRequest, AdmakeExportOut,
@@ -425,6 +426,41 @@ def _estimate_pair_duration(hl: dict, hk: dict, parts_ordered: list[dict]) -> fl
 # 扣掉模板贴片后留给正片的最短目标。历史模板里存过 188 秒的"片尾"，直接相减会得到
 # 负数目标，选材会一路挑到最短的那个配对上，成片只剩几秒的高光。
 _MIN_BODY_SEC = 30.0
+
+def _说清失败(e: Exception) -> str:
+    """把 ffmpeg 那一长串 stderr 压成用户看得懂的一句话。
+
+    界面上原来只有「失败」两个字，真正的原因只在后端日志里，用户没法自己判断
+    是片源被删了、磁盘满了，还是别的问题。
+    """
+    t = str(e)
+    if "No such file or directory" in t or "Error opening input" in t:
+        import re as _re
+        m = _re.search(r"Error opening input file ([^\s]+?\.mp4)", t)
+        名 = os.path.basename(m.group(1)) if m else ""
+        return (f"片源视频找不到{'：' + 名 if 名 else ''}。"
+                f"这个 Part 的视频文件被移走或删掉了，回项目里重建 Part 再导出。")
+    if "No space left" in t:
+        return "磁盘空间不够，清一些空间再导。"
+    if "Permission denied" in t:
+        return "导出目录没有写入权限，换一个导出目录。"
+    t = " ".join(t.split())
+    return (t[:180] + "…") if len(t) > 180 else t
+
+
+def _片源都在吗(parts) -> list:
+    """返回视频文件不在磁盘上的 Part。库里状态是 ready，文件却可能被用户清掉了。"""
+    缺 = []
+    for p in parts:
+        fp = p.file_path or ""
+        if not fp:
+            缺.append(p)
+            continue
+        绝 = fp if os.path.isabs(fp) else os.path.join(settings.UPLOAD_DIR, fp)
+        if not os.path.isfile(绝):
+            缺.append(p)
+    return 缺
+
 
 _EXPORT_MODES = ("highlight_shunjian", "xuanyi_daozhi", "shuanggaoguang")
 # 按模板剪只有一种模式：每一格按模板写的条件挑段。另建白名单，不混进上面那个元组。
@@ -1124,7 +1160,9 @@ async def _run_export(export_id: int, part_file_path: str, segments: list[tuple[
             res = await db.execute(select(AdmakeExport).where(AdmakeExport.id == export_id))
             ex = res.scalar_one_or_none()
             if ex:
-                ex.status = "failed"; await db.commit()
+                ex.status = "failed"
+                ex.fail_reason = _说清失败(e)
+                await db.commit()
     finally:
         for p in clip_paths:
             try: os.remove(p)
@@ -1238,7 +1276,9 @@ async def _run_export_multi(
                     res = await db.execute(select(AdmakeExport).where(AdmakeExport.id == export_id))
                     ex = res.scalar_one_or_none()
                     if ex:
-                        ex.status = "failed"; await db.commit()
+                        ex.status = "failed"
+                        ex.fail_reason = _说清失败(e)
+                        await db.commit()
 
 
 # ── AI Analysis (2.0.0.10) ───────────────────────────────────────────────────
@@ -1468,6 +1508,34 @@ async def _delete_oss_us(oss_key: str):
     await loop.run_in_executor(None, _do_delete)
 
 
+async def _探一把通义key(key: str, host: str) -> None:
+    """用只读的 /models 端点试一下这把 key 在这条通道上能不能用。
+
+    通不过就在点「AI 分析」的那一秒报出来，不让用户等十分钟。网络不通只提示，
+    不拦——真跑起来的调用自己会重试。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=HAPPYHORSE_PRECHECK_TIMEOUT_SEC) as client:
+            resp = await client.get(
+                f"{host.rstrip('/')}/compatible-mode/v1/models",
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Accept-Encoding": "identity",
+                    "X-DashScope-DataInspection": '{"input":"disable","output":"disable"}',
+                },
+            )
+    except Exception as e:
+        log_failure("admake.precheck_qwen_ws", e)
+        raise HTTPException(400, f"连不上 Qwen 通道，请检查网络后重试：{str(e)[:120]}")
+    if resp.status_code in (401, 403):
+        raise HTTPException(
+            400,
+            "Qwen API Key 用不了。这条通道的 key 以 sk-ws- 开头，请确认设置里「Qwen API Key」"
+            "填的是它，改完重启应用再试")
+    if resp.status_code >= 500:
+        raise HTTPException(400, f"Qwen 通道异常（HTTP {resp.status_code}），请稍后重试")
+
+
 async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -> None:
     """AI 分析入口的密钥快速体检：缺配置/密钥无效必须在这里秒级报错。
     真正用到密钥的动作（OSS 上传、调大模型）发生在每个 Part 压缩完之后，
@@ -1514,11 +1582,14 @@ async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -
     if project_kind in _段库类型:
         # 段库这条路把视频 base64 内联在请求里直连白名单通道，不经美区 OSS——
         # OSS 要平台侧配环境变量，用户机器上是断的。在这里探 OSS 会让分析根本起不来。
-        from app.services.decompose.环境 import qwen_key, 拆解失败
+        from app.services.decompose.环境 import qwen_key, qwen_host, 拆解失败
         try:
-            qwen_key()      # 缺 key 时它自己抛，不是返回空
+            key = qwen_key()      # 缺 key 时它自己抛，不是返回空
         except 拆解失败 as e:
             raise HTTPException(400, str(e))
+        # key 填错的话，原来要等第一个 Part 压完、切完、发出去才报 401，中间十来分钟。
+        # 2026-09-17 业务机器就是这样：填的不是白名单通道的 key，八个 Part 全部失败才看见。
+        await _探一把通义key(key, qwen_host())
         return
 
     if ai_model.startswith("gemini"):
@@ -1680,11 +1751,38 @@ async def _analyze_one_part_gemini(part: AdmakePart, on_stage=None) -> dict:
             asyncio.create_task(_delete_oss_us(oss_key))
 
 
+async def _段库入库(拆好的: dict[int, str], 写锁: asyncio.Lock) -> dict[int, dict]:
+    """给已拆完的 Part 打剧情分、装配、写进段表。返回 {part_id: {"段": n, "剧情点": m}}。
+
+    权重按项目目录下所有已打完四维分的 structure.json 一起算，正在跑的 Part 不算进去。
+    一个 Part 刚拆完调一次，整批结束再调一次，后一次覆盖前一次。
+    """
+    from app.services.decompose.驱动 import 全项目打分, 工作目录
+    from app.services.decompose.入库 import 写段库
+    from app.database import AsyncSessionLocal
+    if not 拆好的:
+        return {}
+    根 = os.path.dirname(next(iter(拆好的.values())))
+    装好的 = await asyncio.get_running_loop().run_in_executor(None, 全项目打分, 根)
+    出: dict[int, dict] = {}
+    async with 写锁:
+        async with AsyncSessionLocal() as _db:
+            for _pid, _mp4 in 拆好的.items():
+                段们 = 装好的.get(工作目录(_mp4))
+                if 段们 is None:
+                    continue
+                出[_pid] = await 写段库(_db, _pid, {"段": 段们})
+    return 出
+
+
 async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = "gemini-3.5-flash",
                           project_title: str = "", project_kind: str = "marks"):
     from app.database import AsyncSessionLocal
     _ai_tasks[project_id] = {
         "status": "processing", "progress": 0, "total": len(part_ids), "error": "",
+        # 开始时间给界面算「已跑多久」。界面自己记的那个时间点，刷新一次就没了，
+        # 于是进度条从头开始爬，甚至停在 0。
+        "started_ts": _time.time(),
         # 进度展示：active_parts=[{name,stage}]（流水线并发，可能同时多个在处理），eta_seconds=预估剩余
         "active_parts": [], "eta_seconds": None,
         # 已完成的 Part 各自挑出了几个高光/钩子、用了多久。这几个数原来只写进日志，
@@ -1696,6 +1794,10 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
     errors: list[str] = []
     part_durations: list[float] = []      # 已完成 Part 的耗时，用于估算剩余时间
     active: dict[int, dict] = {}          # part_id -> {name, stage}，进行中的 Part
+    # 阶段回调来自拆解的工作线程，而收尾 pop 和刷新在事件循环线程，两边同时动这个
+    # 字典会撞出 RuntimeError: dictionary changed size during iteration，
+    # 结果是一个跑了几分钟的 Part 被判失败。
+    active_lock = threading.Lock()
     拆好的: dict[int, str] = {}           # part_id -> Part 视频绝对路径，段库这条线最后统一打分用
     done_counter = {"n": 0}
     db_write_lock = asyncio.Lock()        # SQLite 单写者：并发保存标记时避免 database is locked
@@ -1705,9 +1807,11 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
         _ai_tasks[project_id]["progress"] = done_counter["n"]
         # stage_since_ts=阶段开始的 epoch 时间：状态接口读取时实时算"该阶段已持续多久"，
         # 让用户/排查者看出卡在哪一步、卡了多久（阶段本身可能几分钟不触发刷新）
+        with active_lock:
+            快照 = list(active.values())
         _ai_tasks[project_id]["active_parts"] = [
             {"name": v["name"], "stage": v["stage"], "stage_since_ts": v["stage_since_ts"]}
-            for v in active.values()
+            for v in 快照
         ]
         if not remaining:
             _ai_tasks[project_id]["eta_seconds"] = 0
@@ -1764,6 +1868,8 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                     _p = _r.scalar_one_or_none()
                     if _p:
                         _p.ai_status = st
+                        if st == "done":
+                            _p.ai_done_at = datetime.now(timezone.utc)
                         if err is not None:
                             _p.ai_error = err[:500]
                         elif st != "failed":
@@ -1780,8 +1886,12 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 if not part or not part.file_path:
                     lines.append(f"[Part {i+1}/{len(part_ids)}] id={part_id} — 跳过（无文件）\n\n")
                     return
-                active[part_id] = {"name": part.name or f"Part{i + 1}", "stage": "compressing",
-                                   "stage_since_ts": _time.time()}
+                # 段库这条管线不压缩也不上传，第一步是认字幕。写死 compressing
+                # 会让进度弹窗先显示几秒「压缩视频」，跟实际做的事对不上。
+                起步 = "subtitle" if project_kind in _段库类型 else "compressing"
+                with active_lock:
+                    active[part_id] = {"name": part.name or f"Part{i + 1}", "stage": 起步,
+                                       "stage_since_ts": _time.time()}
                 _refresh_progress()
                 await _set_ai_status("analyzing")
 
@@ -1791,9 +1901,12 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                     # 失败日志要能说清挂在哪一步。只写进 active 的话，Part 一出错
                     # 就从 active 里摘掉了，事后翻日志只看得到一句异常。
                     nonlocal_步[0] = stage
-                    if part_id in active:
-                        active[part_id]["stage"] = stage
-                        active[part_id]["stage_since_ts"] = _time.time()
+                    with active_lock:
+                        有 = part_id in active
+                        if 有:
+                            active[part_id]["stage"] = stage
+                            active[part_id]["stage_since_ts"] = _time.time()
+                    if 有:
                         _refresh_progress()
 
                 lines.append(
@@ -1832,11 +1945,31 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 comp_skip_bytes = result.get("comp_skip_bytes", 0)
 
                 if project_kind in _段库类型:
-                    # 这里先不写库。剧情分和尺度分的权重要拿整个项目的段一起算，
-                    # 装配成界面用的字段名也在那一步，所以等所有 Part 拆完再统一做。
                     拆好的[part_id] = (part.file_path if os.path.isabs(part.file_path)
                                       else os.path.join(settings.UPLOAD_DIR, part.file_path))
+                    # 拆完一个就入库一个，界面上这个 Part 一变「已完成」段就在。
+                    # 剧情分的权重按整库稀缺度算，这时只按已拆完的 Part 算一版，
+                    # 整批跑完再按全项目重算一次覆盖掉。
+                    try:
+                        计 = await _段库入库(dict(拆好的), db_write_lock)
+                        lines.append(f"入库       : part_id={part_id} 段 {计.get(part_id, {}).get('段')} "
+                                     f"剧情点 {计.get(part_id, {}).get('剧情点')}（先按已拆完的 {len(拆好的)} 个 Part 算分）\n")
+                    except Exception as _e:
+                        # 单个 Part 先入库失败不算这个 Part 失败，整批结束还会再写一次
+                        lines.append(f"入库       : part_id={part_id} 这一次没写进去（{str(_e)[:120]}），等整批结束再写\n")
+                        log_failure("admake.ai_analyze.assemble_one", _e, project_id=project_id, part_id=part_id)
                     段们 = parsed.get("段") or []
+                    账 = parsed.get("_token账") or {}
+                    if 账.get("调用次数"):
+                        费 = 账.get("费用美元")
+                        lines.append(
+                            f"Tokens     : 输入 {账['输入']:,}  输出 {账['输出']:,}  思考 {账['思考']:,}"
+                            f"  共 {账['调用次数']} 次调用  {账.get('模型')}"
+                            + (f"  约 ${费:.4f}" if 费 is not None else "") + "\n")
+                        log_event("admake.ai_analyze.tokens", part_id=part_id,
+                                  calls=账["调用次数"], input_tokens=账["输入"],
+                                  output_tokens=账["输出"], reasoning_tokens=账["思考"],
+                                  usd=round(费, 4) if 费 is not None else None)
                     highlights = [None] * len(段们)        # 下面的日志和计数按条数读，借用它
                     hooks      = [None] * sum(len(x.get("剧情点") or []) for x in 段们)
                 else:
@@ -1908,7 +2041,8 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                             elapsed_ms=int(elapsed * 1000))
                 await _set_ai_status("failed", last_error)
             finally:
-                active.pop(part_id, None)
+                with active_lock:
+                    active.pop(part_id, None)
                 done_counter["n"] += 1
                 _refresh_progress()
                 _wlog("".join(lines))
@@ -1930,19 +2064,9 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
     # 权重按取值在整库里的稀缺度定，一个 Part 才几段，必须等整个项目拆完一起算。
     if project_kind in _段库类型 and 拆好的:
         try:
-            from app.services.decompose.驱动 import 全项目打分, 工作目录
-            from app.services.decompose.入库 import 写段库
-            根 = os.path.dirname(next(iter(拆好的.values())))
-            装好的 = await asyncio.get_running_loop().run_in_executor(
-                None, 全项目打分, 根)
-            async with db_write_lock:
-                async with AsyncSessionLocal() as _db:
-                    for _pid, _mp4 in 拆好的.items():
-                        段们 = 装好的.get(工作目录(_mp4))
-                        if 段们 is None:
-                            continue
-                        计 = await 写段库(_db, _pid, {"段": 段们})
-                        _wlog(f"入库       : part_id={_pid} 段 {计['段']} 剧情点 {计['剧情点']}\n")
+            计们 = await _段库入库(拆好的, db_write_lock)
+            for _pid, 计 in 计们.items():
+                _wlog(f"入库       : part_id={_pid} 段 {计['段']} 剧情点 {计['剧情点']}（整批按全项目重算）\n")
             log_event("admake.ai_analyze.assemble", project_id=project_id,
                       n_parts=len(拆好的))
         except Exception as e:
@@ -1987,43 +2111,87 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
 
 # ── 任务中心：该用户所有进行中的任务（导出/AI 分析/Part 合成），完成即从列表消失 ──
 
+async def _running_rows(db: AsyncSession, user: User) -> list[AdmakeTaskOut]:
+    rows: list[AdmakeTaskOut] = []
+    # 导出中
+    res = await db.execute(
+        select(AdmakeProject.id, AdmakeProject.title, AdmakeProject.project_kind, func.count(AdmakeExport.id))
+        .join(AdmakePart, AdmakePart.project_id == AdmakeProject.id)
+        .join(AdmakeExport, AdmakeExport.part_id == AdmakePart.id)
+        .where(AdmakeProject.user_id == user.id,
+               AdmakeExport.status.in_(("pending", "processing")))
+        .group_by(AdmakeProject.id, AdmakeProject.title, AdmakeProject.project_kind)
+    )
+    for pid, title, kind, n in res.all():
+        rows.append(AdmakeTaskOut(type="export", project_id=pid, title=title, count=n, project_kind=kind or "marks"))
+    # AI 分析中
+    res = await db.execute(
+        select(AdmakeProject.id, AdmakeProject.title, AdmakeProject.project_kind, func.count(AdmakePart.id))
+        .join(AdmakePart, AdmakePart.project_id == AdmakeProject.id)
+        .where(AdmakeProject.user_id == user.id, AdmakePart.ai_status == "analyzing")
+        .group_by(AdmakeProject.id, AdmakeProject.title, AdmakeProject.project_kind)
+    )
+    for pid, title, kind, n in res.all():
+        rows.append(AdmakeTaskOut(type="ai", project_id=pid, title=title, count=n, project_kind=kind or "marks"))
+    # Part 合成中
+    res = await db.execute(
+        select(AdmakeProject.id, AdmakeProject.title, AdmakeProject.project_kind, func.count(AdmakePart.id))
+        .join(AdmakePart, AdmakePart.project_id == AdmakeProject.id)
+        .where(AdmakeProject.user_id == user.id,
+               AdmakePart.status.in_(("pending", "processing")))
+        .group_by(AdmakeProject.id, AdmakeProject.title, AdmakeProject.project_kind)
+    )
+    for pid, title, kind, n in res.all():
+        rows.append(AdmakeTaskOut(type="parts", project_id=pid, title=title, count=n, project_kind=kind or "marks"))
+    return rows
+
+
 @router.get("/tasks", response_model=list[AdmakeTaskOut])
 async def list_running_tasks(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    rows: list[AdmakeTaskOut] = []
-    # 导出中
-    res = await db.execute(
-        select(AdmakeProject.id, AdmakeProject.title, func.count(AdmakeExport.id))
-        .join(AdmakePart, AdmakePart.project_id == AdmakeProject.id)
-        .join(AdmakeExport, AdmakeExport.part_id == AdmakePart.id)
-        .where(AdmakeProject.user_id == user.id,
-               AdmakeExport.status.in_(("pending", "processing")))
-        .group_by(AdmakeProject.id, AdmakeProject.title)
+    return await _running_rows(db, user)
+
+
+@router.get("/home-summary", response_model=AdmakeHomeSummaryOut)
+async def home_summary(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """首页那块数字。「今天」按本机时区算，存库的时间是 UTC，换过去比。
+    Part 表没有完成时间，「今天分析完」按它写进段库／标记表的时间算：
+    段库类项目看 admake_segments，1.0 项目看 admake_marks。"""
+    本地今天零点 = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    起 = 本地今天零点.astimezone(timezone.utc)
+
+    rows = await _running_rows(db, user)
+    rows.sort(key=lambda r: {"ai": 0, "export": 1, "parts": 2}[r.type])
+
+    我的Part = (select(AdmakePart.id)
+               .join(AdmakeProject, AdmakeProject.id == AdmakePart.project_id)
+               .where(AdmakeProject.user_id == user.id))
+    # 按 Part 自己记的完成时间数，两条业务线通用。老库里这一列是空的，
+    # 升级之前分析过的 Part 不计入今天，正是想要的。
+    完成的 = await db.execute(
+        select(func.count(AdmakePart.id))
+        .where(AdmakePart.id.in_(我的Part), AdmakePart.ai_done_at >= 起))
+    # 导出成功写的是 ready，不是 done。写成 done 的话这个数永远是 0
+    出片 = await db.execute(
+        select(func.count(AdmakeExport.id))
+        .where(AdmakeExport.part_id.in_(我的Part), AdmakeExport.status == "ready",
+               AdmakeExport.created_at >= 起))
+
+    progress = total = None
+    if rows and rows[0].type == "ai":
+        t = _ai_tasks.get(rows[0].project_id) or {}
+        progress, total = t.get("progress"), t.get("total")
+    return AdmakeHomeSummaryOut(
+        running=len(rows),
+        parts_done_today=完成的.scalar() or 0,
+        exports_today=出片.scalar() or 0,
+        running_items=rows[:3], progress=progress, total=total,
     )
-    for pid, title, n in res.all():
-        rows.append(AdmakeTaskOut(type="export", project_id=pid, title=title, count=n))
-    # AI 分析中
-    res = await db.execute(
-        select(AdmakeProject.id, AdmakeProject.title, func.count(AdmakePart.id))
-        .join(AdmakePart, AdmakePart.project_id == AdmakeProject.id)
-        .where(AdmakeProject.user_id == user.id, AdmakePart.ai_status == "analyzing")
-        .group_by(AdmakeProject.id, AdmakeProject.title)
-    )
-    for pid, title, n in res.all():
-        rows.append(AdmakeTaskOut(type="ai", project_id=pid, title=title, count=n))
-    # Part 合成中
-    res = await db.execute(
-        select(AdmakeProject.id, AdmakeProject.title, func.count(AdmakePart.id))
-        .join(AdmakePart, AdmakePart.project_id == AdmakeProject.id)
-        .where(AdmakeProject.user_id == user.id,
-               AdmakePart.status.in_(("pending", "processing")))
-        .group_by(AdmakeProject.id, AdmakeProject.title)
-    )
-    for pid, title, n in res.all():
-        rows.append(AdmakeTaskOut(type="parts", project_id=pid, title=title, count=n))
-    return rows
 
 
 # ── Projects CRUD ─────────────────────────────────────────────────────────────
@@ -2187,18 +2355,29 @@ async def delete_project(
     if _ai_tasks.get(pid, {}).get("status") == "processing":
         raise HTTPException(409, f"「{p.title}」有 AI 分析任务进行中，等它完成后再删除")
 
-    proj_slug = f"project_{p.id}_{_slug(p.title)}"
     # Explicit bulk deletes — avoids async lazy-load cascade (MissingGreenlet)
     if part_ids:
+        # 段和剧情点也要清。SQLite 默认不认 ondelete=CASCADE，而它的主键会重用
+        # 已删除的 id：留下的段会被下一个建出来的 Part 认领，界面上就看到别的
+        # 项目的段，「只分析没分析过的」还会据此跳过这些 Part。
+        旧段 = [r[0] for r in (await db.execute(
+            select(AdmakeSegment.id).where(AdmakeSegment.part_id.in_(part_ids)))).all()]
+        if 旧段:
+            await db.execute(delete(AdmakePlotPoint).where(AdmakePlotPoint.segment_id.in_(旧段)))
+            await db.execute(delete(AdmakeSegment).where(AdmakeSegment.part_id.in_(part_ids)))
         await db.execute(delete(AdmakeMark).where(AdmakeMark.part_id.in_(part_ids)))
         await db.execute(delete(AdmakeExport).where(AdmakeExport.part_id.in_(part_ids)))
         await db.execute(delete(AdmakePart).where(AdmakePart.project_id == pid))
     await db.execute(delete(AdmakeSource).where(AdmakeSource.project_id == pid))
     await db.execute(delete(AdmakeProject).where(AdmakeProject.id == pid))
+    # 目录按项目 id 匹配，不按当前标题拼。项目改过名的话，文件还在改名前那个
+    # 目录里，按新标题去删是删不着的，几十 G 会一直留在盘上。
+    import glob as _glob
     for type_dir in ("Source", "Parts", "Export"):
-        d = os.path.join(settings.UPLOAD_DIR, "AdMake", type_dir, proj_slug)
-        if os.path.isdir(d):
-            shutil.rmtree(d, ignore_errors=True)
+        for d in _glob.glob(os.path.join(settings.UPLOAD_DIR, "AdMake", type_dir,
+                                         f"project_{p.id}_*")):
+            if os.path.isdir(d):
+                shutil.rmtree(d, ignore_errors=True)
 
 
 # ── Sources ───────────────────────────────────────────────────────────────────
@@ -2226,9 +2405,19 @@ async def upload_sources(
         safe_name = re.sub(r'[^\w一-鿿\-\.]', '_', orig_name)[:100]
         save_name = f"{order:02d}_{safe_name}"
         save_path = os.path.join(sources_dir, save_name)
-        content = await f.read()
+        # 分块写。原来一次 read() 把整条片子读进内存，传一条 2 G 的源片，
+        # 后端内存就涨 2 G，同时传几条直接把机器压垮。
+        大小 = 0
         with open(save_path, "wb") as fp:
-            fp.write(content)
+            while True:
+                块 = await f.read(4 * 1024 * 1024)
+                if not 块:
+                    break
+                fp.write(块)
+                大小 += len(块)
+        if 大小 == 0:
+            os.remove(save_path)
+            raise HTTPException(400, f"「{orig_name}」是个空文件，换一条再传")
         src = AdmakeSource(
             project_id=pid,
             original_filename=orig_name,
@@ -2246,6 +2435,13 @@ async def upload_sources(
         from app.database import AsyncSessionLocal
         for src in created:
             try:
+                # 前端上传完立刻发 build-parts，那边会并行把没探过的源都探一遍。
+                # 轮到这里时先看一眼，探过的不再抽 120 帧重来——原来两边各测一遍，
+                # 38 集出 76 条检测记录。
+                async with AsyncSessionLocal() as db0:
+                    r0 = await db0.execute(select(AdmakeSource.duration_sec).where(AdmakeSource.id == src.id))
+                    if (r0.scalar_one_or_none() or 0) > 0:
+                        continue
                 abs_p = os.path.join(settings.UPLOAD_DIR, src.file_path)
                 info = await vid_svc.get_video_info(abs_p)
                 # 片头/片尾转场段检测（定格/静图缓拉）：当前只标注不裁剪，供人工核对准确率
@@ -2292,6 +2488,15 @@ async def delete_source(
     src = res.scalar_one_or_none()
     if not src:
         raise HTTPException(404, "源文件不存在")
+    # 爆款素材那条线的 Part 直接复用源文件，不另存一份。源文件删掉而 Part 还在，
+    # 界面上那一格照常显示，点播放和导出都拿不到文件。
+    用它的 = (await db.execute(
+        select(func.count(AdmakePart.id))
+        .where(AdmakePart.project_id == pid,
+               AdmakePart.file_path == (src.file_path or "")))).scalar_one()
+    if 用它的:
+        raise HTTPException(409, "这条素材已经合成了 Part，删它会让 Part 播不出来。"
+                                 "要换素材就整条项目删掉重建。")
     abs_path = os.path.join(settings.UPLOAD_DIR, src.file_path) if src.file_path else None
     await db.delete(src)
     await db.flush()
@@ -2386,6 +2591,32 @@ async def _爆款素材建格(pid: int, p: AdmakeProject, db: AsyncSession) -> l
     return [AdmakePartOut.model_validate(pt) for pt in parts]
 
 
+async def _没有任务在跑(pid: int, 标题: str, db: AsyncSession):
+    """有任务在跑就别动 Part。
+
+    重新分 Part 会把旧 Part 连同它的段一起删掉，再往同一个文件名上写新视频。
+    分析或导出正读着那个文件，读到的就是写了一半的内容；分析完写段时 Part 已经
+    不在了，段挂到一个不存在的 id 上，界面显示分析成功却一个段都看不到。
+    """
+    part_ids = [r[0] for r in (await db.execute(
+        select(AdmakePart.id).where(AdmakePart.project_id == pid))).all()]
+    检查 = [
+        ("导出", select(func.count(AdmakeExport.id)).where(
+            AdmakeExport.status.in_(("pending", "processing")),
+            or_(AdmakeExport.project_id == pid,
+                AdmakeExport.part_id.in_(part_ids) if part_ids else false()))),
+        ("Part 合成", select(func.count(AdmakePart.id)).where(
+            AdmakePart.project_id == pid, AdmakePart.status.in_(("pending", "processing")))),
+        ("AI 分析", select(func.count(AdmakePart.id)).where(
+            AdmakePart.project_id == pid, AdmakePart.ai_status == "analyzing")),
+    ]
+    for 名, q in 检查:
+        if (await db.execute(q)).scalar_one():
+            raise HTTPException(409, f"「{标题}」有{名}任务进行中，等它完成后再重新分 Part")
+    if _ai_tasks.get(pid, {}).get("status") == "processing":
+        raise HTTPException(409, f"「{标题}」有 AI 分析任务进行中，等它完成后再重新分 Part")
+
+
 @router.post("/projects/{pid}/build-parts", response_model=list[AdmakePartOut])
 async def build_parts(
     pid: int,
@@ -2403,6 +2634,7 @@ async def build_parts(
         raise HTTPException(404, "项目不存在或无权限")
     if not p.sources:
         raise HTTPException(400, "请先上传源视频")
+    await _没有任务在跑(pid, p.title, db)
 
     kind = _project_kind(p)
 
@@ -2416,28 +2648,38 @@ async def build_parts(
     # 稳定输给这个请求——所以这里读到的 tail_trim 必然是 0，片尾定格板一段都截不掉。
     # 探测没跑完就自己补一遍，包括转场检测，不再指望后台任务先到。
     needs_probe = [s for s in p.sources if s.duration_sec <= 0]
-    for src in needs_probe:
-        try:
+    # 每条源探测要抽 120 帧、约 0.7 秒，38 集串着跑界面要等 27 秒。源之间互不依赖，
+    # 6 路并行，ffmpeg 在多核机器上吃得下。
+    探测并发 = asyncio.Semaphore(6)
+
+    async def _探一条(src):
+        async with 探测并发:
             abs_p = os.path.join(settings.UPLOAD_DIR, src.file_path)
-            info = await vid_svc.get_video_info(abs_p)
-            src.duration_sec = info["duration"]
-            src.width, src.height, src.fps = info["width"], info["height"], info["fps"]
+            try:
+                info = await vid_svc.get_video_info(abs_p)
+            except Exception as e:
+                log_failure("admake.probe_duration", e, source_id=src.id, file_path=src.file_path)
+                raise HTTPException(400, f"素材时长探测失败，文件可能已损坏：{src.file_path}")
+            head_t = tail_t = None
             # 爆款素材是一条投出去过的完整广告，片头片尾都算内容，一帧不裁，
             # 也就不用再抽 120 帧去找转场。
             if kind != "hot":
                 try:
                     head_t, tail_t = await asyncio.to_thread(
                         detect_transitions, abs_p, info["duration"])
-                    src.head_trim, src.tail_trim = head_t, tail_t
-                    log_event("admake.transition_detected", source_id=src.id,
-                              file=src.original_filename, head_trim=head_t, tail_trim=tail_t,
-                              detected=bool(head_t or tail_t), where="build_parts")
                 except Exception as e2:
                     # 检测失败只是不裁片尾，不该拖垮建 Part
                     log_failure("admake.transition_detect", e2, source_id=src.id)
-        except Exception as e:
-            log_failure("admake.probe_duration", e, source_id=src.id, file_path=src.file_path)
-            raise HTTPException(400, f"素材时长探测失败，文件可能已损坏：{src.file_path}")
+            return src, info, head_t, tail_t
+
+    for src, info, head_t, tail_t in await asyncio.gather(*[_探一条(s) for s in needs_probe]):
+        src.duration_sec = info["duration"]
+        src.width, src.height, src.fps = info["width"], info["height"], info["fps"]
+        if head_t is not None:
+            src.head_trim, src.tail_trim = head_t, tail_t
+            log_event("admake.transition_detected", source_id=src.id,
+                      file=src.original_filename, head_trim=head_t, tail_trim=tail_t,
+                      detected=bool(head_t or tail_t), where="build_parts")
     if needs_probe:
         await db.flush()
 
@@ -2883,27 +3125,42 @@ async def _种预置模板(db: AsyncSession, user_id: int) -> None:
     不预置的话模板库是空的，按模板剪没有任何东西可选，等于走不通；
     而写一个模板要填三格条件，不该是用户拿到工具的第一件事。
     """
-    有 = (await db.execute(select(func.count(AdmakeCutTemplate.id))
-                          .where(AdmakeCutTemplate.user_id == user_id))).scalar()
-    if 有:
-        return
     d = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
     if getattr(sys, "frozen", False):
         d = os.path.join(sys._MEIPASS, "app", "data")
-    for fn in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+    if not os.path.isdir(d):
+        return
+    # 原来只在「一条模板都没有」时灌一次。随包模板改了条件（比如把尺度档从上限
+    # 改成目标档），升级之后老用户手里还是旧的那份，界面上看不出任何差别，
+    # 挑段却按旧口径走。改成每次都把随包这几个对齐一遍：内容不同就更新，
+    # 缺的补上。用户自己存的模板（builtin=0）一个字都不碰。
+    现有 = {t.name: t for t in (await db.execute(
+        select(AdmakeCutTemplate).where(AdmakeCutTemplate.user_id == user_id,
+                                        AdmakeCutTemplate.builtin.is_(True)))).scalars().all()}
+    改了 = False
+    for fn in sorted(os.listdir(d)):
         if not fn.endswith(".json"):
             continue
         try:
             t = json.load(open(os.path.join(d, fn), encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        db.add(AdmakeCutTemplate(
-            user_id=user_id, name=t.get("模板名") or fn[:-5],
-            source=t.get("来源") or "爆款模板", source_note=t.get("来源说明") or "",
-            kind=t.get("种类") or "整条",
-            config=json.dumps(t.get("格") or [], ensure_ascii=False),
-            builtin=True))
-    await db.commit()
+        名 = t.get("模板名") or fn[:-5]
+        格 = json.dumps(t.get("格") or [], ensure_ascii=False)
+        旧 = 现有.get(名)
+        if 旧 is None:
+            db.add(AdmakeCutTemplate(
+                user_id=user_id, name=名,
+                source=t.get("来源") or "爆款模板", source_note=t.get("来源说明") or "",
+                kind=t.get("种类") or "整条", config=格, builtin=True))
+            改了 = True
+        elif 旧.config != 格:
+            旧.config = 格
+            旧.source_note = t.get("来源说明") or ""
+            旧.kind = t.get("种类") or "整条"
+            改了 = True
+    if 改了:
+        await db.commit()
 
 
 @router.get("/cut-templates", response_model=list[AdmakeCutTemplateOut])
@@ -2914,7 +3171,9 @@ async def 列剪辑模板(
     await _种预置模板(db, user.id)
     res = await db.execute(
         select(AdmakeCutTemplate).where(AdmakeCutTemplate.user_id == user.id)
-        .order_by(AdmakeCutTemplate.builtin.desc(), AdmakeCutTemplate.created_at.desc()))
+        # 自己存的排前面，最新存的在最上；随包的预设模板沉到底下。
+        # 用得最多的是刚从爆款拆出来的那个，它该在第一眼能看到的位置。
+        .order_by(AdmakeCutTemplate.builtin.asc(), AdmakeCutTemplate.created_at.desc()))
     return [_模板出参(t) for t in res.scalars().all()]
 
 
@@ -3027,14 +3286,28 @@ async def 段版预检(
     await _get_project(pid, user, db)
     t, 格 = await _取剪辑模板(cut_template_id, user, db)
     ids = [int(x) for x in part_ids.split(",") if x.strip().isdigit()] if part_ids else None
-    库, _ = await _段库(pid, ids, db)
+    库, parts = await _段库(pid, ids, db)
     if not 库:
         return {"模板": t.name, "拦住了吗": True, "每格": [],
                 "拦住的原因": "这个项目还没有拆出段，先跑一次 AI 分析。", "推荐条数": 0}
+    缺 = _片源都在吗(parts)
+    if 缺:
+        名 = "、".join(p.name or f"Part{p.id}" for p in 缺[:3])
+        更多 = f" 等 {len(缺)} 个" if len(缺) > 3 else ""
+        return {"模板": t.name, "拦住了吗": True, "每格": [], "推荐条数": 0,
+                "拦住的原因": f"{名}{更多}的视频文件找不到，导出会失败。"
+                          f"回项目页重建这些 Part，或者换别的 Part 再导。"}
     # 目标时长指成片总长，成片模板的前后贴片也占在里面，选段要用扣掉贴片的长度
     贴 = await _template_sticker_duration(template_id, db)
     d = await asyncio.to_thread(取段.算匹配, 库, 格, max(target_duration - 贴, _MIN_BODY_SEC), count)
     d["模板"] = t.name
+    # 挑段用的是扣掉成片模板前后贴片之后的正片长度，但界面上那个「目标」要跟用户
+    # 自己填的数对上。原来把扣完的数报回去，用户填 6 分钟、面板写「目标 5 分 30 秒」，
+    # 会以为自己填错了。预计成片长度也要把贴片加回来。
+    d["目标时长"] = round(target_duration, 1)
+    d["贴片时长"] = round(贴, 1)
+    if d.get("预计成片时长") is not None:
+        d["预计成片时长"] = round(d["预计成片时长"] + 贴, 1)
     return d
 
 
@@ -3044,6 +3317,10 @@ async def _段版计划(pid: int, body: AdmakeExportRequest, user: User, db: Asy
     库, parts = await _段库(pid, body.part_ids, db)
     if not 库:
         raise HTTPException(400, "这个项目还没有拆出段，先跑一次 AI 分析")
+    缺 = _片源都在吗(parts)
+    if 缺:
+        名 = "、".join(p.name or f"Part{p.id}" for p in 缺[:3])
+        raise HTTPException(400, f"{名} 的视频文件找不到，先回项目页重建这些 Part")
     目标 = max(body.target_duration - 贴片, _MIN_BODY_SEC)
     预 = await asyncio.to_thread(取段.算匹配, 库, 格, 目标, body.count)
     if 预.get("拦住了吗"):

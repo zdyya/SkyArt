@@ -135,22 +135,6 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 
 .home-hero { text-align: center; margin-bottom: 48px; }
 
-/* 四张卡压矮：两行加标题要在 1280×800 的屏上一屏放下，
-   原来 346px 高的卡两行就顶到 800 以外了。主要减在预设图上，160 压到 108。 */
-.home-content{padding:24px 28px 40px;}
-.home-hero{margin-bottom:26px;}
-.home-hero h1{font-size:26px;}
-.tools-grid{max-width:820px;gap:18px;}
-.tool-card-banner{height:108px;}
-.tool-card-banner .banner-icon{transform:scale(.78);}
-.tool-card-body{padding:0 18px;gap:6px;}
-.tool-card-title{font-size:17px;}
-.tool-card-desc{font-size:12.5px;line-height:1.65;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-.tool-card-footer{padding:14px 18px 18px;}
-.feature-chip{font-size:10.5px;padding:2px 7px;}
-.tool-enter-btn{padding:6px 15px;font-size:12.5px;}
-.lock-badge{font-size:10px;padding:2px 9px;top:10px;right:10px;}
 .home-hero h1 { font-size: 32px; font-weight: 700; color: var(--text); }
 .home-hero h1 em { font-style: normal; color: var(--accent); }
 .home-hero p { margin-top: 12px; font-size: 15px; color: var(--text2); }
@@ -277,6 +261,56 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
   background: rgba(0,0,0,0.4); color: #fff; font-size: 11px; font-weight: 600;
   padding: 3px 10px; border-radius: 999px; backdrop-filter: blur(4px);
 }
+
+/* ── 首页排版：左品牌与今日数字，右工具清单 ────────────── */
+.home-content{padding:32px 40px 56px;}
+.ed{display:grid;grid-template-columns:minmax(300px,380px) minmax(0,620px);gap:56px;width:100%;max-width:1100px;align-items:center;}
+.ed-left{display:flex;flex-direction:column;gap:28px;}
+.brand-k{font-size:12px;font-weight:700;letter-spacing:.18em;color:var(--accent2);text-transform:uppercase;}
+.brand h1{font-size:40px;line-height:1.15;font-weight:800;letter-spacing:-.01em;color:var(--text);margin-top:12px;}
+.brand p{margin-top:14px;font-size:14px;line-height:1.75;color:var(--text2);max-width:320px;}
+/* 今天的数字：打开首页取一次，不轮询。首页不是等任务的地方 */
+.status{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:12px;
+  background:rgba(255,255,255,.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 0 0 1px rgba(24,28,36,calc(.07*var(--sh)));
+  width:max-content;min-width:260px;}
+.status[hidden]{display:none;}
+.st-h{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--text3);}
+.st-nums{display:flex;gap:22px;}
+.st-n{display:flex;flex-direction:column;gap:2px;}
+.st-n b{font-size:24px;font-weight:700;line-height:1.1;color:var(--text);font-variant-numeric:tabular-nums;}
+.st-n b.on{color:var(--accent2);}
+.st-n span{font-size:11.5px;color:var(--text2);}
+.st-run{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);padding-top:8px;
+  border-top:1px solid rgba(24,28,36,.06);cursor:pointer;max-width:300px;}
+.st-run[hidden]{display:none;}
+.st-run:hover{color:var(--text);}
+.st-run .sc-dot{box-shadow:none;background:var(--accent);animation:sc-pulse 1.6s ease-in-out infinite;}
+.st-run span.t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* 工具清单：两档高度，大行带说明和标签，矮行只有一句话 */
+.ed-right{display:flex;flex-direction:column;gap:12px;}
+.rc{display:flex;align-items:center;gap:18px;padding:16px 20px 16px 16px;border-radius:14px;cursor:pointer;
+  background:rgba(255,255,255,var(--glass-a));backdrop-filter:saturate(150%);}
+.rc.big{min-height:118px;}
+.rc.small{min-height:76px;padding:12px 20px 12px 16px;}
+.rc.locked{cursor:not-allowed;opacity:.6;}
+.rc-art{width:132px;height:86px;flex-shrink:0;display:flex;align-items:center;justify-content:center;}
+.rc-art .banner-icon{line-height:0;}
+.rc.big .rc-art .banner-icon{transform:scale(.68);}
+.rc.small .rc-art{width:104px;height:56px;}
+.rc.small .rc-art .banner-icon{transform:scale(.44);}
+.rc-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+.rc-title{font-size:17px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:10px;}
+.rc.small .rc-title{font-size:14.5px;}
+.rc-desc{font-size:12.5px;line-height:1.6;color:var(--text2);}
+.rc.small .rc-desc{font-size:12px;}
+.rc-chips{display:flex;gap:6px;margin-top:3px;}
+.rc.small .rc-chips{display:none;}
+.rc-go{flex-shrink:0;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;background:var(--btn);
+  box-shadow:0 1px 2px rgba(24,28,36,calc(.22*var(--sh))),0 4px 12px rgba(24,28,36,calc(.18*var(--sh)));}
+.rc.small .rc-go{width:30px;height:30px;background:var(--bg4);color:var(--text2);box-shadow:none;}
+.rc.locked .rc-go{background:none;box-shadow:none;width:auto;}
+.rc .lock-badge{position:static;}
+@media (max-width:1080px){ .ed{grid-template-columns:1fr;gap:28px;max-width:640px;} .brand h1{font-size:32px;} }
 
 /* ── Toast ───────────────────────────────────────────────── */
 /* 通知在顶栏正中 */
@@ -469,116 +503,66 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 
 <!-- ── Home content ─────────────────────────────────────── -->
 <div class="home-content">
-  <div class="home-hero">
-    <h1>欢迎使用 <em>SkyArt</em> 天工</h1>
-  </div>
-
-  <div class="tools-grid">
+  <div class="ed">
+    <div class="ed-left">
+      <div class="brand">
+        <div class="brand-k">SkyArt 天工</div>
+        <h1>短剧素材<br>分析与制作</h1>
+        <p>基于爆款广告的结构模板，为短剧批量制作投放素材。</p>
+      </div>
+      <!-- 今天的数字。取一次就完，正在跑的那条点了直接进项目 -->
+      <div class="status" id="today-box" hidden>
+        <div class="st-h">今天</div>
+        <div class="st-nums">
+          <div class="st-n"><b class="on" id="t-run">0</b><span>在跑</span></div>
+          <div class="st-n"><b id="t-done">0</b><span>分析完（Part）</span></div>
+          <div class="st-n"><b id="t-exp">0</b><span>出片（条）</span></div>
+        </div>
+        <div class="st-run" id="t-line" hidden><span class="sc-dot"></span><span class="t" id="t-line-text"></span></div>
+      </div>
+    </div>
+    <div class="ed-right">
     <!-- 爆款素材分析 -->
-    <div class="tool-card hot ll-raise" id="card-hot" onclick="enterHotAnalysis()">
-      <div class="tool-card-banner">
-        <div class="banner-icon"><div class="segs">
-          <div class="seg"></div>
-          <div class="seg on"><i class="pk"></i></div>
-          <div class="seg"></div>
-          <div class="seg mid"></div>
-          <div class="seg"></div>
-        </div></div>
+    <div class="rc big hot ll-raise" id="card-hot" onclick="enterHotAnalysis()">
+      <div class="rc-art"><div class="banner-icon"><div class="segs"><div class="seg"></div><div class="seg on"><i class="pk"></i></div><div class="seg"></div><div class="seg mid"></div><div class="seg"></div></div></div></div>
+      <div class="rc-body">
+        <div class="rc-title">爆款素材分析</div>
+        <div class="rc-desc">把已投放的爆款素材拆成段，逐段标出剧情内容和结构，存成可以套用的模板。</div>
+        <div class="rc-chips"><span class="feature-chip">拆段</span><span class="feature-chip">字段标注</span><span class="feature-chip">模板库</span></div>
       </div>
-      <div class="tool-card-body">
-        <div class="tool-card-title">爆款素材分析</div>
-        <div class="tool-card-desc">
-          把已投放的爆款素材拆成段，逐段标出剧情内容和剧情结构，存成可以套用的模板。
-        </div>
-      </div>
-      <div class="tool-card-footer">
-        <div class="tool-card-features">
-          <span class="feature-chip">拆段</span>
-          <span class="feature-chip">字段标注</span>
-          <span class="feature-chip">模板库</span>
-        </div>
-        <button class="tool-enter-btn">进入<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="m9 18 6-6-6-6"/></svg></button>
-      </div>
+      <div class="rc-go"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></div>
     </div>
-
-    <!-- 素材制作（新）：按模板剪。挑段排片还没做，先锁着 -->
-    <div class="tool-card admake ll-raise" id="card-admake-new" onclick="enterAdMakeNew()">
-      <div class="tool-card-banner">
-        <div class="banner-icon"><div class="grid4">
-          <div class="cell c1"></div><div class="cell c2"></div>
-          <div class="cell c3"></div><div class="cell c4"></div>
-          <span class="spark">✦</span>
-        </div></div>
+    <!-- 素材制作 2.0：按模板剪 -->
+    <div class="rc big admake ll-raise" id="card-admake-new" onclick="enterAdMakeNew()">
+      <div class="rc-art"><div class="banner-icon"><div class="grid4"><div class="cell c1"></div><div class="cell c2"></div><div class="cell c3"></div><div class="cell c4"></div><span class="spark">✦</span></div></div></div>
+      <div class="rc-body">
+        <div class="rc-title">素材制作 2.0<span class="tool-card-tag">新</span></div>
+        <div class="rc-desc">选一个爆款模板，每一格按模板的条件从素材里挑段填进去，一次导出多条。</div>
+        <div class="rc-chips"><span class="feature-chip">按模板剪</span><span class="feature-chip">逐段匹配</span><span class="feature-chip">批量导出</span></div>
       </div>
-      <div class="tool-card-body">
-        <div class="tool-card-title">素材制作 2.0<span class="tool-card-tag">新</span></div>
-        <div class="tool-card-desc">
-          选一个爆款模板，每一格按模板写的条件从素材里挑段填进去，一次导出多条。
-        </div>
-      </div>
-      <div class="tool-card-footer">
-        <div class="tool-card-features">
-          <span class="feature-chip">按模板剪</span>
-          <span class="feature-chip">逐段匹配</span>
-          <span class="feature-chip">批量导出</span>
-        </div>
-        <button class="tool-enter-btn">进入<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="m9 18 6-6-6-6"/></svg></button>
-      </div>
+      <div class="rc-go"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></div>
     </div>
-
-    <!-- 素材制作 -->
-    <div class="tool-card admake ll-raise" id="card-admake" onclick="enterAdMake()">
-      <div class="tool-card-banner">
-        <div class="banner-icon"><div class="stack">
-          <div class="adc a1"></div><div class="adc a2"></div><div class="adc a3"></div>
-          <span class="spark">✦</span>
-        </div></div>
+    <!-- 素材制作 1.0 -->
+    <div class="rc small admake ll-raise" id="card-admake" onclick="enterAdMake()">
+      <div class="rc-art"><div class="banner-icon"><div class="stack"><div class="adc a1"></div><div class="adc a2"></div><div class="adc a3"></div><span class="spark">✦</span></div></div></div>
+      <div class="rc-body">
+        <div class="rc-title">素材制作 1.0</div>
+        <div class="rc-desc">AI 标注高光与钩子片段，按多种剪辑模式批量合成。</div>
+        <div class="rc-chips"><span class="feature-chip">高光标注</span><span class="feature-chip">批量剪辑</span></div>
       </div>
-      <div class="tool-card-body">
-        <div class="tool-card-title">
-          素材制作 1.0
-        </div>
-        <div class="tool-card-desc">
-          AI 标注高光与钩子片段，按多种剪辑模式批量合成，产出可直接投放的广告素材。
-        </div>
-      </div>
-      <div class="tool-card-footer">
-        <div class="tool-card-features">
-          <span class="feature-chip">高光标注</span>
-          <span class="feature-chip">批量剪辑</span>
-          <span class="feature-chip">广告投放</span>
-        </div>
-        <button class="tool-enter-btn">进入<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="m9 18 6-6-6-6"/></svg></button>
-      </div>
+      <div class="rc-go"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></div>
     </div>
-    <!-- 短剧创作 -->
-    <div class="tool-card drama locked" id="card-drama" onclick="enterDrama()">
-      <span class="lock-badge">暂不可用</span>
-      <div class="tool-card-banner">
-        <div class="banner-icon"><div class="frames">
-          <div class="frame f1"><div class="cap"></div></div>
-          <div class="frame f2"><div class="play"><i></i></div><div class="cap s"></div><div class="cap"></div></div>
-          <div class="frame f3"><div class="cap"></div></div>
-        </div></div>
+    <!-- 短剧创作：页面还没做，一直锁着 -->
+    <div class="rc small drama locked ll-raise" id="card-drama" onclick="enterDrama()">
+      <div class="rc-art"><div class="banner-icon"><div class="frames"><div class="frame f1"><div class="cap"></div></div><div class="frame f2"><div class="play"><i></i></div><div class="cap s"></div><div class="cap"></div></div><div class="frame f3"><div class="cap"></div></div></div></div></div>
+      <div class="rc-body">
+        <div class="rc-title">短剧创作</div>
+        <div class="rc-desc">逐镜拆解、结构化归档，沉淀为可检索的分镜资产库。</div>
+        <div class="rc-chips"><span class="feature-chip">逐镜拆解</span><span class="feature-chip">检索导出</span></div>
       </div>
-      <div class="tool-card-body">
-        <div class="tool-card-title">
-          短剧创作
-        </div>
-        <div class="tool-card-desc">
-          将爆款素材逐镜拆解、结构化归档，沉淀为可检索的分镜资产库，支持导出复用。
-        </div>
-      </div>
-      <div class="tool-card-footer">
-        <div class="tool-card-features">
-          <span class="feature-chip">逐镜拆解</span>
-          <span class="feature-chip">结构化归档</span>
-          <span class="feature-chip">检索导出</span>
-        </div>
-        <button class="tool-enter-btn">进入<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="m9 18 6-6-6-6"/></svg></button>
-      </div>
+      <div class="rc-go"><span class="lock-badge">暂不可用</span></div>
     </div>
-
+    </div>
   </div>
 </div>
 
@@ -591,10 +575,10 @@ if (window.LiquidLens) {                                   // 组件没加载上
   LiquidLens.setJellyGain(2);
   LiquidLens.mountBackdrop({ drift: true });               // 工作台定位线 + 横向漂移的制图母版
   LiquidLens.glass('.topbar');                             // 参数走 liquid-lens 的 DEFAULTS
-  LiquidLens.glass('.tool-card:not(.locked)', { jelly: true });
+  LiquidLens.glass('.rc:not(.locked)', { jelly: true });
   // 鼠标划过大卡片也弹一下，幅度比点击小
-  document.querySelectorAll('.tool-card:not(.locked)').forEach(c => LiquidLens.bindHoverJelly(c));
-  LiquidLens.glass('.tool-card.locked');
+  document.querySelectorAll('.rc:not(.locked)').forEach(c => LiquidLens.bindHoverJelly(c));
+  LiquidLens.glass('.rc.locked');
   // 「进入」小按钮不单独绑 Q 弹。它原来自己一套参数（1.25/3.6/540）、又用 stopPropagation
   // 拦住冒泡，于是点卡片和点按钮弹出来是两种手感——卡片带折射一起抖，按钮只有缩放。
   // 现在按钮不拦冒泡也不自己处理跳转，点击一路冒泡到卡片，跳转和动效都只有一份。
@@ -688,6 +672,7 @@ async function init() {
   if (!localStorage.getItem('skyart_api_configured')) openSettings();
   // 自检把密钥缺失也涵盖了，原来那条黄色横幅留着会和面板重复说一遍同一件事
   runSelfCheckAuto();
+  loadTodaySummary();
 
   // Rolling 30-day token refresh: every successful login extends expiry
   try {
@@ -733,8 +718,8 @@ function glApply() {
   const o = { band:glVal.band, push:glVal.push, disp:glVal.disp,
               blur:glVal.blur, sat:glVal.sat, bright:glVal.bright };
   LiquidLens.glass('.topbar', o);
-  LiquidLens.glass('.tool-card:not(.locked)', Object.assign({ jelly:true }, o));
-  LiquidLens.glass('.tool-card.locked', o);
+  LiquidLens.glass('.rc:not(.locked)', Object.assign({ jelly:true }, o));
+  LiquidLens.glass('.rc.locked', o);
   localStorage.setItem('skyart_glass_tune_v2', JSON.stringify(glVal));
 }
 
@@ -870,31 +855,53 @@ document.addEventListener('click', e => {
 
 
 function applyRolePermissions() {
-  const admakeCard = document.getElementById('card-admake');
-  const dramaCard  = document.getElementById('card-drama');
-  const role = currentRole;
-
-  if (role === 'drama') {
-    admakeCard.classList.add('locked');
-    admakeCard.querySelector('.tool-enter-btn').textContent = '无权限';
-    const banner = admakeCard.querySelector('.tool-card-banner');
-    if (!banner.querySelector('.lock-badge')) {
-      const lock = document.createElement('div');
-      lock.className = 'lock-badge';
-      lock.textContent = '需要「素材制作」权限';
-      banner.appendChild(lock);
-    }
-  } else if (role === 'admake') {
-    dramaCard.classList.add('locked');
-    dramaCard.querySelector('.tool-enter-btn').textContent = '无权限';
-    const banner = dramaCard.querySelector('.tool-card-banner');
-    if (!banner.querySelector('.lock-badge')) {
-      const lock = document.createElement('div');
-      lock.className = 'lock-badge';
-      lock.textContent = '需要「短剧创作」权限';
-      banner.appendChild(lock);
-    }
+  // 没权限的那一行锁掉，右侧圆钮换成一句说明
+  const 锁 = (id, 文案) => {
+    const card = document.getElementById(id);
+    card.classList.add('locked');
+    card.querySelector('.rc-go').innerHTML = `<span class="lock-badge">${文案}</span>`;
+  };
+  // 爆款素材分析和素材制作 2.0 走的是同一条素材制作业务线，权限跟 1.0 一样，
+  // 原来只锁了 1.0，drama 账号照样能从这两张卡进去。
+  if (currentRole === 'drama') {
+    锁('card-admake',     '需要「素材制作」权限');
+    锁('card-admake-new', '需要「素材制作」权限');
+    锁('card-hot',        '需要「素材制作」权限');
   }
+  if (currentRole === 'admake') 锁('card-drama',  '需要「短剧创作」权限');
+}
+
+// ── 今天的数字 ───────────────────────────────────────────────
+// 打开首页取一次。首页那层玻璃吃资源，不在这儿轮询等任务，进度看各工具自己的列表页。
+const 类型名 = { hot: '爆款分析', segments: '素材制作 2.0', marks: '素材制作 1.0' };
+const 任务名 = { ai: 'AI 分析', export: '导出', parts: '合成 Part' };
+async function loadTodaySummary() {
+  let d;
+  try { d = await apiFetch('/admake/home-summary'); } catch { return; }
+  if (!d) return;
+  document.getElementById('t-run').textContent  = d.running;
+  document.getElementById('t-done').textContent = d.parts_done_today;
+  document.getElementById('t-exp').textContent  = d.exports_today;
+  const line = document.getElementById('t-line');
+  const first = (d.running_items || [])[0];
+  if (first) {
+    let 进度 = '';
+    if (first.type === 'ai' && d.total) 进度 = ` · ${d.progress}/${d.total}`;
+    else if (first.type === 'export')   进度 = ` · ${first.count} 条`;
+    else                                进度 = ` · ${first.count} 个 Part`;
+    const 还有 = d.running > 1 ? `，还有 ${d.running - 1} 个` : '';
+    document.getElementById('t-line-text').textContent =
+      `${类型名[first.project_kind] || ''} ${任务名[first.type]} · ${first.title}${进度}${还有}`;
+    line.onclick = () => {
+      if (first.project_kind === 'hot') _navAfterJelly('tools/hot-analysis/index.html');
+      else _navAfterJelly(`tools/ad-make/editor.html?projectId=${first.project_id}` +
+                          (first.project_kind === 'segments' ? '&kind=segments' : ''));
+    };
+    line.hidden = false;
+  } else {
+    line.hidden = true;
+  }
+  document.getElementById('today-box').hidden = false;
 }
 
 // ── Login ─────────────────────────────────────────────────────
@@ -1034,7 +1041,10 @@ function logout() {
 async function openSettings() {
   document.getElementById('avatar-menu').classList.remove('show');
   if (window.electronAPI?.getConfig) {
-    const cfg = await window.electronAPI.getConfig();
+    // 读配置失败就开一个空表单，不要让设置弹窗整个打不开
+    let cfg = {};
+    try { cfg = (await window.electronAPI.getConfig()) || {}; }
+    catch (e) { toast('读取已保存的配置失败：' + (e.message || e), 'error'); }
     document.getElementById('cfg-hh-key').value     = cfg.happyhorseApiKey  || '';
     document.getElementById('cfg-hh-url').value     = cfg.happyhorseBaseUrl || '';
     document.getElementById('cfg-gemini-url').value = cfg.geminiProxyUrl    || 'https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze';
@@ -1084,17 +1094,26 @@ async function saveSettings() {
     configured: true,
   };
 
-  if (window.electronAPI?.saveConfig) {
-    await window.electronAPI.saveConfig(cfg);
-    if (window.electronAPI.restartBackend) {
-      const res = await window.electronAPI.restartBackend();
-      if (!res.ok) {
-        status.style.color = '#ef4444';
-        status.textContent = '后端重启失败：' + (res.error || '');
-        btn.disabled = false; btn.textContent = '保存配置';
-        return;
+  // 这两步走的是主进程，主进程抛异常时按钮会永远停在「保存中…」，弹窗也关不掉，
+  // 只能重启应用。抓住它，把话说出来，按钮放开。
+  try {
+    if (window.electronAPI?.saveConfig) {
+      await window.electronAPI.saveConfig(cfg);
+      if (window.electronAPI.restartBackend) {
+        const res = await window.electronAPI.restartBackend();
+        if (!res.ok) {
+          status.style.color = '#ef4444';
+          status.textContent = '后端重启失败：' + (res.error || '');
+          btn.disabled = false; btn.textContent = '保存配置';
+          return;
+        }
       }
     }
+  } catch (e) {
+    status.style.color = '#ef4444';
+    status.textContent = '保存失败：' + (e.message || e);
+    btn.disabled = false; btn.textContent = '保存配置';
+    return;
   }
   localStorage.setItem('skyart_api_configured', '1');
   status.style.color = '#059669'; status.textContent = '配置已保存！';

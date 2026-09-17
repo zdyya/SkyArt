@@ -148,17 +148,11 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
   margin:0 0 8px;padding:8px 10px 12px;}
 #marks-panel.has-open .segline:not(.open){opacity:.55;}
 #marks-panel.has-open .segline:not(.open):hover{opacity:1;}
-.segline.gone{opacity:.42;}
-.segline.gone .sl-n,.segline.gone .sl-t{text-decoration:line-through;}
 .sl-n{font-size:11.5px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;flex:none;}
 .sl-c{flex:none;width:11px;color:var(--text3);font-size:9px;line-height:1;
   transition:transform var(--t-color);transform:rotate(0deg);}
 .segline.open .sl-c{transform:rotate(90deg);color:var(--accent);}
 .sl-t{margin-left:auto;font-size:10.5px;color:var(--text3);font-family:monospace;flex:none;}
-.sl-x{flex:none;border:1px solid var(--border);background:#fff;color:var(--text3);cursor:pointer;
-  font-size:10px;line-height:1;padding:3px 6px;border-radius:4px;opacity:0;transition:opacity var(--t-color);}
-.segline:hover .sl-x,.segline.gone .sl-x{opacity:1;}
-.sl-x:hover{background:#fdf3f3;color:#b91c1c;}
 .slbody{padding:2px 8px 12px;border-bottom:1px solid var(--border);margin-bottom:4px;}
 .slbody .narr{margin-bottom:8px;}
 .fh3{font-size:11px;font-weight:600;color:var(--text2);margin:11px 0 5px;}
@@ -167,7 +161,6 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
   font-weight:600;display:flex;align-items:center;cursor:pointer;box-shadow:none;}
 #vis-tl .vis-item.segblk .vis-item-content{padding:0 7px;white-space:nowrap;font-size:10.5px;}
 #vis-tl .vis-item.segblk.cur{box-shadow:0 0 0 2px rgba(255,255,255,.9) inset,0 0 0 1px var(--accent);}
-#vis-tl .vis-item.segblk.gone{opacity:.35;}
 .export-section{flex-shrink:0;}
 
 /* ── 标记组：一段一行 ── */
@@ -263,6 +256,15 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .part-pick span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .part-pick:has(input:checked){border-color:var(--accent);background:rgba(249,115,22,.07);color:var(--text);font-weight:600;}
 .part-pick:has(input:checked)::before{transform:scaleX(1);}
+/* 没分析出结果的 Part 照常可勾，只画成虚线加淡：它进不了成片，勾上也不影响结果 */
+.part-pick.unready{opacity:.55;border-style:dashed;}
+/* 区间重叠被并掉的剧情点：默认收着，点「＋N 处」展开，一行一条 */
+.pt-open{margin-left:6px;color:var(--accent2);cursor:pointer;font-size:10.5px;white-space:nowrap;}
+.pt-open:hover{text-decoration:underline;}
+.pt-more{margin-top:3px;padding-left:9px;border-left:2px solid var(--border);
+  font-size:11px;color:var(--text3);line-height:1.55;}
+.pt-more.hide{display:none;}
+.part-pick-note{margin-top:7px;font-size:11px;color:var(--text3);line-height:1.6;}
 /* 导出历史：一批一行，展开才看单条 */
 .exp-batch{border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;}
 .exp-batch-head{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;background:var(--bg3);}
@@ -281,7 +283,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .exp-item-name{flex:1;min-width:0;color:var(--text2);font-size:10.5px;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .exp-item-dur{font-family:monospace;color:var(--text3);font-size:10px;flex-shrink:0;}
-.exp-item-err{color:var(--red);font-size:10px;}
+.exp-item-err{color:var(--red);font-size:10px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .export-list{display:flex;flex-direction:column;gap:5px;}
 .export-item{display:flex;align-items:center;gap:5px;padding:6px 8px;background:var(--bg3);border-radius:4px;font-size:11px;}
 .export-item-name{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -723,6 +725,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
               </label>
             </div>
             <div class="part-pick-grid" id="part-pick-grid"></div>
+            <div class="part-pick-note" id="part-pick-note"></div>
           </div>
         </div>
 
@@ -1086,6 +1089,10 @@ async function apiFetch(path, opts = {}) {
 
 function clearAuth() {
   localStorage.removeItem('skyart_token');
+  // 跟 goHome/goBack 一样先打上「是应用内跳转」的标记。不打的话，导出跑着的时候
+  // token 失效会弹出「素材导出中，退出应用会导致剪辑失败」的确认框，用户点取消
+  // 就留在一个 token 已经被删掉的页面上，之后每个请求都是 401。
+  _inAppNav = true;
   window.location.href = '../../home.html';
 }
 
@@ -1159,7 +1166,7 @@ function _switchToSegmentView() {
   const 标题 = document.querySelector('#marks-head .info-card-title');
   if (标题) 标题.textContent = '内容分析';
   const 提示 = document.querySelector('#marks-head .marks-hint');
-  if (提示) 提示.textContent = '点一行看这一段的字段、剧情点和行为标记。排除掉的段不进任何一条成片。';
+  if (提示) 提示.textContent = '点一行看这一段的字段、剧情点和行为标记。';
   // 打点是高光钩子那套的活，段是拆解管线的产物，手动打不出来
   const 工具条 = document.querySelector('.timeline-toolbar');
   if (工具条) {
@@ -1511,16 +1518,38 @@ function toggleAllPartPick(on) {
   schedulePreflight();
 }
 
+// 这个 Part 能不能给成片贡献素材。判据跟 renderAiBox 里 n.done 那一支保持一致，
+// 两处算出来的数不一样的话，弹窗会说"12 个可用"而侧栏说"11 个就绪"。
+function partUsableForExport(p) {
+  if (p.status === 'failed' || !p.file_path) return false;
+  if (p.ai_status === 'analyzing') return false;
+  // 段库项目看段有没有入库，不看 ai_status。段要等整批 Part 拆完才一起打分入库，
+  // 这中间 Part 已经是「已完成」而段表还是空的，按 ai_status 放行的话点导出会撞上
+  // 后端那句「这个项目还没拆出段，先跑一次 AI 分析」——人刚跑完分析，看到这句只会懵。
+  if (PROJ_KIND === 'segments' || PROJ_KIND === 'hot') return (p.seg_count || 0) > 0;
+  return partHasMarks(p) || p.ai_status === 'done';
+}
+
 function renderPartPicker() {
   const grid = document.getElementById('part-pick-grid');
   if (!grid) return;
-  grid.innerHTML = allParts.map((p, i) => `
-    <label class="part-pick" title="${esc(p.name)}">
+  grid.innerHTML = allParts.map((p, i) => {
+    const 可用 = partUsableForExport(p);
+    return `
+    <label class="part-pick${可用 ? '' : ' unready'}" title="${esc(p.name)}${可用 ? '' : ' · 还没分析出结果'}">
       <input type="checkbox" ${partChecked.has(p.id) ? 'checked' : ''}
              onclick="onPartPickClick(event, ${i})">
       <span>${partLabel(p)}</span>
       ${PROJ_KIND === 'segments' ? `<i class="part-pick-seg">${p.seg_count || 0} 段</i>` : ''}
-    </label>`).join('');
+    </label>`;
+  }).join('');
+  const note = document.getElementById('part-pick-note');
+  if (note) {
+    const 差 = allParts.filter(p => !partUsableForExport(p)).length;
+    note.textContent = 差
+      ? `${allParts.length} 个 Part 里有 ${差} 个还没分析出结果，画的是虚线框。这次导出只用另外 ${allParts.length - 差} 个的素材。`
+      : '';
+  }
   syncPartPickerHeader();
 }
 
@@ -2346,6 +2375,11 @@ async function _syncPartsDuringAi() {
   renderAiBox();
   const cur = allParts.find(p => p.id === activePartId);
   if (cur) renderPartInfo(cur);
+  // 段库项目一个 Part 拆完就入库。正看着的这个 Part 刚变成「已完成」，右栏还是空的，
+  // 这时把段拉下来，不用等整批跑完，也不用切走再切回来。
+  if (cur && cur.ai_status === 'done' && PROJ_KIND === 'segments' && !SEGS.length) {
+    try { await loadMarks(); renderTimeline(); } catch { /* 下一轮再试 */ }
+  }
 }
 
 // 发起后先把要分析的行本地置成"分析中"，不等下一轮轮询。后端接了请求到状态落库
@@ -2507,15 +2541,17 @@ function renderAiBox() {
     // 一个都还没就绪（全在合成中或合成失败），没有可分析的对象
     box.innerHTML = `<div class="ai-done"><span>${sub}</span></div>`;
   }
-  syncExportBtn(n.done > 0 && todo === 0 && n.analyzing === 0
-                && n.building === 0 && n.buildFailed === 0 && !_aiRunning);
+  // 有一个 Part 能出片就放行。原来要等全部 Part 都分析完，用户中途发现某几集不想要了
+  // 也只能干等剩下的跑完（2026-09-17 业务反馈）。判据用 partUsableForExport 而不是
+  // n.done：两者在段库项目上不等价，段没入库之前 n.done 已经加一了。
+  syncExportBtn(allParts.some(partUsableForExport));
 }
 
 function syncExportBtn(enabled) {
   const btn = document.getElementById('topbar-export-btn');
   if (!btn) return;
   btn.disabled = !enabled;
-  btn.title = enabled ? '' : 'AI 分析完成后才能导出';
+  btn.title = enabled ? '' : '还没有可用来出片的素材，等 AI 分析出结果';
 }
 
 // 单 Part 重建合成（列表项「重建」入口）。合成失败以前只能整个项目重新分 Part，
@@ -2623,11 +2659,11 @@ function segPoints(s) {
   if (Array.isArray(并) && 并.length) {
     return 并.map(p => ({ 起: p.起 ?? p.时间 ?? 0, 止: p.止 ?? p.时间 ?? 0,
                           类: p.哪一类 || '', 话: p.是什么 || '',
-                          还有: (p.同段还有 || []).length }));
+                          并掉的: p.同段还有 || [] }));
   }
   return (s.plot_points || []).map(p => ({ 起: p.start_sec ?? p.time_sec ?? 0,
                                            止: p.end_sec ?? p.time_sec ?? 0,
-                                           类: p.kind || '', 话: p.text || '', 还有: 0 }));
+                                           类: p.kind || '', 话: p.text || '', 并掉的: [] }));
 }
 
 function segFieldsBlock(s) {
@@ -2643,12 +2679,20 @@ function segFieldsBlock(s) {
     `<span class="t" data-t="${b.时间 || 0}">${mmss(b.时间 || 0)}</span>` +
     `<span class="lv lvtag${b.档 >= 3 ? ' l' + b.档 : ''}">档 ${b.档 ? b.档 : '未标'}</span></div>`
   ).join('') || '<div style="font-size:11px;color:var(--text3)">未命中行为词，尺度档记 0</div>';
-  const 点 = segPoints(s).sort((a, b) => a.起 - b.起).map(p => {
+  const 点 = segPoints(s).sort((a, b) => a.起 - b.起).map((p, i) => {
     const 配 = segColor(p.类);
+    // 区间重叠被并掉的那几条默认收着，点「+N 处」才展开。它们不是重复，是同一段
+    // 冲突的后续和铺垫，收着但要能打开——原来只有一个数字，点不开也没有悬停。
+    const 并 = p.并掉的 || [];
+    const 同 = 并.length
+      ? `<span class="pt-open" data-more="${i}">＋ ${并.length} 处</span>` +
+        `<div class="pt-more hide" data-morebox="${i}">` +
+        并.map(t => `<div>${esc(t)}</div>`).join('') + `</div>`
+      : '';
     return `<div class="pt-row" data-t="${p.起}">` +
       `<span class="t">${mmss(p.起)}–${mmss(p.止)}</span>` +
       `<span class="c" style="background:${配.底};color:${配.字}">${esc(p.类 || '—')}</span>` +
-      `<span class="w">${esc(p.话)}${p.还有 ? `<span style="color:var(--text3)">　+ ${p.还有} 处</span>` : ''}</span></div>`;
+      `<span class="w">${esc(p.话)}${同}</span></div>`;
   }).join('') || '<div style="font-size:11px;color:var(--text3)">这一段没有剧情点</div>';
   return `<div class="narr">${esc(f['段落叙述'] || '（这一段没有叙述）')}</div>` +
     行('主角立场', esc(立场[主角] || 主角 || '—')) +
@@ -2661,30 +2705,36 @@ function segFieldsBlock(s) {
 function renderSegPanel() {
   const panel = document.getElementById('marks-panel');
   if (!panel) return;
-  const 在用 = SEGS.filter(s => !s.excluded).length;
   const st = document.getElementById('marks-status');
-  if (st) st.textContent = SEGS.length ? `在用 ${在用} 段，共 ${SEGS.length} 段` : '';
+  if (st) st.textContent = SEGS.length ? `共 ${SEGS.length} 段` : '';
   if (!SEGS.length) {
+    // 一个 Part 拆完就入库。正在分析的 Part 这里空着是正常的，不要引着人去重跑；
+    // 已完成还空着，是这个 Part 真没拆出段（或者入库那一步出错，状态会标失败）。
+    const 这个Part = allParts.find(p => p.id === activePartId);
+    const 状态 = 这个Part ? 这个Part.ai_status : '';
+    const 话 = 状态 === 'analyzing'
+      ? '正在分析<br><small>这个 Part 分析完，段就会出现在这里</small>'
+      : 状态 === 'done'
+        ? '这个 Part 没拆出段<br><small>素材太短或没有可用画面时会这样</small>'
+        : '这个 Part 还没拆出段<br><small>点左下角的「AI 分析」把它拆成段</small>';
     panel.innerHTML = '<div style="color:var(--text3);text-align:center;padding:20px;font-size:12px;">'
-      + '这个 Part 还没拆出段<br><small>点右上「AI 分析」把它拆成段</small></div>';
+      + 话 + '</div>';
     return;
   }
   panel.innerHTML = SEGS.map(s => {
     const lv = Number(s.intensity) || 0, 配 = segColor(s.seg_type);
-    const 开 = segOpenId === s.id, 删 = !!s.excluded;
-    const 行 = `<div class="segline${开 ? ' open' : ''}${删 ? ' gone' : ''}" data-seg="${s.id}">` +
+    const 开 = segOpenId === s.id;
+    const 行 = `<div class="segline${开 ? ' open' : ''}" data-seg="${s.id}">` +
       '<span class="sl-c">▶</span>' +
       `<span class="sl-n">${esc(segNo(s))}</span>` +
       (s.seg_type ? `<span class="cattag sm" style="background:${配.底};color:${配.字}">${esc(s.seg_type)}</span>` : '') +
       `<span class="lvtag sm${lv >= 3 ? ' l' + lv : ''}">档 ${lv}</span>` +
-      `<span class="sl-t">${mmss(s.start_sec)} → ${mmss(s.end_sec)}</span>` +
-      `<button class="sl-x" data-exc="${s.id}">${删 ? '恢复' : '排除'}</button></div>`;
+      `<span class="sl-t">${mmss(s.start_sec)} → ${mmss(s.end_sec)}</span></div>`;
     return 行 + (开 ? `<div class="slbody">${segFieldsBlock(s)}</div>` : '');
   }).join('');
   panel.classList.toggle('has-open', !!segOpenId);
   panel.querySelectorAll('[data-seg]').forEach(el => {
     el.onclick = e => {
-      if (e.target.dataset.exc) return;
       const id = Number(el.dataset.seg);
       const s = SEGS.find(x => x.id === id);
       segOpenId = segOpenId === id ? null : id;
@@ -2692,25 +2742,20 @@ function renderSegPanel() {
       renderSegPanel(); renderSegTimeline();
     };
   });
-  panel.querySelectorAll('[data-exc]').forEach(el => {
-    el.onclick = e => { e.stopPropagation(); toggleSegExcluded(Number(el.dataset.exc)); };
-  });
   panel.querySelectorAll('[data-t]').forEach(el => {
     el.onclick = e => { e.stopPropagation(); _previewSeek(Number(el.dataset.t)); };
   });
-}
-
-// 排除掉的段不进任何一条成片。改的是后端那一列，刷新页面还在。
-async function toggleSegExcluded(id) {
-  const s = SEGS.find(x => x.id === id);
-  if (!s) return;
-  try {
-    const out = await apiFetch(`/admake/segments/${id}`,
-      { method: 'PATCH', body: JSON.stringify({ excluded: !s.excluded }) });
-    Object.assign(s, out);
-    toast(s.excluded ? `${segNo(s)} 已排除，导出时不会用它` : `${segNo(s)} 已恢复`, 'info', 2500);
-    renderSegPanel(); renderSegTimeline();
-  } catch (e) { toast(e.message, 'error'); }
+  // 必须排在 data-t 之后绑，并且自己吃掉事件：展开按钮长在 pt-row 里面，
+  // 不拦住的话点一下会连带把播放头跳到这条剧情点上。
+  panel.querySelectorAll('[data-more]').forEach(el => {
+    el.onclick = e => {
+      e.stopPropagation();
+      const box = panel.querySelector(`[data-morebox="${el.dataset.more}"]`);
+      if (!box) return;
+      const 开 = box.classList.toggle('hide');
+      el.textContent = 开 ? `＋ ${box.children.length} 处` : '收起';
+    };
+  });
 }
 
 function renderSegTimeline() {
@@ -2718,7 +2763,7 @@ function renderSegTimeline() {
   visItems.clear();
   visItems.add(SEGS.map(s => {
     const 配 = segColor(s.seg_type);
-    const cls = 'segblk' + (s.excluded ? ' gone' : '') + (segOpenId === s.id ? ' cur' : '');
+    const cls = 'segblk' + (segOpenId === s.id ? ' cur' : '');
     return {
       id: `seg${s.id}`, group: 'seg',
       start: s.start_sec * SEC_MS, end: s.end_sec * SEC_MS,
@@ -2726,7 +2771,11 @@ function renderSegTimeline() {
       style: `background:${配.底};color:${配.字};border-color:${配.底}`,
       content: `${segNo(s)}　${Math.round(s.duration_sec)}s` + (s.seg_type ? `　${s.seg_type}` : ''),
       title: `${segNo(s)}　${mmss(s.start_sec)}–${mmss(s.end_sec)}　`
-             + `${s.seg_type || '未判出'}　档 ${s.intensity || 0}${s.excluded ? '　已排除' : ''}`,
+             + `${s.seg_type || '未判出'}　档 ${s.intensity || 0}`,
+      // 段的起止是 AI 按镜头和黑场切出来的，界面上不支持改。导轨那份 editable 是
+      // 给打点模式的段用的，不关掉的话段块选中后会冒出删除按钮、也能拖，拖完弹回
+      // 原位、点删除毫无反应，还不给任何提示。
+      editable: false,
     };
   }));
   const 图例 = document.getElementById('seg-legend');
@@ -3034,7 +3083,7 @@ function renderSegCountNote(pf) {
   chip.style.display = 推荐 ? '' : 'none';
   if (推荐) chip.textContent = `建议 ${推荐} 条`;
   input.classList.toggle('over', 推荐 > 0 && count > 推荐);
-  // 每格一行的表，照原型：格、要填几段、通过硬条件、六成以上、最高匹配。
+  // 每格一行的表，照原型：格、要填几段、候选、六成以上、最高匹配。模板没有硬条件，候选就是段库全部。
   // 挤成一段话时，剪辑要在里面找哪一格挑不出段，得一个字一个字读。
   const 行 = (pf['每格'] || []).map(g => {
     const 匹 = g['最高匹配度'] != null ? Math.round(g['最高匹配度'] * 100) + '%' : '—';
@@ -3048,13 +3097,18 @@ function renderSegCountNote(pf) {
       + `<td class="slot-hit">${匹}</td></tr>`;
   }).join('');
   const 超 = 推荐 > 0 && count > 推荐;
-  note.className = 'exp-hint' + (超 ? ' bad' : '');
+  note.className = 'exp-hint' + (超 || pf['提醒'] ? ' bad' : '');
   note.style.display = '';
+  // 时长不再筛段，成片多长在导出前就要看到：一条填几段、预计多长、目标多长
+  const 预计 = pf['预计成片时长'] != null ? fmtDurText(pf['预计成片时长']) : '—';
+  const 目标 = pf['目标时长'] != null ? fmtDurText(pf['目标时长']) : '';
   note.innerHTML =
-    `<div class="slot-sum">一条填 ${pf['总段数']} 段，每段约 ${pf['中位段长']} 秒</div>`
+    `<div class="slot-sum">一条填 ${pf['总段数']} 段，预计成片 ${预计}${目标 ? `（目标 ${目标}）` : ''}`
+    + `${pf['贴片时长'] > 0 ? `，其中片头片尾 ${fmtDurText(pf['贴片时长'])}` : ''}</div>`
     + '<table class="slot-table"><thead><tr>'
-    + '<th></th><th>格</th><th>要填</th><th>通过硬条件</th><th>六成以上</th><th>最高匹配</th>'
+    + '<th></th><th>格</th><th>要填</th><th>候选</th><th>六成以上</th><th>最高匹配</th>'
     + '</tr></thead><tbody>' + 行 + '</tbody></table>'
+    + (pf['提醒'] ? `<div class="slot-over">${esc(pf['提醒'])}</div>` : '')
     + (超 ? `<div class="slot-over">要 ${count} 条超过建议的 ${推荐} 条。`
           + `超出的部分只能往下挑匹配度不到六成的段，这些段不满足模板里写的条件。</div>` : '');
 }
@@ -3112,12 +3166,17 @@ function fmtDurText(sec) {
 }
 
 let _lastPreflight = null;
+let _preflightSeq = 0;      // 预检请求的序号，只认最后发出去的那一个
 async function runPreflight() {
   const modal = document.getElementById('export-modal');
   if (!modal || !modal.classList.contains('visible')) return;   // 面板没开就不打接口
   const mode = getMode();
   const parts = _checkedPartsOrdered();
   if (!parts.length) { _lastPreflight = null; renderCountNote(null); return; }
+  // 每次请求发一个号。改目标时长之后马上取消勾一个 Part，两个请求同时在飞，
+  // 先发的后到就会把面板停在上一次的口径上，之后不会再自己刷新。
+  const 本次 = ++_preflightSeq;
+  const 还是最新的 = () => 本次 === _preflightSeq;
   const tpl = document.getElementById('export-template');
   const q = new URLSearchParams({
     mode, target_duration: String(getTargetSec()),
@@ -3130,20 +3189,29 @@ async function runPreflight() {
     if (!cid) { _lastPreflight = null; renderSegCountNote(null); return; }
     q.set('cut_template_id', String(cid));
     q.set('count', String(Math.max(1, parseInt(document.getElementById('clip-count')?.value) || 1)));
-    try {
-      _lastPreflight = await apiFetch(`/admake/projects/${PROJ_ID}/segment-preflight?${q}`);
-    } catch { _lastPreflight = null; }
+    let r = null;
+    try { r = await apiFetch(`/admake/projects/${PROJ_ID}/segment-preflight?${q}`); }
+    catch { r = null; }
+    if (!还是最新的()) return;
+    _lastPreflight = r;
     renderSegCountNote(_lastPreflight);
     return;
   }
-  try {
-    _lastPreflight = await apiFetch(`/admake/projects/${PROJ_ID}/export-preflight?${q}`);
-  } catch { _lastPreflight = null; }   // 预检失败不挡导出，只是没有建议值
+  let r = null;
+  try { r = await apiFetch(`/admake/projects/${PROJ_ID}/export-preflight?${q}`); }
+  catch { r = null; }                  // 预检失败不挡导出，只是没有建议值
+  if (!还是最新的()) return;
+  _lastPreflight = r;
   renderCountNote(_lastPreflight);
 }
 
 function doExport() {
   if (PROJ_KIND === 'segments' && !getCutTemplateId()) { toast('先选一个剪辑模板', 'info'); return; }
+  // 预检已经判定这个模板在这部剧上出不了片，就别让用户走完确认框再被后端拒。
+  if (PROJ_KIND === 'segments' && _lastPreflight && _lastPreflight['拦住了吗']) {
+    toast(_lastPreflight['拦住的原因'] || '这个模板在这部剧上挑不出段', 'error', 6000);
+    return;
+  }
   // 同步入口守卫：必须在弹确认框之前就拦住重入，
   // 否则网络请求耗时窗口内的二次点击（双击）不会被挡住。
   if (_exportSubmitting || _exportRunning) { toast('有一批素材正在导出，完成后再发起下一批', 'info'); return; }
@@ -3158,7 +3226,11 @@ function doExport() {
   const modeLabel = { highlight_shunjian: '高光顺剪', xuanyi_daozhi: '悬疑倒置', shuanggaoguang: '双高光顺剪' }[mode] || mode;
 
   const checked = _checkedPartsOrdered();
-  if (!checked.length) { toast('至少勾选一个 Part 参与导出', 'info'); return; }
+  if (!checked.length) {
+    toast(partChecked.size ? '勾选的 Part 还没分析出结果，等它们跑完再导' :
+                             '至少勾选一个 Part 参与导出', 'info');
+    return;
+  }
   // 模式、时长、取材范围都不再复述——上一屏刚填完就在眼前，读一遍不帮人做决定。
   // 这里只说会产出什么、放到哪儿，以及唯一需要犹豫的那件事：开始了就停不下来。
   const dir = (document.getElementById('export-dir-path') || {}).textContent || '应用默认目录';
@@ -3173,8 +3245,11 @@ function doExport() {
 
 // 勾选参与导出的 Part，按 part_index 排序（后端拼中间白场依赖顺序语义）
 function _checkedPartsOrdered() {
+  // 只留真正能出片的那些。界面上把还没分析完的 Part 画成虚线框、并写着「这次导出
+  // 只用另外 N 个」，但它们仍在勾选集合里；全选时下面又把 part_ids 传成 null，
+  // 后端不过滤，那几个 Part 的素材照样进了成片。三处口径在这里对齐。
   return allParts
-    .filter(p => partChecked.has(p.id))
+    .filter(p => partChecked.has(p.id) && partUsableForExport(p))
     .sort((a, b) => a.part_index - b.part_index);
 }
 
@@ -3184,15 +3259,19 @@ async function _runExport(mode, count, durVal) {
   btns.forEach(b => { b.disabled = true; b.textContent = '处理中…'; });
 
   try {
-    await saveMarks();
+    // 正在分析的 Part 不回写标记：界面上这份是分析开始前的副本，PUT 上去会把分析
+    // 刚写好的标记盖掉。放开"分析没跑完也能导出"之后才可能撞上这一下。
+    const 当前Part = allParts.find(p => p.id === activePartId);
+    if (!(当前Part && 当前Part.ai_status === 'analyzing')) await saveMarks();
     const targetDur = parseFloat(durVal) || 360;
 
     const checked = _checkedPartsOrdered();
     const exports = await apiFetch(`/admake/projects/${PROJ_ID}/export`, {
       method: 'POST',
       body: JSON.stringify({ mode, count, target_duration: targetDur,
-                             // 全选＝不过滤（传 null 走后端"全部 Part"路径，语义等价且日志更干净）
-                             part_ids: checked.length === allParts.length ? null : checked.map(p => p.id),
+                             // 一律按勾选的那几个传。以前全选时传 null 让后端不过滤，
+                             // 而勾选集合里可能还有正在分析、出不了片的 Part。
+                             part_ids: checked.map(p => p.id),
                              template_id: Number(document.getElementById('export-template')?.value) || null,
                              cut_template_id: PROJ_KIND === 'segments' ? getCutTemplateId() : null }),
     });
@@ -3416,6 +3495,8 @@ function _batchItemHtml(e) {
       <span class="exp-item-seq">${seq ? '#' + seq : '—'}</span>
       <span class="badge ${EXPORT_STATUS_BADGE[e.status] || 'badge-gray'}">${EXPORT_STATUS_LABEL[e.status] || e.status}</span>
       ${e.template_error ? `<span class="exp-item-err" title="${esc(e.template_error)}">模板未套用</span>` : ''}
+      <!-- 失败原因写在这一行上。以前只有一个「失败」徽章，用户看不出是片源没了还是磁盘满了 -->
+      ${e.fail_reason ? `<span class="exp-item-err" title="${esc(e.fail_reason)}">${esc(e.fail_reason)}</span>` : ''}
       <span class="exp-item-name">${esc(fname)}</span>
       <span class="exp-item-dur">${e.duration_sec > 0 ? fmtDur(e.duration_sec) : ''}</span>
     </div>`;
@@ -3563,14 +3644,19 @@ document.addEventListener('keydown', e => {
 
   if (e.key === 'Escape') { cancelOpenSeg(); return; }
 
-  // E/R：高光/钩子段开合（与工具条按钮同义）
+  // E/R：高光/钩子段开合（与工具条按钮同义）。段库项目没有打点这回事，
+  // 工具条上那两颗按钮已经删了，键盘这条路也要一起关——按下去会建一个存不进库、
+  // 界面上也看不见的标记，只在内存里挂着。
   const segType = /^e$/i.test(e.key) ? 'hl' : /^r$/i.test(e.key) ? 'hk' : null;
-  if (segType) { e.preventDefault(); toggleSeg(segType); return; }
+  if (segType && PROJ_KIND !== 'segments') { e.preventDefault(); toggleSeg(segType); return; }
+  if (segType) return;
 
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
     e.preventDefault();
     const dir = e.key === 'ArrowLeft' ? -1 : 1;
-    const sel = visTl ? visTl.getSelection() : [];
+    // 段库项目的段不可调，选中它按方向键应该照常跳转视频，而不是掉进微调分支
+    // 里什么也不做。
+    const sel = (visTl && PROJ_KIND !== 'segments') ? visTl.getSelection() : [];
     if (sel.length) {
       // 选中段：Shift 收放终点，否则整段平移；按住 Alt 都走 0.1 秒
       nudgeSelectedSeg(sel[0], (e.altKey ? NUDGE_FINE_SEC : NUDGE_SEC) * dir, e.shiftKey);

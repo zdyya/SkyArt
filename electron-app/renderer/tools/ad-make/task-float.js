@@ -115,7 +115,17 @@
 
   function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
 
-  function go(pid, type) {
+  function go(pid, type, kind) {
+    // 爆款素材和素材制作是两个页面。不看项目类型一律跳 editor.html 的话，爆款素材的
+    // 任务点进去落在素材制作的界面上（2026-09-17 用户点《秋实 top1》踩到）。
+    if (kind === 'hot') {
+      // 已经在这一页就别再跳一次：整页重载会把正在跑的轮询和播放器全部推倒重来
+      if (location.pathname.indexOf('/hot-analysis/') >= 0) return;
+      if (window.__guardLeave && window.__guardLeave('../hot-analysis/index.html')) return;
+      if (window.__allowInAppNav) window.__allowInAppNav();
+      location.href = '../hot-analysis/index.html';
+      return;
+    }
     // 导出任务：跳过去必须能看到进度和成败，落地即开导出历史弹窗（history=1）；
     // AI 分析 / Part 合成：页面本身逐 Part 挂状态徽章，落地即可见
     const page = location.pathname.split('/').pop();
@@ -149,12 +159,12 @@
     root.classList.toggle('collapsed', collapsed());
     root.querySelector('#etf-ring-in').textContent = tasks.length;
     root.querySelector('#etf-rows').innerHTML = tasks.map(t => `
-      <div class="etf-row" data-pid="${t.project_id}" data-type="${t.type}" title="进入该项目查看进度">
+      <div class="etf-row" data-pid="${t.project_id}" data-type="${t.type}" data-kind="${t.project_kind || 'marks'}" title="进入该项目查看进度">
         <span class="sp"></span>
         <span class="n">《${esc(t.title)}》</span>
         <span class="t">${LABEL[t.type] || t.type}${t.count > 1 ? ' ' + t.count : ''}</span>
       </div>`).join('');
-    root.querySelectorAll('.etf-row').forEach(r => r.onclick = () => go(+r.dataset.pid, r.dataset.type));
+    root.querySelectorAll('.etf-row').forEach(r => r.onclick = () => go(+r.dataset.pid, r.dataset.type, r.dataset.kind));
     // 任务条数变了卡片就变高，位移图要跟着重算。条数没变不碰——render 每 4 秒跑一次，
     // 每次都重设 backdrop-filter 会白白触发样式重算。
     if (lastRowCount !== tasks.length) {

@@ -180,9 +180,22 @@ class AdmakeTaskOut(BaseModel):
     project_id: int
     title: str
     count: int
+    project_kind: str = "marks"
+
+
+class AdmakeHomeSummaryOut(BaseModel):
+    """首页左下角那块数字。打开首页取一次，不轮询。"""
+    running: int                 # 在跑的任务数（一个项目里一类任务算一个）
+    parts_done_today: int        # 今天分析完的 Part 数
+    exports_today: int           # 今天导出成功的成片条数
+    running_items: list[AdmakeTaskOut] = []
+    # 第一条在跑任务的进度，只有 AI 分析有：progress/total
+    progress: int | None = None
+    total: int | None = None
 
 
 class AdmakeExportOut(BaseModel):
+    fail_reason: str | None = None
     id: int
     part_id: int
     project_id: int | None = None
