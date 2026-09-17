@@ -633,8 +633,30 @@ function hideLoginOverlay() {
   document.getElementById('login-overlay').style.display = 'none';
 }
 
+// 浏览器里跑的是演示版，用演示账号直接进，不弹登录框。
+// 装在 Electron 里 window.electronAPI 由 preload.js 提供，没有「是网页版」这个字段，照常走登录。
+// 后端没起来或者账号不对就返回空串，下面照常弹登录框。
+async function 演示登录() {
+  try {
+    const res = await fetch(API + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: '123456' }),
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    localStorage.setItem('skyart_token', data.access_token);
+    return data.access_token;
+  } catch {
+    return '';
+  }
+}
+
 // ── Init ─────────────────────────────────────────────────────
 async function init() {
+  if (!authToken && window.electronAPI && window.electronAPI.是网页版) {
+    authToken = await 演示登录();
+  }
   if (!authToken) { showLoginOverlay(); return; }
 
   // Backend may still be starting up — retry for up to 30s before giving up.
