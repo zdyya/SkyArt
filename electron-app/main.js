@@ -114,8 +114,12 @@ function _maasUrl(v) {
   return s;
 }
 
+let _最近崩溃 = '';
+function 最近崩溃信息() { return _最近崩溃; }
+
 function startBackend() {
   backendCrashed = false; // 重置崩溃标志
+  _最近崩溃 = '';
   const env = buildBackendEnv();
   const dataDir = path.join(SKYART_USER_DATA, 'skyart-data');
 
@@ -153,6 +157,7 @@ function startBackend() {
     console.log('[backend] exited', code, signal);
     if (code !== 0 && code !== null) {
       backendCrashed = true;
+      _最近崩溃 = backendStderr + backendStdout;
       const errInfo = {
         code, signal,
         stderr: backendStderr.slice(-1000),
@@ -180,16 +185,34 @@ function stopBackend() {
 
 // 清场：杀掉占用后端端口的任何进程（上次强退残留的孤儿、没退干净的旧实例）。
 // 每次启动前先清，保证接下来 startBackend() 起的、前端连的，一定是本次安装目录里的后端。
-function killPortOccupant() {
-  let pids = '';
+function 端口占用者() {
   try {
-    pids = execSync(`lsof -ti tcp:${BACKEND_PORT} -sTCP:LISTEN 2>/dev/null || true`).toString().trim();
-  } catch { return; }
-  if (!pids) return;
-  for (const pid of pids.split('\n').filter(Boolean)) {
+    return execSync(`lsof -ti tcp:${BACKEND_PORT} -sTCP:LISTEN 2>/dev/null || true`)
+      .toString().trim().split('\n').filter(Boolean);
+  } catch { return []; }
+}
+
+// SIGKILL 是异步的，而且被杀的是上一轮残留的孤儿——它不是 Electron 的子进程，
+// Electron 收不了尸，得等系统回收。这中间监听套接字还挂着，实测约 7 毫秒。
+// 杀完立刻起后端的话，bind 一定撞 EADDRINUSE，后端 code=1 退出，用户看到崩溃弹窗。
+// 所以这里要等端口真的空出来再返回。
+function killPortOccupant() {
+  const pids = 端口占用者();
+  if (!pids.length) return true;
+  for (const pid of pids) {
     try { process.kill(parseInt(pid, 10), 'SIGKILL'); console.log('[backend] killed stale occupant pid', pid); }
     catch (e) { console.warn('[backend] kill', pid, 'failed:', e.message); }
   }
+  const 截止 = Date.now() + 5000;
+  while (Date.now() < 截止) {
+    if (!端口占用者().length) {
+      console.log('[backend] 端口已空出');
+      return true;
+    }
+    try { execSync('sleep 0.05'); } catch {}
+  }
+  console.warn('[backend] 等了 5 秒端口还被占着，占用者:', 端口占用者().join(','));
+  return false;
 }
 
 // packaged：一律清场重起，杜绝强退残留的孤儿（KNOWLEDGE #7）。
@@ -319,6 +342,20 @@ function splashEval(js) {
   }
 }
 
+// 同时开两个 SkyArt，两边都会去清场、都去 bind 同一个端口，后起的那个必然
+// 报 EADDRINUSE 并弹崩溃框。第二个实例直接退出，把已经开着的那个窗口叫到前面。
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
 app.whenReady().then(async () => {
   buildMenu();
   createSplash();
@@ -349,18 +386,25 @@ app.whenReady().then(async () => {
   await ensureBackend();
 
   let backendOK = false;
-  try {
-    await waitForBackend(120000);
-    console.log('[backend] Ready ✓');
-    backendOK = true;
-  } catch (e) {
-    console.error('[backend] startup failed:', e.message);
-    // 版本不一致（连到了残留旧实例）：强制清场再起一次
-    if (String(e.message).startsWith('VERSION_MISMATCH')) {
+  // 端口撞车是可以自愈的：孤儿进程被系统回收要几毫秒，这期间 bind 必失败。
+  // 原来一次失败就 code=1 弹崩溃框，用户手动重启一次又好了——那一次重启本可以省掉。
+  for (let 第几次 = 1; 第几次 <= 3 && !backendOK; 第几次++) {
+    try {
+      await waitForBackend(第几次 === 1 ? 120000 : 60000);
+      console.log('[backend] Ready ✓' + (第几次 > 1 ? ` (第 ${第几次} 次)` : ''));
+      backendOK = true;
+      break;
+    } catch (e) {
+      console.error(`[backend] 第 ${第几次} 次启动失败:`, e.message);
+      if (第几次 === 3) break;
+      // 值得再试的两种：端口被占着起不来、连到了版本不符的残留实例。
+      // 其余原因（缺文件、权限）重试也是白试，直接把崩溃信息交给用户。
+      const 撞端口 = backendCrashed && /address already in use|Errno 48/i.test(最近崩溃信息());
+      const 版本不符 = String(e.message).startsWith('VERSION_MISMATCH');
+      if (!撞端口 && !版本不符) break;
+      splashEval(`setHint('端口被占用，正在清理后重试…');`);
       killPortOccupant();
       startBackend();
-      try { await waitForBackend(60000); backendOK = true; console.log('[backend] Ready ✓ (after reclaim)'); }
-      catch (e2) { console.error('[backend] retry failed:', e2.message); }
     }
   }
 
