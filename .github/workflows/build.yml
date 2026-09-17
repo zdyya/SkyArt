@@ -100,10 +100,10 @@ jobs:
             --notes-file changelog.txt
 
       - name: 发送飞书发版通知
-        # beta 是内部版，打 tag 只为在 GitHub 上留一份 Release 和包，不进群。
-        # 要给群里发 beta，本地跑 .github/scripts/notify_feishu_release.py，
+        # 默认不发。要给群里发，在仓库 Variables 里加 FEISHU_NOTIFY=true，
+        # 或者本地跑 .github/scripts/notify_feishu_release.py，
         # 凭证在 ~/.config/feishu-doc-cli/.env。
-        if: ${{ startsWith(github.ref, 'refs/tags/') && !contains(github.ref_name, '-beta') }}
+        if: ${{ startsWith(github.ref, 'refs/tags/') && vars.FEISHU_NOTIFY == 'true' }}
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}

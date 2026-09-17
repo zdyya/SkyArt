@@ -24,7 +24,7 @@ from app.core.logs import setup_logging, log_event, machine_profile
 # 打包版启动时 main.js 拿 app.getVersion() 和后端 / 返回的版本比对，不等就拒绝连接
 # （防「壳新芯旧」，见 KNOWLEDGE #19）。这两处曾经各走各的，一个 beta.3 一个 beta.6。
 # 改完必须重跑 PyInstaller——npm run pack 不会重编后端，包里带的还是上一次编的版本。
-APP_VERSION = "1.0.7-beta.10"
+APP_VERSION = "1.1.0"
 
 # 尽早安装日志 tee（捕获含 uvicorn 在内的全部 stdout/stderr → 按天滚动日志文件）
 setup_logging()
