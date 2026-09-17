@@ -413,7 +413,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
       <select class="input" id="c-ai-model">
         <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
              Gemini 那档不写版本号——请求体里不带 model 字段，实际跑哪个由 Dscript 代理定，
-             SkyArt 这边无从得知；通义那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
+             SkyArt 这边无从得知；Qwen 那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
         <option value="gemini-3.5-flash">Gemini</option>
         <option value="qwen3.7-plus">Qwen</option>
       </select>
@@ -500,7 +500,7 @@ body.selecting .project-card.busy .busy-tag{display:block;}
       <select class="input" id="e-ai-model">
         <!-- value 是分支开关不是型号：后端只看它是不是 gemini 开头，改 value 会让老项目落空。
              Gemini 那档不写版本号——请求体里不带 model 字段，实际跑哪个由 Dscript 代理定，
-             SkyArt 这边无从得知；通义那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
+             SkyArt 这边无从得知；Qwen 那档后端钉死 qwen3-vl-plus，原来标 Qwen3.7-Plus 是错的。 -->
         <option value="gemini-3.5-flash">Gemini</option>
         <option value="qwen3.7-plus">Qwen</option>
       </select>
@@ -702,8 +702,11 @@ document.addEventListener('click', e => {
 });
 function logoutToHome() { clearAuth(); }  // 清 token 后回首页，首页会转到登录态
 
+// 列表页是哪一类项目的，出去的链接都要带着走。丢了 kind 再回来，
+// 列表按 marks 过滤，2.0 的项目一个都不显示，界面写「还没有项目」。
+const KIND_Q = PAGE_KIND === 'segments' ? '&kind=segments' : '';
 function enterProject(pid) {
-  window.location.href = `editor.html?projectId=${pid}`;
+  window.location.href = `editor.html?projectId=${pid}${KIND_Q}`;
 }
 
 // ── Projects ─────────────────────────────────────────────────
@@ -1401,13 +1404,13 @@ async function createTemplate() {
     });
     closeNewTemplateModal();
     // 创建后直接进编辑页配置内容
-    window.location.href = `template-editor.html?templateId=${t.id}`;
+    window.location.href = `template-editor.html?templateId=${t.id}${KIND_Q}`;
   } catch (e) { toast(e.message, 'error'); btn.disabled = false; btn.textContent = '创建'; }
 }
 
 function editTemplate(tid) {
   _closeAllDropdowns();
-  window.location.href = `template-editor.html?templateId=${tid}`;
+  window.location.href = `template-editor.html?templateId=${tid}${KIND_Q}`;
 }
 
 async function duplicateTemplate(tid) {

@@ -217,11 +217,11 @@ async def system_config_status():
         ("美区 OSS Secret", settings.OSS_SECRET_SkyArt_US),
         ("美区 OSS Bucket", settings.OSS_BUCKET_SkyArt_US),
     ])
-    # 通义链路查的是 QWEN_API_KEY 加美区 OSS 三项，与 HappyHorse 无关
+    # Qwen 链路查的是 QWEN_API_KEY 加美区 OSS 三项，与 HappyHorse 无关
     # （HappyHorse 是短剧成片那条线的 key，见 KNOWLEDGE #15）。两者混用会让
-    # 面板在两个方向上都判错：配好通义显示没配，只配 HappyHorse 显示已配好。
+    # 面板在两个方向上都判错：配好 Qwen显示没配，只配 HappyHorse 显示已配好。
     ai_qwen = _missing([
-        ("通义 API Key", settings.QWEN_API_KEY),
+        ("Qwen API Key", settings.QWEN_API_KEY),
         ("美区 OSS AccessKey", settings.OSS_KEY_SkyArt_US),
         ("美区 OSS Secret", settings.OSS_SECRET_SkyArt_US),
         ("美区 OSS Bucket", settings.OSS_BUCKET_SkyArt_US),
@@ -321,7 +321,7 @@ async def system_selfcheck(deep: int = 0):
     # 出现在素材制作的状态面板里只会让人以为自己少配了什么。要看它的状态去那条线里看。
     for key, name, hint in (
         ("ai_gemini", "AI 分析（Gemini）", "在设置里补全后重启应用"),
-        ("ai_qwen", "AI 分析（通义）", "在设置里补全后重启应用"),
+        ("ai_qwen", "AI 分析（Qwen）", "在设置里补全后重启应用"),
     ):
         g = cfg[key]
         add(key, name, "ok" if g["ok"] else "warn",

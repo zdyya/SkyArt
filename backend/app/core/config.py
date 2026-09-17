@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
 
     # AI API (填入真实 Key 后生效)
-    # 阿里云 MaaS 白名单专属通道（Work/阿里云白名单调用规范.md）。
+    # 阿里云 MaaS 白名单专属通道。
     # 区域锁死在美国 us-east-1：这条通道的 key 打公网 dashscope 或其他区域地址
     # 一律报 invalid_api_key，Host 和 key 必须成对使用。
     # 通道内每个请求都要带 X-DashScope-DataInspection 关绿网，不带报 access_denied。

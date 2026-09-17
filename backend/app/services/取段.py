@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """按剪辑模板从段库里挑段、排出成片计划。
 
-移植自 Work/creative-decompose/demo/core.py，算法和分值照 demo/契约.md，
+算法和分值见下面的 分值 / 结构分值 两张表，
 数据源从扫目录读 structure.json 换成查 admake_segments。
 
 产出的计划表跟高光钩子那条路同形状（file_path / start / end / label /
@@ -9,7 +9,7 @@ part_name / score），后面的裁切、拼接、命名、日志、重试原样
 """
 import statistics
 
-# 内容条件的分值。改这里等于改模板的匹配口径，改前先看 demo/契约.md 第三节。
+# 内容条件的分值。改这里等于改模板的匹配口径，所有模板的匹配度会跟着变。
 分值 = {
     '最强的一刻属于哪一类': 3,
     '主角在这一刻是': 2,

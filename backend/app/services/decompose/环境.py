@@ -48,6 +48,26 @@ def 分析模型() -> str:
     return m if m.startswith("qwen") else "qwen3.8-flash"
 
 
+# 设置面板里「Qwen · API 地址」的默认值，也是白名单通道的地址。
+# 用户把那一栏清空时回落到它，免得整条管线因为一个空串全挂。
+默认通道 = "https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com"
+
+
+def qwen_host() -> str:
+    """拆解管线的接口地址，跟 app 其余部分读同一个配置项。
+
+    配置里存的是带 /api/v1 的完整地址（chat 接口那边要），这里要的是主机部分，
+    多模态和文本两个端点各自往后拼，所以把尾巴摘掉。
+    """
+    try:
+        from app.core.config import settings
+        u = (getattr(settings, "QWEN_BASE_URL", "") or "").strip()
+    except Exception:
+        u = ""
+    u = u or 默认通道
+    return u.rstrip("/").removesuffix("/api/v1").rstrip("/")
+
+
 def qwen_key() -> str:
     """跟 app 其余部分共用一把 key，不再读 ~/.happyhorse.env。
 
@@ -63,5 +83,5 @@ def qwen_key() -> str:
     except Exception:
         k = ""
     if not k:
-        raise 拆解失败("未配置 QWEN_API_KEY，请在设置里填好通义 API Key 再重启应用")
+        raise 拆解失败("未配置 QWEN_API_KEY，请在设置里填好 Qwen API Key 再重启应用")
     return k

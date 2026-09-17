@@ -11,7 +11,7 @@ DashScope 视频编辑接口需要公网可访问的 URL。
   OSS_BUCKET_NAME        — bucket 名称（需开启公共读，或改用签名 URL）
   OSS_ENDPOINT           — 如 https://oss-cn-hangzhou.aliyuncs.com
   OSS_CUSTOM_DOMAIN      — 可选，绑定的自定义域名（不填则用默认 bucket 域名）
-  HAPPYHORSE_BASE_URL    — 阿里云白名单通道 us-east-1（见 Work/阿里云白名单调用规范.md）
+  HAPPYHORSE_BASE_URL    — 阿里云白名单通道 us-east-1
 
 无 API key 时自动 fallback 到 mock 模式。
 """

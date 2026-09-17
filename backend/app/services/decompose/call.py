@@ -3,7 +3,7 @@
 
 分析只用一种模型：qwen，走阿里云白名单通道直连，不经代理。每个请求都带绿网
 免审头，输入输出都不过平台审核——素材是海外短剧，亲密和暴力场景占比高，过审
-会把整段拦掉。通道地址和头的写法见 Work/阿里云白名单调用规范.md。
+会把整段拦掉。免审头是下面的 QWEN_INSPECT，通道地址读设置里那一栏。
 
 默认模型 qwen3.8-flash，默认每处调用跑 3 遍取并集。用 MODEL 和 RUNS 覆盖，
 MODEL 只接受 qwen 开头的名字。
@@ -30,7 +30,7 @@ import httpx
 # 长任务的进度要等几分钟才看得到，只能拿 lsof 猜它在干什么。
 sys.stdout.reconfigure(line_buffering=True)
 
-from .环境 import 拆解失败, 提示词目录, 分析模型, qwen_key as _环境key
+from .环境 import 拆解失败, 提示词目录, 分析模型, qwen_key as _环境key, qwen_host
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 PROMPTS = 提示词目录()
@@ -53,19 +53,21 @@ class Blocked(Exception):
 MODEL = 分析模型()
 if not MODEL.startswith('qwen'):
     raise RuntimeError(f'MODEL 只能是 qwen 开头的名字，现在是 {MODEL}')
-# 跑几遍取并集。**保持 3，别再往下砍**。
-# 2026-09-17 实测过 2：同三个 Part、同 3 路并发、全清缓存，耗时省 14%，
-# 但剧情点从 34/44/55 掉到 20/30/35（少三分之一），其中一个 Part 的段落类型
-# 塌成 7 段里 6 段都是「情绪」。
-# 离线按「时刻」算覆盖率说只丢 3.8%，那个口径预测不了下游——剧情点是第二步
-# 推理模型读完整个事件列表归纳出来的，事件读法少三分之一，它能归纳的就少三分之一。
-# 要试更快的路子，调 THINK 里的思考预算，别动这里。
+# 同一份输入跑几遍取并集。保持 3，别往下砍：砍到 2 只省 14% 的时间，
+# 剧情点却少三分之一，还会让整个 Part 的段落类型塌成同一类。剧情点由第二步
+# 推理模型读完整个事件列表归纳，事件读法少一批，它能归纳的就少一批。
+# 要提速调 THINK 里的思考预算。
 RUNS = int(os.environ.get('RUNS', '3'))
 
-# 阿里云 MaaS 白名单通道，美国 us-east-1。调用规范见 Work/阿里云白名单调用规范.md。
-QWEN_HOST = 'https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com'
-QWEN_MM = QWEN_HOST + '/api/v1/services/aigc/multimodal-generation/generation'
-QWEN_TXT = QWEN_HOST + '/compatible-mode/v1/chat/completions'
+# 阿里云 MaaS 白名单通道，美国 us-east-1。
+# 接口地址跟 app 其余部分共用「Qwen · API 地址」那一栏，不在这里写死——
+# 写死的话用户改了设置，老功能跟着走、新功能还连旧地址，两边对不上。
+def _mm():
+    return qwen_host() + '/api/v1/services/aigc/multimodal-generation/generation'
+
+
+def _txt():
+    return qwen_host() + '/compatible-mode/v1/chat/completions'
 QWEN_INSPECT = '{"input":"disable","output":"disable"}'
 # 视频走 base64 内联，超过这个大小先转码。90 秒 480p crf28 实测 2.4 MB。
 # 视频要 base64 塞进请求体，编码后涨三分之一，同一个请求里还有十几张帧。
@@ -423,14 +425,14 @@ def _gen_qwen(parts, thinking, tag):
     think = thinking is None or thinking != 0
     budget = thinking if isinstance(thinking, int) and thinking > 0 else None
     if media:
-        url = QWEN_MM
+        url = _mm()
         par = {'enable_thinking': think, 'max_tokens': _qwen_max(budget)}
         if budget:
             par['thinking_budget'] = budget
         body = {'model': MODEL, 'input': {'messages': [{'role': 'user', 'content': content}]},
                 'parameters': par}
     else:
-        url = QWEN_TXT
+        url = _txt()
         body = {'model': MODEL, 'temperature': 0, 'enable_thinking': think,
                 'max_tokens': _qwen_max(budget),
                 'messages': [{'role': 'user',

@@ -322,6 +322,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 .settings-section { font-size: 12px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin: 20px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
 .settings-section:first-of-type { margin-top: 0; }
 .cfg-row { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+.cfg-note { font-size: 12px; line-height: 1.5; color: var(--text3); margin: -4px 0 10px; }
 .cfg-label { font-size: 13px; font-weight: 500; color: var(--text2); }
 .cfg-input { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 8px 12px; font-size: 13px; width: 100%; outline: none; transition: border-color 0.15s; }
 .cfg-input:focus { border-color: var(--accent); }
@@ -380,7 +381,7 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
       <input class="cfg-input" id="cfg-hh-url" placeholder="https://ws-bljb9l73522yj7vp.us-east-1.maas.aliyuncs.com/api/v1">
     </div>
 
-    <div class="settings-section">Gemini 代理（素材 AI 分析）</div>
+    <div class="settings-section">Gemini 代理（素材制作，按高光钩子剪）</div>
     <div class="cfg-row">
       <div class="cfg-label">Proxy URL</div>
       <input class="cfg-input" id="cfg-gemini-url" placeholder="https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze">
@@ -390,7 +391,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
       <input class="cfg-input" id="cfg-gemini-key" type="password" placeholder="由 Dscript 提供" style="font-family:monospace">
     </div>
 
-    <div class="settings-section">Qwen（素材 AI 分析备选）</div>
+    <div class="settings-section">Qwen（爆款素材分析、素材制作 2.0）</div>
+    <div class="cfg-note">这两个功能只用 Qwen，不填 Key 点分析会直接报错。填完要重启应用才生效。</div>
     <div class="cfg-row">
       <div class="cfg-label">API Key</div>
       <input class="cfg-input" id="cfg-qwen-key" type="password" placeholder="sk-xxxxxxxxxxxxxxxxxxxxxxxx" style="font-family:monospace">
@@ -969,7 +971,7 @@ window.addEventListener('pageshow', () => { _navLock = false; });
 
 function enterDrama() {
   if (document.getElementById('card-drama').classList.contains('locked')) return;
-  _navAfterJelly('DemoWhite.html');
+  // 短剧创作的页面还没做，这张卡一直锁着。页面做好之后在这里接上跳转。
 }
 
 function enterAdMake() {

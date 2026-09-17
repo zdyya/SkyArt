@@ -8,7 +8,7 @@
 
 字段名以调好的原型为准，别在这里自己改。
 
-搬自 creative-decompose/demo/core.py 的 _一段，去掉了片源和帧这些只有研究
+一段的装配逻辑，去掉了片源和帧这些只有研究
 脚本才用的路径字段——app 里视频由 Part 自己管。
 """
 from . import grade as G

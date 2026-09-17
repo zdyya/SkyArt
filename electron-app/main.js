@@ -83,7 +83,7 @@ function buildBackendEnv() {
     DATABASE_URL:         `sqlite+aiosqlite:///${path.join(dataDir, 'skyart.db')}`,
     SECRET_KEY:           cfg.secretKey           || 'skyart-default-secret-2024',
     HAPPYHORSE_API_KEY:   cfg.happyhorseApiKey    || '',
-    // 阿里云 MaaS 白名单专属通道（Work/阿里云白名单调用规范.md）。区域锁死 us-east-1，
+    // 阿里云 MaaS 白名单专属通道。区域锁死 us-east-1，
     // 这条通道的 key 打公网 dashscope 或别的区域一律 invalid_api_key，Host 与 key 成对使用。
     HAPPYHORSE_BASE_URL:  _maasUrl(cfg.happyhorseBaseUrl),
     GEMINI_PROXY_URL:     cfg.geminiProxyUrl      || 'https://dscriptr.stg.shoplazza.com/skyart/gemini/analyze',

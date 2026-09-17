@@ -4,7 +4,7 @@
 日志每行带时间戳（_Tee 加的），阶段边界靠管线自己打印的那几句话认。
 同一个 Part 的行按它的拆解目录名归堆，多个 Part 并发时不会串。
 """
-import re, sys, glob
+import os, re, sys, glob
 from datetime import datetime
 
 行 = re.compile(r'^\[(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+)\]\s?(.*)$')
@@ -23,7 +23,7 @@ def 名(t):
     m = re.search(r'(/\S*?/([^/]+)_拆解)/', t)
     if not m:
         return None
-    return m.group(1).replace('/Users/jimmy/VScode/SkyArt-段库分析/backend/uploads/AdMake/', '')
+    return re.sub(r'^.*?/uploads/AdMake/', '', m.group(1))
 
 def 秒(a, b):
     return (b - a).total_seconds()
@@ -116,8 +116,9 @@ def 合成耗时(事):
                     print(f'  {法}　{用:6.1f} 秒　片长 {长:.0f} 秒　'
                           f'{用/长*60:.1f} 秒/分钟素材' if 长 else f'  {法}　{用:6.1f} 秒')
 
-fs = sys.argv[1:] or sorted(glob.glob(
-    '/Users/jimmy/VScode/SkyArt-段库分析/backend/logs/backend-*.log'))[-1:]
+_默认 = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     'backend', 'logs', 'backend-*.log')
+fs = sys.argv[1:] or sorted(glob.glob(_默认))[-1:]
 事 = sorted(sum((读(x) for x in fs), []))
 合成耗时(事)
 print('\n— AI 分析 —')

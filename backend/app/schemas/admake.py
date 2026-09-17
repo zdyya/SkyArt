@@ -159,7 +159,7 @@ class AdmakeCutTemplateIn(BaseModel):
     source: str = "剪辑自定义模板"
     source_note: str = ""
     kind: str = "整条"
-    slots: list[dict] = []          # 「格」数组，schema 见 demo/契约.md
+    slots: list[dict] = []          # 「格」数组，每格声明条件，形状见 取段.py
 
 
 class AdmakeCutTemplateOut(BaseModel):

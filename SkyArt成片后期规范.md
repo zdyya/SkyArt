@@ -1,6 +1,6 @@
 # SkyArt 成片批量后期规范
 
-脚本：`/Users/jimmy/VScode/SkyArt/skyart_batch.py`
+脚本：仓库根目录的 `skyart_batch.py`
 
 ## 1. 输入
 
@@ -10,15 +10,14 @@
 | 结尾板 | 任意分辨率 mp4，非 9:16 时自动等比缩放+补黑边（不裁切，防止文字丢失） |
 | 标题图 | 透明底 PNG，宽 1080（由 Pillow 渲染花体，见 §4） |
 
-当前项目示例：
+三个输入分别在哪：
 
-- 素材：`/Users/jimmy/Library/Application Support/SkyArtDemo/skyart-data/AdMake/Export/project_1_Vows_of_a_Vegas_Heiress/20260709_001/`
-- 结尾板：`/Users/jimmy/Downloads/结尾.mp4`
-- 标题图：`/Users/jimmy/Downloads/花体字预览/标题字样_大.png`
+- 素材：装好的 app 的导出目录，`~/Library/Application Support/SkyArtDemo/skyart-data/AdMake/Export/<项目>/<批次>/`
+- 结尾板、标题图：自己准备，放哪都行，按下面的命令传绝对路径
 
 ## 2. 输出
 
-- 目录：固定 `/Users/jimmy/Desktop/py 贴片自动化`（导出目录嵌套太深，改放桌面；可用第 4 个参数覆盖）
+- 目录：由第 4 个参数指定。导出目录嵌套太深，一般另找一个浅目录放
 - 命名：与原文件名一致（不加后缀）
 - 规格：1080×1920 @30fps，H.264（videotoolbox 硬编码）8Mbps，AAC 128k 44.1kHz
 - 交付压缩【2026-07-23 起改为按需，不再默认执行】：用户明确要求时才做，命令为 `libx264 -preset fast -crf 22 -profile:v main -level:v 4.0 -c:a aac -b:a 160k -movflags +faststart`，体积约降 50%~60%，实测约 30-70 秒/条（随片长）；批量覆盖一律"压到临时目录→时长校验→替换"
@@ -40,7 +39,7 @@
 ```bash
 # 全量（4 路并行，约 5 分钟/10 条）
 cd <素材目录> && ls *.mp4 | xargs -P 4 -I {} \
-  python3 /Users/jimmy/VScode/SkyArt/skyart_batch.py <素材目录> <结尾.mp4> <标题.png> <输出目录> --only {}
+  python3 skyart_batch.py <素材目录> <结尾.mp4> <标题.png> <输出目录> --only {}
 
 # 单条
 python3 skyart_batch.py <素材目录> <结尾.mp4> <标题.png> [输出目录] [--only 文件名]

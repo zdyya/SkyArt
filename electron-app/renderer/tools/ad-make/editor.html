@@ -111,7 +111,12 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .marks-section{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;}
 .marks-body{flex:1;overflow-y:auto;padding:8px 10px;}
 
-/* ── 段视图：右栏「内容分析」与导轨上的段块，照 原型/按模板剪_界面原型.html ── */
+/* 失败原因直接写在这一行下面。原来只做成 tooltip，同事不会想到去悬停，
+   看到的就是光秃秃一个「失败」，不知道是缺 key 还是网络断了。 */
+.part-err{margin:2px 0 0 0;padding:0 2px;font-size:11px;line-height:1.45;color:var(--danger,#d64545);
+  word-break:break-all;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+/* ── 段视图：右栏「内容分析」与导轨上的段块 ── */
 .anno-line{display:flex;gap:8px;font-size:12px;line-height:1.9;}
 .anno-line .k{color:var(--text3);width:92px;flex:none;}
 .anno-line .v{flex:1;min-width:0;}
@@ -1166,7 +1171,7 @@ function _switchToSegmentView() {
 
 async function init() {
   if (!authToken) { clearAuth(); return; }
-  if (!PROJ_ID) { window.location.href = 'index.html'; return; }
+  if (!PROJ_ID) { window.location.href = 'index.html' + (params.get('kind') === 'segments' ? '?kind=segments' : ''); return; }
   // Always set up interaction handlers first — must not be inside try/catch
   setupModeListeners();
   checkFfmpeg();   // 环境依赖检测：缺 ffmpeg 时顶部红条提示
@@ -1459,10 +1464,12 @@ function renderPartsList() {
         </span>
       </div>
       ${st.text ? `<div class="part-line2">
-        <span class="part-state ${st.tone}" ${p.ai_error ? `title="${esc(p.ai_error)}"` : ''}>
+        <span class="part-state ${st.tone}">
           <span class="${st.spin ? 'part-spin' : 'part-dot-sm'}"></span>${st.text}</span>
         <span style="margin-left:auto;">${btn}</span>
       </div>` : ''}
+      ${p.ai_status === 'failed' && p.ai_error
+        ? `<div class="part-err" title="${esc(p.ai_error)}">${esc(p.ai_error)}</div>` : ''}
     </div>`;
   }).join('');
 }
@@ -2594,7 +2601,7 @@ function fieldLabel(f) {
 }
 
 // ── Marks ───────────────────────────────────────────────────────────────────
-// ── 段视图：右栏内容分析 + 导轨段块。照 原型/按模板剪_界面原型.html ──
+// ── 段视图：右栏内容分析 + 导轨段块 ──
 
 async function loadSegments() {
   if (!activePartId) return;
@@ -3421,7 +3428,12 @@ function toggleExportBatch(key) {
 
 // ── Navigation ───────────────────────────────────────────────────────────────
 function goHome() { _inAppNav = true; window.location.href = '../../home.html'; }
-function goBack() { _inAppNav = true; window.location.href = `index.html?projectId=${PROJ_ID}`; }
+// 带上项目类型：列表页靠它决定显示哪一类，不带回去的是老路那张空列表
+function goBack() {
+  _inAppNav = true;
+  const k = PROJ_KIND === 'segments' ? '&kind=segments' : '';
+  window.location.href = `index.html?projectId=${PROJ_ID}${k}`;
+}
 
 // ── 悬停说明 ─────────────────────────────────────────────────────────────────
 // 浮层挂在 body 上，不受弹窗的 overflow 裁剪；文案写在 .info-ic 的 data-tip 里。

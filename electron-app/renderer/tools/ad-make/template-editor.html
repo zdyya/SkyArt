@@ -403,6 +403,9 @@ const API = `http://127.0.0.1:${_PORT}/api/v1`;
 const ORIGIN = `http://127.0.0.1:${_PORT}`;
 let authToken = localStorage.getItem('skyart_token') || '';
 const TID = Number(new URLSearchParams(location.search).get('templateId'));
+// 从哪张列表进来的就回哪张。丢了 kind，2.0 的人会被送回老路那张空列表。
+const _KIND = new URLSearchParams(location.search).get('kind') === 'segments' ? 'kind=segments' : '';
+const _KQ = (sep) => (_KIND ? (sep || '?') + _KIND : '');
 
 // 模板配置（前端权威状态，保存时 PUT 整个 config）
 // 静态贴纸和动态贴纸各自的张数上限，两边独立不共用。贴多了画面就乱了
@@ -493,7 +496,7 @@ function assetUrl(asset) { return `${ORIGIN}/uploads/AdMake/Templates/template_$
 // ── 载入 ──
 let _loadFailed = false;  // 载入失败必须锁死保存——否则空画布一保存就把线上模板洗成空的
 async function init() {
-  if (!authToken || !TID) { location.href = 'index.html'; return; }
+  if (!authToken || !TID) { location.href = 'index.html' + _KQ(''); return; }
   loadFonts();
   try {
     const t = await apiFetch(`/admake/templates/${TID}`);
@@ -1338,7 +1341,7 @@ function goList() {
   // 有未保存改动先弹自绘确认框，主按钮引导「保存并返回」——
   // 原生 confirm 的高亮键是"确定丢弃"，等于把丢版式做成默认动作，被用户否掉
   if (_savedSnap && _snap() !== _savedSnap) { showLeaveModal(); return; }
-  location.href = 'index.html?view=templates';  // 回到成片模板 tab，不落到我的项目
+  location.href = 'index.html?view=templates' + _KQ('&');  // 回到成片模板 tab，不落到我的项目
 }
 let _leaveTarget = '';
 // 外部脚本（右侧任务浮窗）发起的跳转先过一遍未保存确认。拦下返回 true，
@@ -1349,7 +1352,7 @@ window.__guardLeave = (href) => {
   showLeaveModal();
   return true;
 };
-function _gotoList() { location.href = _leaveTarget || 'index.html?view=templates'; }
+function _gotoList() { location.href = _leaveTarget || ('index.html?view=templates' + _KQ('&')); }
 function showLeaveModal() {
   document.getElementById('leave-modal').classList.remove('hidden');
   document.getElementById('leave-save-btn').focus();

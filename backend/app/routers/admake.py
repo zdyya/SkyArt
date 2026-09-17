@@ -1259,7 +1259,7 @@ def _load_prompt() -> str:
 AI_ANALYSIS_PROMPT: str = _load_prompt()
 
 
-# 视频剪辑（AdMake）侧指定的通义模型。白名单通道 2026-08-26 复扫确认已授权，
+# 视频剪辑（AdMake）侧指定的Qwen 模型。白名单通道 2026-08-26 复扫确认已授权，
 # 敏感剧情梗概分析不被拦截；视觉输入走 OpenAI 兼容端点即可（DE/key.md 实测）。
 # 2026-08-29 在白名单通道上用真实短剧素材横评三个可用模型（同一段 90 秒素材、
 # 同一条提示词）：qwen3-vl-plus 13.2 秒出 13 段高光，每段 2~10 秒；qwen3.7-plus
@@ -1284,7 +1284,7 @@ async def _analyze_one_part(part: AdmakePart, on_stage=None) -> dict:
       video: file_id 传法（要求 list）；美区 OSS 签名 URL 国内端点可正常拉取。"""
     api_key = settings.QWEN_API_KEY
     if not api_key:
-        raise RuntimeError("未配置 QWEN_API_KEY，请在设置中填写通义 API Key 后重启应用")
+        raise RuntimeError("未配置 QWEN_API_KEY，请在设置中填写 Qwen API Key 后重启应用")
     base = settings.QWEN_BASE_URL.rstrip("/")
     compat_base = re.sub(r"/api/v1$", "/compatible-mode/v1", base)
 
@@ -1474,7 +1474,7 @@ async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -
     叠加重试和多 Part 串行，缺密钥要等约 10 分钟才暴露（2026-07-02 事故）。
     OSS 用只读免费的 get_bucket_info 实测连通性；DashScope 用 /models 只读端点；
     Gemini 代理没有健康检查端点，只能做非空检查。"""
-    # gemini / 通义两条链路的视频都经美区 OSS 中转，OSS 凭证实测对两者都必做。
+    # gemini / Qwen两条链路的视频都经美区 OSS 中转，OSS 凭证实测对两者都必做。
     async def _probe_oss_us():
         missing = [name for name, value in (
             ("OSS_KEY_SkyArt_US", settings.OSS_KEY_SkyArt_US),
@@ -1528,9 +1528,9 @@ async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -
             raise HTTPException(400, "未配置 GEMINI_PROXY_KEY，请在设置中填写 Dscript 代理密钥后重启应用")
         await _probe_oss_us()
     else:
-        # 通义分支：QWEN_API_KEY + 国内端点（不是 HAPPYHORSE 美区 key，见 KNOWLEDGE #15）。
+        # Qwen 分支：QWEN_API_KEY + 国内端点（不是 HAPPYHORSE 美区 key，见 KNOWLEDGE #15）。
         if not settings.QWEN_API_KEY:
-            raise HTTPException(400, "未配置 QWEN_API_KEY，请在设置中填写通义 API Key 后重启应用")
+            raise HTTPException(400, "未配置 QWEN_API_KEY，请在设置中填写 Qwen API Key 后重启应用")
         await _probe_oss_us()
         base = settings.QWEN_BASE_URL.rstrip("/")
         compat_base = re.sub(r"/api/v1$", "/compatible-mode/v1", base)
@@ -1552,14 +1552,14 @@ async def _precheck_ai_credentials(ai_model: str, project_kind: str = "marks") -
         except httpx.DecodingError as e:
             diag_headers = dict(getattr(getattr(e, "response", None), "headers", {}) or {})
             log_failure("admake.precheck_qwen", e, response_headers=str(diag_headers)[:300])
-            raise HTTPException(400, f"通义服务响应异常（内容编码损坏，多与代理/网络中间层有关）：{str(e)[:100]}")
+            raise HTTPException(400, f"Qwen 服务响应异常（内容编码损坏，多与代理/网络中间层有关）：{str(e)[:100]}")
         except Exception as e:
             log_failure("admake.precheck_qwen", e)
-            raise HTTPException(400, f"通义服务连接失败，请检查网络：{str(e)[:120]}")
+            raise HTTPException(400, f"Qwen 服务连接失败，请检查网络：{str(e)[:120]}")
         if resp.status_code in (401, 403):
             raise HTTPException(400, "QWEN_API_KEY 无效或已过期，请检查设置后重启应用")
         if resp.status_code >= 500:
-            raise HTTPException(400, f"通义服务异常（HTTP {resp.status_code}），请稍后重试")
+            raise HTTPException(400, f"Qwen 服务异常（HTTP {resp.status_code}），请稍后重试")
 
 
 def _proxy_err_msg(status_code: int, body: str) -> str:
@@ -1743,7 +1743,7 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
         f"Project  : {project_title} (id={project_id})\n"
         f"Batch    : {batch_name}\n"
         f"Started  : {started_str}\n"
-        # ai_model 是分支开关（gemini 走代理 / 其余走通义），不是实际型号：Gemini 分支
+        # ai_model 是分支开关（gemini 走代理 / 其余走 Qwen），不是实际型号：Gemini 分支
         # 的请求体不带 model 字段，跑哪个版本由 Dscript 代理定。照抄它会让日志读起来
         # 像实测记录，所以这里写实际能确定的那部分。
         f"AI Model : {'Gemini（Dscript 代理，版本以代理为准）' if ai_model.startswith('gemini') else QWEN_VL_MODEL}\n"
@@ -1785,7 +1785,12 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 _refresh_progress()
                 await _set_ai_status("analyzing")
 
+                nonlocal_步 = ["start"]   # 闭包里要改它，用单元素列表
+
                 def _set_stage(stage: str):
+                    # 失败日志要能说清挂在哪一步。只写进 active 的话，Part 一出错
+                    # 就从 active 里摘掉了，事后翻日志只看得到一句异常。
+                    nonlocal_步[0] = stage
                     if part_id in active:
                         active[part_id]["stage"] = stage
                         active[part_id]["stage_since_ts"] = _time.time()
@@ -1876,8 +1881,16 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                     "name": part.name or f"Part{i + 1}", "highlights": len(highlights),
                     "hooks": len(hooks), "elapsed": int(elapsed), "kind": project_kind,
                 })
-                log_event("admake.ai_analyze", part_id=part_id, status="ok",
-                          highlights=len(highlights), hooks=len(hooks), elapsed_ms=int(elapsed * 1000))
+                # 段库这条路拆出几段、几个剧情点，是事后判断这次分析好不好的唯一依据。
+                # 老路的 highlights/hooks 在这条路上借位当了计数，字段名对不上，另记一份。
+                if project_kind in _段库类型:
+                    log_event("admake.ai_analyze", part_id=part_id, status="ok",
+                              kind=project_kind, seg_count=len(highlights),
+                              plot_count=len(hooks), elapsed_ms=int(elapsed * 1000))
+                else:
+                    log_event("admake.ai_analyze", part_id=part_id, status="ok",
+                              kind=project_kind, highlights=len(highlights),
+                              hooks=len(hooks), elapsed_ms=int(elapsed * 1000))
 
             except Exception as e:
                 elapsed    = _time.monotonic() - part_start
@@ -1885,11 +1898,14 @@ async def _run_ai_analyze(project_id: int, part_ids: list[int], ai_model: str = 
                 errors.append(f"Part id={part_id}: {last_error}")
                 lines.append(
                     f"Status     : FAILED\n"
+                    f"Stage      : {nonlocal_步[0]}\n"
                     f"Error      : {last_error}\n"
                     f"Elapsed    : {elapsed:.1f} sec\n"
                     f"{'-' * 80}\n\n"
                 )
-                log_failure("admake.ai_analyze", e, part_id=part_id)
+                log_failure("admake.ai_analyze", e, part_id=part_id,
+                            kind=project_kind, stage=nonlocal_步[0],
+                            elapsed_ms=int(elapsed * 1000))
                 await _set_ai_status("failed", last_error)
             finally:
                 active.pop(part_id, None)
