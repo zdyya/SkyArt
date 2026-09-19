@@ -15,6 +15,15 @@ VLM 只回答看画面能回答的问题，时间边界和节奏指标一律本�
 """
 import json, os, re, subprocess, sys
 
+# 本机 ffmpeg 总数闸门。这几个模块也支持当脚本单跑（文件末尾有 __main__），
+# 那时候拿不到 app 包，就退回一个什么都不做的闸门，单跑本来也不存在抢资源的问题。
+try:
+    from app.services import ffmpeg_gate as _闸门
+except Exception:                                    # pragma: no cover
+    class _闸门:                                      # type: ignore
+        class 排队:
+            def __enter__(self): return self
+            def __exit__(self, *e): return False
 from .环境 import 拆解失败, ocr程序
 
 # 输出改成行缓冲。管道里不是 tty 时 Python 默认块缓冲，攒到 8KB 才写盘，
@@ -28,6 +37,14 @@ SEG_MAX = 120.0        # 单段上限，超了在第一轮再切
 
 
 def sh(cmd):
+    if "ffmpeg" in cmd or "ffprobe" in cmd:
+        # 本机 ffmpeg 总数有上限，忙的时候在这里等
+        with _闸门.排队():
+            return _sh_真跑(cmd)
+    return _sh_真跑(cmd)
+
+
+def _sh_真跑(cmd):
     return subprocess.run(cmd, shell=True, capture_output=True, text=True).stdout
 
 

@@ -2,18 +2,90 @@
 import os
 import asyncio
 import shutil
+import subprocess
 import uuid
 import ffmpeg
 from app.core.config import settings
 from app.core.logs import log_event
 from app.services.storage import abs_path
+from app.services import ffmpeg_gate
 
 
-def check_dependencies() -> dict:
+# ffmpeg-python 的 run() 没有超时：一条卡死的 ffmpeg 会一直挂在那里。Part 合成同时
+# 只跑两条，被卡住的那条占着名额不放，后面排队的 Part 永远轮不上，界面上看就是
+# 「合成中」停住不动、别的 Part 一直「排队中」。这里整体换成带时限的版本：到点先把
+# 进程杀掉再抛错，名额当场让出来，那条 Part 记成失败，可以单独重建。
+# 时限定在 25 分钟。2026-09-18 统计 124 条重编码合成：中位 1.5 分钟，加闸门之后
+# 最慢一条 6 分 23 秒，按 6 分钟的 Part 算。同一天 Part 上限提到 10 分钟，单条合成
+# 的活多了将近一倍，时限跟着从 15 分钟放到 25 分钟，留出余量。
+FFMPEG_TIMEOUT_SEC = int(os.environ.get("FFMPEG_TIMEOUT_SEC", "1500"))
+
+
+class FFmpeg超时(Exception):
+    """一条 ffmpeg 跑过了时限，进程已经杀掉。"""
+
+
+def _带时限地跑(stream_spec, cmd="ffmpeg", capture_stdout=False, capture_stderr=False,
+             input=None, quiet=False, overwrite_output=False):
+    with ffmpeg_gate.排队():
+        return _真的跑(stream_spec, cmd, capture_stdout, capture_stderr,
+                     input, quiet, overwrite_output)
+
+
+def _真的跑(stream_spec, cmd, capture_stdout, capture_stderr,
+          input, quiet, overwrite_output):
+    proc = ffmpeg.run_async(
+        stream_spec, cmd,
+        pipe_stdin=input is not None,
+        pipe_stdout=capture_stdout,
+        pipe_stderr=capture_stderr,
+        quiet=quiet,
+        overwrite_output=overwrite_output,
+    )
+    try:
+        out, err = proc.communicate(input, timeout=FFMPEG_TIMEOUT_SEC)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.communicate(timeout=10)
+        except Exception:
+            pass
+        log_event("video.ffmpeg_timeout", timeout_sec=FFMPEG_TIMEOUT_SEC)
+        时长 = (f"{FFMPEG_TIMEOUT_SEC // 60} 分钟" if FFMPEG_TIMEOUT_SEC >= 60
+              else f"{FFMPEG_TIMEOUT_SEC} 秒")
+        raise FFmpeg超时(f"这一条合成跑了超过{时长}还没结束，已终止。可以单独重建这个 Part。")
+    if proc.poll():
+        raise ffmpeg.Error(cmd, out, err)
+    return out, err
+
+
+# OutputStream.run 就是 ffmpeg.run 本身，换掉它，这个文件里所有 .run(quiet=True) 一起生效
+ffmpeg.nodes.OutputStream.run = _带时限地跑
+
+
+_依赖检测缓存: dict | None = None
+
+
+def check_dependencies(force: bool = False) -> dict:
     """检测系统能否找到并运行 ffmpeg / ffprobe（按当前 PATH 解析）。
     返回 {ffmpeg:{ok,path,version,error}, ffprobe:{...}, ok:bool}。
     打包版会把包内 ffmpeg 目录放进 PATH，所以这里能反映"实际会用到的那个"。
+
+    结果在进程里存着，除非 force=True。这个函数要起两个子进程去问版本号，各留 10 秒
+    超时；机器被合成任务占满时抢不到 CPU，两个加起来能拖二十几秒。而首页每次打开都
+    体检一次，ffmpeg 的版本在进程活着的这段时间里又不会变。
+    只存成功的结果。探测失败可能是这一次抢不到 CPU 导致子进程超时，存下来的话
+    首页会一直红着，直到重启应用；失败时 shutil.which 多半直接返回 None，
+    重试也不花什么。
+    用户点「重新检测」走 force=True，重装过 ffmpeg 也能立刻看到新结果。
     """
+    global _依赖检测缓存
+    if force:
+        # 先清掉。不清的话，force 探测失败之后旧的成功结果还留在缓存里，
+        # 用户点完「重新检测」看到红灯，切走再回来又变回绿灯。
+        _依赖检测缓存 = None
+    elif _依赖检测缓存 is not None:
+        return _依赖检测缓存
     import subprocess
     result: dict = {}
     for tool in ("ffmpeg", "ffprobe"):
@@ -34,6 +106,8 @@ def check_dependencies() -> dict:
                 info["error"] = str(e)[:200]
         result[tool] = info
     result["ok"] = result["ffmpeg"]["ok"] and result["ffprobe"]["ok"]
+    if result["ok"]:
+        _依赖检测缓存 = result
     return result
 
 

@@ -30,6 +30,15 @@ import httpx
 # 长任务的进度要等几分钟才看得到，只能拿 lsof 猜它在干什么。
 sys.stdout.reconfigure(line_buffering=True)
 
+# 本机 ffmpeg 总数闸门。这几个模块也支持当脚本单跑（文件末尾有 __main__），
+# 那时候拿不到 app 包，就退回一个什么都不做的闸门，单跑本来也不存在抢资源的问题。
+try:
+    from app.services import ffmpeg_gate as _闸门
+except Exception:                                    # pragma: no cover
+    class _闸门:                                      # type: ignore
+        class 排队:
+            def __enter__(self): return self
+            def __exit__(self, *e): return False
 from .环境 import 拆解失败, 提示词目录, 分析模型, qwen_key as _环境key, qwen_host
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -286,10 +295,11 @@ def qwen_video_uri(path):
         small = os.path.splitext(path)[0] + '.q480.mp4'
         if not os.path.exists(small) or os.path.getmtime(small) < os.path.getmtime(path):
             print(f'    转码 {os.path.basename(path)} → 480p')
-            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', path,
-                            '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
-                            '-vf', 'scale=-2:480', '-c:a', 'aac', '-b:a', '64k', small],
-                           check=True)
+            with _闸门.排队():
+                subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', path,
+                                '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast',
+                                '-vf', 'scale=-2:480', '-c:a', 'aac', '-b:a', '64k', small],
+                               check=True)
         src = small
     b = base64.b64encode(open(src, 'rb').read()).decode()
     return 'data:video/mp4;base64,' + b

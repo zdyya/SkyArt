@@ -40,6 +40,17 @@
 剧情内部的硬切也会产生大残差，靠"剩余时长"这一条把它们排除掉——真片尾板就那么长。
 不满足就返回 0，宁可漏裁不错裁。
 """
+
+# 本机 ffmpeg 总数闸门。这个模块也能当脚本单跑，那时候拿不到 app 包就退回空闸门。
+try:
+    from app.services import ffmpeg_gate as _闸门
+except Exception:                                    # pragma: no cover
+    class _闸门:                                      # type: ignore
+        class 排队:
+            def __enter__(self): return self
+            def __exit__(self, *e): return False
+
+
 import json
 import os
 import shutil
@@ -65,7 +76,8 @@ def _grab_frames(path: str, ss: float, dur: float, out_dir: str) -> list[Image.I
         "-frames:v", str(int(dur / _STEP) + 1),
         os.path.join(out_dir, "f%04d.png"),
     ]
-    subprocess.run(cmd, check=True, capture_output=True)
+    with _闸门.排队():
+        subprocess.run(cmd, check=True, capture_output=True)
     return [Image.open(os.path.join(out_dir, n))
             for n in sorted(os.listdir(out_dir)) if n.endswith(".png")]
 

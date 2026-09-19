@@ -76,10 +76,15 @@ def _install_orphan_guard():
     import threading
     import time
 
-    # 是否被父进程管道托管：Electron spawn 时 stdin 是 pipe(FIFO)；终端/独立运行是 tty
-    # 或重定向文件，都不满足。两条信号都只在托管时启用，避免终端调试时被误退。
+    # 是否被父进程管道托管：终端运行时 stdin 是 tty(字符设备)、重定向是普通文件，
+    # 都不满足，避免终端调试时被误退。
+    # 管道这一侧要同时认 FIFO 和 unix socket：Electron 在 macOS 上 spawn 给的
+    # stdio:'pipe' 落到进程里是 socketpair 的一端，lsof 看是 unix，S_ISFIFO 为假。
+    # 只判 FIFO 的话这两条守卫从来没装上过——强退之后后端被 launchd 收养，
+    # 带着一串 ffmpeg 一直跑到活干完，界面已经没了，机器负载还挂在 100 以上。
     try:
-        managed = stat.S_ISFIFO(os.fstat(sys.stdin.fileno()).st_mode)
+        _模式 = os.fstat(sys.stdin.fileno()).st_mode
+        managed = stat.S_ISFIFO(_模式) or stat.S_ISSOCK(_模式)
     except Exception:
         managed = False
     if not managed:
@@ -106,13 +111,31 @@ def _install_orphan_guard():
         threading.Thread(target=_watch_ppid, daemon=True, name="guard-ppid").start()
 
 
+# 后端的监听地址。探测端口和真正起服务必须用同一个，分开写会走散：
+# 2026-09-18 上午 uvicorn 已经改成只听 127.0.0.1，探测那行还绑着 0.0.0.0，
+# 而 macOS 上带 SO_REUSEADDR 绑 0.0.0.0 跟别人占着的 127.0.0.1 并不冲突，
+# 于是多起来的那个进程判定「端口空着」，跑完启动清扫才在绑端口时失败退出，
+# 把真正在跑的 26 条合成任务全标成了 failed。
+监听地址 = "127.0.0.1"
+
+
 def _端口已被占用(port: int) -> bool:
-    """试着绑一下端口。绑不上说明已经有一个后端在跑。"""
+    """试着绑一下端口。绑不上说明已经有一个后端在跑。
+
+    地址必须跟 uvicorn 实际监听的一致，否则会漏判（2026-09-18 上午那次事故的根因）。
+
+    SO_REUSEADDR 要加。不加的话，上一次后端退出留下的 TIME_WAIT 条目会让这里绑不上，
+    于是把「刚重启、端口其实是空的」误判成「已经有一个后端在跑」，跳过启动清扫——
+    上次中断的导出、合成、分析就永远停在 pending，项目卡片一直显示「导出中」，
+    项目也删不掉（接口 409）。实测 macOS 上 TIME_WAIT 约 30 秒，用户重开应用正好撞上。
+    加了它也不会漏判真的有人在跑：REUSEADDR 只放过 TIME_WAIT，遇到正在 LISTEN 的
+    套接字照样 EADDRINUSE（实测确认，那需要的是 SO_REUSEPORT）。
+    """
     import socket
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            s.bind(("0.0.0.0", port))
+            s.bind((监听地址, port))
             return False
         except OSError:
             return True
@@ -141,9 +164,11 @@ async def _sweep_stale_tasks():
             update(AdmakePart)
             .where(AdmakePart.status.in_(("pending", "processing")))
             .values(status="failed"))
+        # queued 是「已提交、在等分析名额」，它跟 analyzing 一样存在内存里的批次上，
+        # 进程一没就再也不会有人来跑，不清的话这些 Part 永远停在「分析排队中」。
         r3 = await db.execute(
             update(AdmakePart)
-            .where(AdmakePart.ai_status == "analyzing")
+            .where(AdmakePart.ai_status.in_(("queued", "analyzing")))
             .values(ai_status="failed"))
         await db.commit()
         n = (r1.rowcount or 0) + (r2.rowcount or 0) + (r3.rowcount or 0)
@@ -156,6 +181,16 @@ async def _sweep_stale_tasks():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────
+    # 先把默认线程池放大。起 ffmpeg 的地方全是 run_in_executor(None, ...)，而它们
+    # 在 ffmpeg 总闸门前排队时是把线程占着等的，不是让出来等。默认池只有
+    # CPU+4 = 14 个位置，排队的一多就占满，之后任何 asyncio.to_thread 都排在后面。
+    # 2026-09-19 实测：19 个 Part 在分析时，登录和系统自检 40 秒不返回，而不碰
+    # 线程池的接口（根路径、401）还是几毫秒——碰不碰 to_thread 就是分水岭。
+    # 这些线程绝大多数时间阻塞在等名额上，不吃 CPU，位置给够就行；真正的并发
+    # 上限由 ffmpeg_gate 和各处的信号量控制，不靠池子大小。
+    import concurrent.futures
+    asyncio.get_running_loop().set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(max_workers=64, thread_name_prefix="skyart-work"))
     _install_orphan_guard()
     await create_tables()
     await _seed_default_user()
@@ -284,6 +319,10 @@ async def system_selfcheck(deep: int = 0):
     # ② ffmpeg / ffprobe
     from app.services.video import check_dependencies
     import re as _re
+    # 一律吃缓存。deep 的定义是「发网络请求实测密钥连通」，ffmpeg 版本不是网络的事，
+    # 它在进程活着这段时间里也不会变。而首页每次打开都先浅检、紧接着自动再深检一次，
+    # 深检要是强制重探，加缓存想省掉的那两个子进程照样每次都起。
+    # 探测失败不进缓存（见 check_dependencies），所以真坏了的话下次还会重探。
     dep = await asyncio.to_thread(check_dependencies)
 
     def _ver(raw: str) -> str:
@@ -375,4 +414,4 @@ if __name__ == "__main__":
     # 只听本机。界面和后端在同一台机器上，外面没有人需要连它；听 0.0.0.0 的话，
     # 同一个 Wi-Fi 下任何人都能用随包内置的 admin 账号登进来，把这台机器上的
     # 项目和成片列出来、下载走、删掉。
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
+    uvicorn.run(app, host=监听地址, port=port, log_level="info")

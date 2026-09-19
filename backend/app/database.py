@@ -69,12 +69,20 @@ async def create_tables():
             "ALTER TABLE admake_projects ADD COLUMN default_template_id INTEGER",
             # 自定义导出目录（本地绝对路径），空=默认导出目录
             "ALTER TABLE admake_projects ADD COLUMN export_path VARCHAR(500)",
+            # 导出记录挂在哪个项目下。这一列以前靠 migrate_v4.py 手工补，那个脚本
+            # 2026-09-19 删了；没补过的老库一查 AdmakeExport 就是 no such column，
+            # 导出历史和任务中心全挂。
+            "ALTER TABLE admake_exports ADD COLUMN project_id INTEGER",
             # 模板套用失败原因（导出成功但模板没套上时非空）
             "ALTER TABLE admake_exports ADD COLUMN template_error VARCHAR(300)",
             # 这一条导出为什么失败。界面上原来只显示「失败」两个字
             "ALTER TABLE admake_exports ADD COLUMN fail_reason VARCHAR(500)",
             # AI 分析跑完的时间，首页「今天分析完几个 Part」按它数
             "ALTER TABLE admake_parts ADD COLUMN ai_done_at DATETIME",
+            # 这一行最后变动的时间，判断「卡住」用
+            "ALTER TABLE admake_parts ADD COLUMN updated_at DATETIME",
+            # 片头片尾检测跑过没有，用来区分「没有片尾板」和「检测挂了」
+            "ALTER TABLE admake_sources ADD COLUMN trim_state VARCHAR(16) DEFAULT 'none'",
             # 用户的默认模板：新建项目和导出面板没选模板时预填它
             "ALTER TABLE admake_templates ADD COLUMN is_default BOOLEAN DEFAULT 0",
             # 这批导出用的目标时长。以前只写进成片旁边的 .log.txt，数据库里查不到，

@@ -7,6 +7,16 @@
 一直在换。所以抽若干帧全画面识别，按纵向位置分带，看每条带里的文字有
 几种不同内容。
 """
+
+# 本机 ffmpeg 总数闸门。这几个模块也支持当脚本单跑（文件末尾有 __main__），
+# 那时候拿不到 app 包，就退回一个什么都不做的闸门，单跑本来也不存在抢资源的问题。
+try:
+    from app.services import ffmpeg_gate as _闸门
+except Exception:                                    # pragma: no cover
+    class _闸门:                                      # type: ignore
+        class 排队:
+            def __enter__(self): return self
+            def __exit__(self, *e): return False
 import glob
 import json
 import os
@@ -23,6 +33,14 @@ MIN_FRAMES = 4       # 只在两三帧里出现的是片头标题卡，不是字
 
 
 def sh(c):
+    if "ffmpeg" in c or "ffprobe" in c:
+        # 本机 ffmpeg 总数有上限，忙的时候在这里等
+        with _闸门.排队():
+            return _sh_真跑(c)
+    return _sh_真跑(c)
+
+
+def _sh_真跑(c):
     return subprocess.run(c, shell=True, capture_output=True, text=True).stdout
 
 
