@@ -61,6 +61,11 @@ class AdmakeSource(Base):
     # 片头/片尾转场段检测结果（定格/静图缓拉，秒）。0=没有或未检测。当前只标注，建 Part 暂不裁剪
     head_trim: Mapped[float] = mapped_column(Float, default=0.0)
     tail_trim: Mapped[float] = mapped_column(Float, default=0.0)
+    # 片头片尾检测跑过没有：none 没跑 / ok 跑成了 / failed 跑挂了。
+    # 原来只有 head_trim、tail_trim 两个数，0 有两个意思——「跑过，这集本来就没有
+    # 片尾板」和「跑挂了」分不开，于是挂掉的那条永远不会重试，界面也提示不了，
+    # 那集的片尾定格板从此再也切不掉。
+    trim_state: Mapped[str] = mapped_column(String(16), default="none")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -91,6 +96,13 @@ class AdmakePart(Base):
     source_ids: Mapped[str] = mapped_column(Text, default="[]")  # JSON list of AdmakeSource IDs
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    # 这一行最后变动的时间。用来判断「卡住」：合成中的 Part 半小时没有任何动静，
+    # 多半是执行它的进程已经不在了。原来只有 created_at，重建过的 Part 时间还是
+    # 当初分 Part 那一刻，拿它算卡了多久会把所有老 Part 都算成卡住。
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
     )
 
     project: Mapped["AdmakeProject"] = relationship(back_populates="parts")

@@ -188,7 +188,14 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 /* ── Export section ── */
 /* 导出弹窗表单行：左标签右控件 */
 .exp-row{display:flex;align-items:flex-start;gap:16px;margin-bottom:18px;}
-.exp-label{width:56px;flex-shrink:0;font-size:12px;font-weight:600;color:var(--text2);padding-top:8px;}
+/* 76px 是按最长的那个标签「单条目标时长」定的：12px 字号六个汉字约 72px，
+   flex-shrink:0 不会被压缩，宽度不够就折成两行，padding-top 的对齐当场歪掉。 */
+.exp-label{width:76px;flex-shrink:0;font-size:12px;font-weight:600;color:var(--text2);padding-top:8px;}
+/* 右侧内容列一律加 min-width:0。flex 子项默认 min-width:auto，里面只要有一个
+   不换行的长串（导出目录那条深路径），整行就会把弹窗撑出横向滚动条，
+   「更改」「打开」两个按钮被推出去点不到。注意撑破的是这一层，不是里面
+   那个带省略号的元素——查这类问题要往上看一层。 */
+.exp-row > div:last-child{min-width:0;}
 .exp-hint{font-size:11px;color:var(--text3);margin-top:5px;line-height:1.6;}
 /* 建议条数的小圆角标签；填超了整条变黄，跟输入框的告警色一致 */
 .cnt-chip{display:inline-flex;align-items:center;font-size:11px;color:var(--text2);background:var(--bg3);
@@ -211,6 +218,51 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .slot-table td.slot-hit{color:var(--accent2);font-weight:700;}
 .slot-table tr.slot-empty td{background:#fef2f2;color:var(--red);}
 .slot-over{font-size:11px;color:var(--red);margin-top:5px;}
+/* 剪辑模板多选下拉。收起那一行跟原来的 select 同高，模板几十个也不会把面板撑长 */
+.ms{display:flex;align-items:center;gap:8px;padding:7px 10px;border:1px solid var(--border);
+    border-radius:6px;background:var(--bg3);font-size:13px;color:var(--text);cursor:pointer;
+    outline:none;min-width:0;}
+.ms:focus-visible{border-color:var(--accent);}
+.ms[aria-expanded="true"]{border-color:var(--accent);}
+.ms-txt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ms-txt.none{color:var(--text3);}
+.ms-more{font-size:10.5px;color:#fff;background:var(--accent);border-radius:20px;padding:1px 7px;flex:none;}
+.ms-arw{color:var(--text3);font-size:10px;flex:none;}
+/* 浮层挂在 body 上，层级要盖过 backdrop(9999)、两个进度弹窗(10000)、tip-pop(10001) */
+.ms-pop{position:fixed;z-index:10002;background:var(--bg2);border:1px solid var(--border);
+        border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.16);overflow:hidden;display:none;}
+.ms-pop.show{display:block;}
+.ms-search{display:flex;align-items:center;gap:6px;padding:7px 10px;border-bottom:1px solid var(--border);}
+.ms-search .ms-q{flex:1;min-width:0;border:none;outline:none;font-size:12.5px;color:var(--text);
+                 background:transparent;font-family:inherit;}
+.ms-search .ms-c{font-size:10.5px;color:var(--text3);flex:none;}
+.ms-list{max-height:196px;overflow-y:auto;}
+.ms-list label{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12.5px;
+               cursor:pointer;border-top:1px solid var(--border);min-width:0;}
+.ms-list label:first-child{border-top:none;}
+.ms-list label:hover{background:var(--bg3);}
+.ms-list label.on{background:rgba(249,115,22,.07);}
+.ms-list input{width:14px;height:14px;accent-color:var(--accent);flex:none;margin:0;}
+.ms-nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+       font-weight:600;color:var(--text);}
+.ms-mt{font-size:10.5px;color:var(--text3);flex:none;max-width:44%;overflow:hidden;
+       text-overflow:ellipsis;white-space:nowrap;}
+.ms-empty{padding:16px;font-size:12px;color:var(--text3);text-align:center;}
+.ms-bar{display:flex;align-items:center;gap:8px;padding:7px 10px;border-top:1px solid var(--border);
+        background:var(--bg3);font-size:11px;color:var(--text2);}
+.ms-lk{color:var(--text3);cursor:pointer;}
+.ms-lk:hover{color:var(--accent2);}
+.ms-done{margin-left:auto;background:var(--btn);color:#fff;border:0;border-radius:6px;
+         padding:4px 12px;font-size:11.5px;font-weight:600;cursor:pointer;font-family:inherit;}
+/* 选了几个模板时，一行一个模板说它分到几条 */
+.tplrow{display:flex;align-items:center;gap:8px;padding:3px 0;font-size:11px;min-width:0;}
+.tplrow .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+           color:var(--text2);font-weight:600;}
+.tplrow .n{flex:none;color:var(--text);font-weight:700;}
+.tplrow .c{flex:none;width:52px;text-align:right;color:var(--text3);}
+.tplrow.bad .n{color:var(--red);}
+.tplsum{margin-top:6px;padding-top:6px;border-top:1px solid var(--border);
+        font-size:11px;color:var(--text2);}
 /* 剪辑模板下拉底下那行：几格、什么来路、勾中的 Part 里有多少段 */
 .exp-sub{font-size:11px;color:var(--text3);margin-top:5px;width:100%;}
 .part-pick-seg{font-style:normal;color:var(--text3);font-size:10px;margin-left:auto;padding-left:6px;flex-shrink:0;}
@@ -264,7 +316,6 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
 .pt-more{margin-top:3px;padding-left:9px;border-left:2px solid var(--border);
   font-size:11px;color:var(--text3);line-height:1.55;}
 .pt-more.hide{display:none;}
-.part-pick-note{margin-top:7px;font-size:11px;color:var(--text3);line-height:1.6;}
 /* 导出历史：一批一行，展开才看单条 */
 .exp-batch{border:1px solid var(--border);border-radius:10px;margin-bottom:8px;overflow:hidden;}
 .exp-batch-head{display:flex;align-items:center;gap:8px;padding:9px 10px;cursor:pointer;background:var(--bg3);}
@@ -725,7 +776,6 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
               </label>
             </div>
             <div class="part-pick-grid" id="part-pick-grid"></div>
-            <div class="part-pick-note" id="part-pick-note"></div>
           </div>
         </div>
 
@@ -757,7 +807,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
         </div>
 
         <div class="exp-row">
-          <div class="exp-label">目标时长</div>
+          <div class="exp-label">单条目标时长</div>
           <div style="flex:1;">
             <div style="display:flex;align-items:center;gap:8px;">
               <input type="number" id="clip-dur-min" value="6" min="1" max="60" step="1"
@@ -765,14 +815,14 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
               <span style="font-size:12px;color:var(--text2);">分钟</span>
               <span style="font-size:11px;color:var(--text3);margin-left:4px;" id="dur-quick-label">常用</span>
               <span id="dur-quick-box" style="display:inline-flex;gap:9px;"></span>
-              <span class="info-ic" data-tip="三种导出模式都按这个值选材，挑成片总长最接近的组合。&#10;成片总长含模板前后贴片；实际长度由素材决定，不会正好等于目标值。"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
+              <span class="info-ic" data-tip="按这个长度选段，实际成片长度由素材决定。&#10;含成片模板的前后贴片。"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" width="13" height="13"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span>
             </div>
             <div class="exp-hint" id="dur-mode-note" style="display:none;"></div>
           </div>
         </div>
 
         <div class="exp-row">
-          <div class="exp-label">素材数量</div>
+          <div class="exp-label">素材总量</div>
           <div style="flex:1;">
             <div style="display:flex;align-items:center;gap:8px;">
               <input type="number" id="clip-count" value="2" min="1" max="30"
@@ -790,7 +840,6 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
             <select id="export-template" style="width:100%;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--bg3);color:var(--text);outline:none;">
               <option value="">（不套模板）</option>
             </select>
-            <div class="exp-hint">对本批导出统一套用</div>
           </div>
         </div>
 
@@ -802,7 +851,7 @@ body{background:var(--bg);color:var(--text);font-family:system-ui,"PingFang SC",
               <button class="btn btn-secondary btn-sm" onclick="changeExportFolder()">更改</button>
               <button class="btn btn-secondary btn-sm" onclick="openExportFolder()"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>打开</button>
             </div>
-            <div class="exp-hint">成片保存到该目录下的剧名子文件夹</div>
+            <div class="exp-hint">存到该目录下的剧名子文件夹</div>
           </div>
         </div>
 
@@ -1127,46 +1176,205 @@ async function _switchExportPanelToTemplate() {
   // 模式区原来是三个横排的单选，这里换成一个下拉加一行摘要，得让它换行，
   // 否则下拉被摘要挤成一个只剩箭头的方块。
   box.style.flexWrap = 'wrap';
-  box.innerHTML = '<select class="input" id="cut-template" style="flex:1 1 100%;height:34px">'
-    + '<option value="">加载中…</option></select>'
+  box.innerHTML = '<div class="ms" id="cut-template" tabindex="0" role="combobox"'
+    + ' aria-haspopup="listbox" aria-expanded="false" style="flex:1 1 100%">'
+    + '<span class="ms-txt none">加载中…</span><span class="ms-arw">▾</span></div>'
     + '<div class="exp-sub" id="cut-template-sub"></div>';
-  const sel = document.getElementById('cut-template');
   try {
-    const ts = await apiFetch('/admake/cut-templates');
-    CUT_TEMPLATES = ts;
-    sel.innerHTML = ts.length
-      ? ts.map(t => `<option value="${t.id}">${esc(t.name)}（${t.slots.length} 格 · ${esc(t.source)}）</option>`).join('')
-      : '<option value="">还没有剪辑模板</option>';
+    CUT_TEMPLATES = await apiFetch('/admake/cut-templates') || [];
   } catch (e) {
-    sel.innerHTML = '<option value="">模板列表加载失败</option>';
+    CUT_TEMPLATES = [];
   }
+  // 默认勾第一个。原来是 select，第一项天然选中，换成勾选清单后不给默认值的话，
+  // 打开面板是空的，用户得先选一次才能导。
+  CUT_PICKED = new Set(CUT_TEMPLATES.length ? [CUT_TEMPLATES[0].id] : []);
+  画模板面();
   renderCutTemplateSub();
-  sel.addEventListener('change', () => {
-    renderCutTemplateSub(); _lastPreflight = null; schedulePreflight();
+  const 脸 = document.getElementById('cut-template');
+  脸.addEventListener('click', e => { e.stopPropagation(); 开合模板下拉(); });
+  脸.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); 开合模板下拉(); }
   });
 }
 
 let CUT_TEMPLATES = [];
-const getCutTemplateId = () => Number(document.getElementById('cut-template')?.value) || null;
+// 勾中的模板存在这里，不从 DOM 里读回来。清单每次重绘都会换掉元素，
+// 从 DOM 读的话任何一次重绘都会把用户勾的悄悄清空，而且不报错。
+let CUT_PICKED = new Set();
+const 选中的模板 = () => CUT_TEMPLATES.filter(t => CUT_PICKED.has(t.id));
+const getCutTemplateIds = () => 选中的模板().map(t => t.id);
 
-// 选中的模板是什么来路、几格、勾中的 Part 里有多少段能挑。段数从 Part 的
-// seg_count 现算，勾选变了要重画。
+// 收起时那一行：前两个名字加一个「＋N」。模板名长的时候靠 .ms-txt 的省略号截断。
+function 画模板面() {
+  const el = document.getElementById('cut-template');
+  if (!el) return;
+  const 选 = 选中的模板();
+  const 话 = 选.length
+    ? `<span class="ms-txt">${选.slice(0, 2).map(t => esc(t.name)).join('、')}</span>`
+      + (选.length > 2 ? `<span class="ms-more">＋${选.length - 2}</span>` : '')
+    : `<span class="ms-txt none">${CUT_TEMPLATES.length ? '选剪辑模板' : '还没有剪辑模板'}</span>`;
+  el.innerHTML = 话 + '<span class="ms-arw">▾</span>';
+}
+
+// 勾中的模板几格、什么来路、勾中的 Part 里有多少段能挑。段数跟模板无关，
+// 按勾中的 Part 现算，勾选变了要重画。
 function renderCutTemplateSub() {
   const el = document.getElementById('cut-template-sub');
   if (!el) return;
-  const t = CUT_TEMPLATES.find(x => x.id === getCutTemplateId());
-  if (!t) { el.textContent = ''; return; }
+  const 选 = 选中的模板();
+  if (!选.length) { el.textContent = ''; return; }
   const 段数 = allParts
     .filter(p => partChecked.has(p.id))
     .reduce((a, p) => a + (p.seg_count || 0), 0);
-  el.textContent = `${t.slots.length} 格　${t.source}　参与的 Part 里有 ${段数} 段可用`;
+  el.textContent = 选.length === 1
+    ? `${选[0].slots.length} 格　${选[0].source}　${段数} 段可挑`
+    : `已选 ${选.length} 个　${选.map(t => t.slots.length).join(' / ')} 格　${段数} 段可挑`;
 }
+
+// ── 剪辑模板多选下拉 ─────────────────────────────────────────────────────
+// 浮层挂在 body 上，不放进导出弹窗里。三个原因：
+// 1. .ai-modal-box 是 overflow-y:auto，绝对定位的后代会被裁掉一截，还跟着内容滚。
+// 2. .ai-modal-glass 上有 backdrop-filter，它会抢走 position:fixed 的包含块——
+//    浮层写在弹窗里时，getBoundingClientRect() 算出的视口坐标会多加一个 glass 的
+//    左上偏移，面板飞到屏幕外，而且只在大窗口上才看得出来。
+// 3. glass 是 pointer-events:none，只有直接子元素被恢复，孙子节点看得见点不动。
+// 同一个文件里的悬停说明浮层 #tip-pop 就是这么做的，照它那套。
+let _模板浮层 = null;
+let _模板搜索词 = '';
+
+function _建模板浮层() {
+  if (_模板浮层) return _模板浮层;
+  const el = document.createElement('div');
+  el.className = 'ms-pop';
+  el.setAttribute('role', 'listbox');
+  el.setAttribute('aria-multiselectable', 'true');
+  el.addEventListener('click', e => e.stopPropagation());
+  document.body.appendChild(el);
+  _模板浮层 = el;
+  return el;
+}
+
+function 开合模板下拉() {
+  if (_模板浮层 && _模板浮层.classList.contains('show')) { 收起模板下拉(); return; }
+  if (!CUT_TEMPLATES.length) { toast('还没有剪辑模板，先去爆款素材分析里存一个', 'info'); return; }
+  _模板搜索词 = '';
+  画模板浮层();
+  _模板浮层.classList.add('show');
+  // 先显示再量。display:none 的时候 offsetHeight 是 0，量不出该往上翻还是往下放。
+  摆模板浮层();
+  document.getElementById('cut-template')?.setAttribute('aria-expanded', 'true');
+  setTimeout(() => _模板浮层.querySelector('.ms-q')?.focus(), 0);
+}
+
+function 收起模板下拉() {
+  if (!_模板浮层) return;
+  _模板浮层.classList.remove('show');
+  document.getElementById('cut-template')?.setAttribute('aria-expanded', 'false');
+}
+
+function 摆模板浮层() {
+  const 脸 = document.getElementById('cut-template');
+  if (!脸 || !_模板浮层) return;
+  const r = 脸.getBoundingClientRect();
+  _模板浮层.style.left = r.left + 'px';
+  _模板浮层.style.width = r.width + 'px';
+  // 下面放不下就翻到上面去
+  const 高 = _模板浮层.offsetHeight || 240;
+  _模板浮层.style.top = (r.bottom + 4 + 高 > window.innerHeight && r.top > 高 + 8)
+    ? (r.top - 4 - 高) + 'px'
+    : (r.bottom + 4) + 'px';
+}
+
+function 画模板浮层() {
+  const el = _建模板浮层();
+  const kw = _模板搜索词.trim();
+  const 命中 = CUT_TEMPLATES.filter(t => !kw || (t.name || '').includes(kw)
+                                     || (t.source || '').includes(kw));
+  el.innerHTML =
+    '<div class="ms-search">'
+    + '<svg viewBox="0 0 24 24" fill="none" stroke="#9298a1" stroke-width="2" width="13" height="13">'
+    + '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>'
+    + `<input class="ms-q" placeholder="搜模板名" value="${esc(kw)}">`
+    + `<span class="ms-c">${kw ? `${命中.length} / ${CUT_TEMPLATES.length}` : `共 ${CUT_TEMPLATES.length} 个`}</span>`
+    + '</div>'
+    + '<div class="ms-list">'
+    + (命中.length ? 命中.map(t => {
+        const on = CUT_PICKED.has(t.id);
+        return `<label class="${on ? 'on' : ''}" role="option" aria-selected="${on}" data-tid="${t.id}"
+                  title="${esc(t.name)}">
+          <input type="checkbox" ${on ? 'checked' : ''} tabindex="-1">
+          <span class="ms-nm">${esc(t.name)}</span>
+          <span class="ms-mt">${t.slots.length} 格 · ${esc(t.source || '')}</span></label>`;
+      }).join('')
+      : '<div class="ms-empty">没有匹配的模板</div>')
+    + '</div>'
+    + '<div class="ms-bar">'
+    + `<span>已选 ${CUT_PICKED.size} 个</span>`
+    + (CUT_PICKED.size ? '<span class="ms-lk" data-clear="1">全部取消</span>' : '')
+    + '<button class="ms-done" type="button">完成</button></div>';
+
+  el.querySelector('.ms-q').addEventListener('input', e => {
+    _模板搜索词 = e.target.value;
+    画模板浮层();
+    el.querySelector('.ms-q').focus();
+  });
+  el.querySelectorAll('label[data-tid]').forEach(lb => {
+    lb.addEventListener('click', e => {
+      e.preventDefault();
+      切模板(Number(lb.dataset.tid));
+    });
+  });
+  el.querySelector('[data-clear]')?.addEventListener('click', () => {
+    CUT_PICKED.clear(); 模板选择变了(); 画模板浮层();
+  });
+  el.querySelector('.ms-done').addEventListener('click', 收起模板下拉);
+}
+
+function 切模板(tid) {
+  if (CUT_PICKED.has(tid)) CUT_PICKED.delete(tid); else CUT_PICKED.add(tid);
+  模板选择变了();
+  画模板浮层();
+  摆模板浮层();
+}
+
+// 勾选变了要做的三件事，原来挂在 select 的 change 上
+function 模板选择变了() {
+  画模板面();
+  renderCutTemplateSub();
+  _lastPreflight = null;
+  schedulePreflight();
+}
+
+// 点空白处收起。判断要把触发行和浮层都放行，否则点开的那一次 click 冒泡上来
+// 会当场把刚开的浮层关掉，表现是「点了没反应」。
+document.addEventListener('click', e => {
+  if (!_模板浮层 || !_模板浮层.classList.contains('show')) return;
+  const 脸 = document.getElementById('cut-template');
+  if ((脸 && 脸.contains(e.target)) || _模板浮层.contains(e.target)) return;
+  收起模板下拉();
+});
+// 弹窗内部滚动不冒泡到 window，要用捕获。滚了跟着挪，不收起——
+// 勾一个模板会改变下面那块的高度，跟着就触发一次滚动，收起的话点一个关一次，
+// 这个控件就没法用了。
+document.addEventListener('scroll', () => {
+  if (_模板浮层 && _模板浮层.classList.contains('show')) 摆模板浮层();
+}, true);
+window.addEventListener('resize', () => {
+  if (_模板浮层 && _模板浮层.classList.contains('show')) 摆模板浮层();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && _模板浮层 && _模板浮层.classList.contains('show')) {
+    e.stopPropagation();
+    收起模板下拉();
+    document.getElementById('cut-template')?.focus();
+  }
+}, true);
 
 function _switchToSegmentView() {
   const 标题 = document.querySelector('#marks-head .info-card-title');
   if (标题) 标题.textContent = '内容分析';
   const 提示 = document.querySelector('#marks-head .marks-hint');
-  if (提示) 提示.textContent = '点一行看这一段的字段、剧情点和行为标记。';
+  if (提示) 提示.textContent = '点击任意一段，可展开该段的叙述、剧情点与行为标记。';
   // 打点是高光钩子那套的活，段是拆解管线的产物，手动打不出来
   const 工具条 = document.querySelector('.timeline-toolbar');
   if (工具条) {
@@ -1330,8 +1538,67 @@ async function preloadAllMarks() {
   renderAiBox();
 }
 
+let _准备中 = false;
+let _准备出错 = '';
+let _准备轮询 = null;
+
+// 项目刚建好时 Part 还没有，后台正在读素材信息、切分集尾、按时长分组。
+// 这里盯着它，好了就把列表画出来，出错就把原因显示在同一个位置。
+const 准备超时毫秒 = 10 * 60 * 1000;
+let _准备起点 = 0;
+
+// 项目刚建好时 Part 还没有，后台正在读素材信息、切分集尾、按时长分组。
+// 判断依据是「Part 到底出来没有」，不是状态接口说什么：状态存在后端内存里，
+// 后端一重启就没了，光看它会永远等下去。状态接口只用来识别「准备失败」。
+async function 盯准备() {
+  if (_准备轮询) return;
+  _准备起点 = Date.now();
+  _准备轮询 = setInterval(async () => {
+    try {
+      const parts = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+      if (parts && parts.length) {
+        // 先把列表画出来，画成功了再停轮询。反过来的话，这一次拉数据失败就再也没有
+        // 第二次机会，界面永远停在「正在准备 Part…」——浮窗那边却显示 Part 早建好了。
+        _准备中 = false; _准备出错 = '';
+        await loadAllParts();
+        停盯准备();
+        return;
+      }
+      const st = await apiFetch(`/admake/projects/${PROJ_ID}/prepare-status`);
+      if (st && st.state === 'failed') {
+        _准备中 = false;
+        _准备出错 = st.error || '准备失败';
+        renderPartsList();
+        停盯准备();
+        return;
+      }
+      if (Date.now() - _准备起点 > 准备超时毫秒) {
+        _准备中 = false;
+        _准备出错 = '等了十分钟还没建出 Part。多半是准备过程中应用被关过，点下面重新建。';
+        renderPartsList();
+        停盯准备();
+      }
+    } catch (e) {
+      // 某一轮出错只跳过这一轮，绝不停轮询
+    }
+  }, 2000);
+}
+
+function 停盯准备() {
+  if (_准备轮询) { clearInterval(_准备轮询); _准备轮询 = null; }
+}
+
 async function loadAllParts() {
-  allParts = await apiFetch(`/admake/projects/${PROJ_ID}/parts`);
+  // 401 时 apiFetch 返回 null，直接读 .length 会抛，把整条刷新链打断
+  allParts = (await apiFetch(`/admake/projects/${PROJ_ID}/parts`)) || [];
+  if (!allParts.length && !_准备出错) {
+    try {
+      const st = await apiFetch(`/admake/projects/${PROJ_ID}/prepare-status`);
+      _准备中 = st.state === 'preparing';
+      _准备出错 = st.state === 'failed' ? (st.error || '准备失败') : '';
+      if (_准备中) 盯准备();
+    } catch { /* 状态取不到就按老样子显示「暂无 Part」 */ }
+  }
   resetPartChecked();
   renderPartsList();
   renderAiBox();
@@ -1435,16 +1702,65 @@ function _startPartsPolling() {
 // act 为 null 表示正在跑、没什么可点的。
 function partState(p) {
   if (p.status === 'failed')       return { text: '合成失败', tone: 'bad',  spin: false, act: '重建',  fn: 'rebuildPart' };
+  // 两条队要分开写。合成和分析各有各的并发上限，十几条里同时只跑几条，
+  // 都写「排队中」的话看不出在等哪一条队；写「合成中」更糟——用户看着十几条都在动。
+  if (p.status === 'pending')      return { text: '合成排队中', tone: '',   spin: false, act: null };
+  // 真的在跑却半小时没动静，多半是执行它的进程已经不在了。不给出路的话，
+  // 这一行会永远转着圈：项目卡片上写着「可能卡住 1」，点进来却没有任何按钮。
+  if (p.stuck && !p.file_path)     return { text: '可能卡住', tone: 'bad',  spin: false, act: '重建', fn: 'rebuildPart' };
   if (!p.file_path)                return { text: '合成中',   tone: 'busy', spin: true,  act: null };
+  if (p.stuck)                     return { text: '分析可能卡住', tone: 'bad', spin: false, act: '重试', fn: 'reanalyzePart' };
+  // queued = 已经提交、在等分析名额。它跟「待分析」必须分开：后者是压根没提交，
+  // 可以点「分析」；前者已经在队里，再点会撞后端的重入拦截，所以不给按钮。
+  if (p.ai_status === 'queued')    return { text: '分析排队中', tone: '',   spin: false, act: null };
   if (p.ai_status === 'analyzing') return { text: '分析中',   tone: 'busy', spin: true,  act: null };
   if (p.ai_status === 'failed')    return { text: '分析失败', tone: 'bad',  spin: false, act: '重试', fn: 'reanalyzePart' };
   if (p.ai_status !== 'done')      return { text: '待分析',   tone: '',     spin: false, act: '分析', fn: 'reanalyzePart' };
   return { text: null, tone: '', spin: false, act: '重析', fn: 'reanalyzePart' };   // 就绪
 }
 
+// 准备失败、或者准备到一半应用被关掉，从这里重新发起。没有这个入口的话，
+// 项目会永远停在「暂无 Part」，只能删掉重建。
+async function 重建Part() {
+  _准备出错 = '';
+  _准备中 = true;
+  renderPartsList();
+  try {
+    await apiFetch(`/admake/projects/${PROJ_ID}/build-parts`, { method: 'POST' });
+    盯准备();
+  } catch (e) {
+    _准备中 = false;
+    _准备出错 = '重新建 Part 没能开始：' + (e.message || '未知原因');
+    renderPartsList();
+  }
+}
+
 function renderPartsList() {
   const el = document.getElementById('parts-list');
-  if (!allParts.length) { el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:12px 0;">暂无 Part</div>'; return; }
+  if (!allParts.length) {
+    // 建 Part 的准备工作（读素材信息、切分集尾、按时长分组）在后台跑，几十秒。
+    // 这期间列表是空的，写「暂无 Part」会让人以为建失败了。
+    if (_准备中) {
+      el.innerHTML = '<div style="display:flex;align-items:center;gap:8px;' +
+        'padding:14px 10px 14px 14px;font-size:12px;color:var(--text2);">' +
+        '<span class="part-spin" style="width:12px;height:12px;border-width:2px;' +
+        'border-color:rgba(249,115,22,.25);border-top-color:var(--accent);"></span>' +
+        '正在准备 Part…</div>';
+      return;
+    }
+    if (_准备出错) {
+      el.innerHTML = '<div style="margin:10px;border:1px solid #fecaca;background:#fff5f5;' +
+        'border-radius:10px;padding:9px 10px;font-size:11px;line-height:1.6;color:var(--red);">' +
+        esc(_准备出错) +
+        '<div style="margin-top:8px"><button onclick="重建Part()" ' +
+        'style="border:1px solid rgba(234,88,12,.35);background:rgba(234,88,12,.08);' +
+        'color:#c2410c;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer">' +
+        '重新建 Part</button></div></div>';
+      return;
+    }
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px;padding:12px 0;">暂无 Part</div>';
+    return;
+  }
   // 只留"看/编哪个 Part"需要的信息：编号、时长、选中态、卡住时的原因和出路。
   // 标记条数在右栏标记组标题里，导出范围在导出弹窗里，都不放这一列。
   el.innerHTML = allParts.map(p => {
@@ -1496,7 +1812,8 @@ function partLabel(p) {
 const _STALE_KEYS = [`skyart_export_checked_${PROJ_ID}`, `skyart_track_${PROJ_ID}`];
 
 function resetPartChecked() {
-  partChecked = new Set(allParts.map(p => p.id));
+  // 只默认勾能出片的，跟「全选」一个口径
+  partChecked = new Set(allParts.filter(partUsableForExport).map(p => p.id));
   _STALE_KEYS.forEach(key => localStorage.removeItem(key));
 }
 
@@ -1505,6 +1822,13 @@ function resetPartChecked() {
 function onPartPickClick(ev, idx) {
   const p = allParts[idx];
   if (!p) return;
+  // 还没分析出结果的 Part 勾了也不会进成片。勾上去的那一刻说清楚，
+  // 不在列表底下常驻一行解释——那句话对已经知道的人是废话。
+  if (!partUsableForExport(p)) {
+    ev.target.checked = false;      // click 事件里它已经是新值，得手动扳回来
+    toast('未分析，不能参与导出', 'info');
+    return;
+  }
   if (ev.target.checked) partChecked.add(p.id); else partChecked.delete(p.id);
   renderCutTemplateSub();
   syncPartPickerHeader();
@@ -1512,7 +1836,10 @@ function onPartPickClick(ev, idx) {
 }
 
 function toggleAllPartPick(on) {
-  partChecked = on ? new Set(allParts.map(p => p.id)) : new Set();
+  // 只勾能出片的。全都勾上的话计数写着「已选 12 / 12」，实际只有 9 个 Part 的素材
+  // 进了成片，界面上没有任何地方对得上。只勾可用的之后，那几个虚线框明摆着没勾，
+  // 不用再写一句话解释。
+  partChecked = on ? new Set(allParts.filter(partUsableForExport).map(p => p.id)) : new Set();
   renderPartPicker();
   renderCutTemplateSub();
   schedulePreflight();
@@ -1543,21 +1870,19 @@ function renderPartPicker() {
       ${PROJ_KIND === 'segments' ? `<i class="part-pick-seg">${p.seg_count || 0} 段</i>` : ''}
     </label>`;
   }).join('');
-  const note = document.getElementById('part-pick-note');
-  if (note) {
-    const 差 = allParts.filter(p => !partUsableForExport(p)).length;
-    note.textContent = 差
-      ? `${allParts.length} 个 Part 里有 ${差} 个还没分析出结果，画的是虚线框。这次导出只用另外 ${allParts.length - 差} 个的素材。`
-      : '';
-  }
+  // 不在这里常驻一行说明。虚线框是什么意思，等用户点上去的那一刻再说一句，
+  // 见 onPartPickClick。
   syncPartPickerHeader();
 }
 
 function syncPartPickerHeader() {
+  // 分母是能出片的那些。没分析完的 Part 勾不上，拿总数当分母的话「全选」勾完
+  // 显示 8 / 9，那个全选框会立刻把自己取消掉。
+  const 可用 = allParts.filter(partUsableForExport).length;
   const all = document.getElementById('pick-all');
-  if (all) all.checked = allParts.length > 0 && partChecked.size === allParts.length;
+  if (all) all.checked = 可用 > 0 && partChecked.size === 可用;
   const count = document.getElementById('pick-count');
-  if (count) count.textContent = `${partChecked.size} / ${allParts.length}`;
+  if (count) count.textContent = `${partChecked.size} / ${可用}`;
   document.querySelectorAll('#part-pick-grid input').forEach((box, i) => {
     box.checked = partChecked.has(allParts[i]?.id);
   });
@@ -2317,6 +2642,10 @@ function hideAiModal() {
 }
 
 let _aiPollFails = 0; // 状态查询连续失败计数：单次失败可能只是后端瞬时繁忙，任务还在跑
+// 当前这批是不是「全部分析」起的。只有它在跑完之后会再扫一遍库，把这期间新合成好、
+// 还没出结果的 Part 接着跑（后端 _待分析的Part）。单 Part 重析不会。
+// 拿它决定撞上「正在分析」时那句提示该怎么写：会自动跑的，别让用户回头再点一次。
+let _aiBatchAuto = false;
 
 async function startAiAnalysis(onlyUnanalyzed = false) {
   if (_aiRunning) { toast('AI 分析已在进行中', 'error'); return; }
@@ -2324,6 +2653,7 @@ async function startAiAnalysis(onlyUnanalyzed = false) {
   // 缺配置或密钥无效会在这一步秒级返回明确错误，而不是空等到上传阶段才失败
   openAiProgressModal(0);
   _aiRunning = true; // 请求期间即置位：拦截重复点击和中途关窗
+  _aiBatchAuto = true;
   _aiPollFails = 0;
   renderAiBox();
   try {
@@ -2346,6 +2676,8 @@ async function startAiAnalysis(onlyUnanalyzed = false) {
     if (e.status === 409) {
       // 后端已有批次在跑（比如页面刷新后再次点击）：不报错，直接接管进度轮询
       setAiStageText('已有分析任务在进行，正在同步进度…');
+      // 接管的是别人起的批次，不知道它是全量还是单条，按不会自动续跑算
+      _aiBatchAuto = false;
       if (_aiPollTimer) clearInterval(_aiPollTimer);
       _aiPollTimer = setInterval(pollAiAnalysis, 4000);
       return;
@@ -2402,6 +2734,8 @@ async function restoreAiPolling() {
   } catch { return; }   // 查不到就当没在跑，不挡用户进页面
   if (!s || s.status !== 'processing') return;
   _aiRunning   = true;
+  // 刷新页面接管的批次，不知道是全量还是单条起的，按不会自动续跑算
+  _aiBatchAuto = false;
   _aiPollFails = 0;
   openAiProgressModal(s.total || 0);   // 把弹窗内容复位成"进行中"
   hideAiProgressModal();               // 立刻收起，只留数据
@@ -2581,9 +2915,21 @@ async function rebuildPart(partId, ev) {
 // 单 Part 重析（列表项「↻ 重析/分析」入口）：走同一套进度弹窗与轮询
 async function reanalyzePart(partId, ev) {
   if (ev) ev.stopPropagation();
-  if (_aiRunning) { toast('AI 分析已在进行中，完成后再重析', 'info'); return; }
   const p = allParts.find(x => x.id === partId);
   if (!p) return;
+  if (_aiRunning) {
+    // 还没出过结果的 Part，「全部分析」那一批跑完会自己把它捡走。原来这里一律说
+    // 「完成后再重析」，等于让用户记着回来点一次，而那一次多半是多余的。
+    // 失败过的不算「会自动跑」。后端把这一批的 Part 全放进「试过」集合，
+    // 续跑那一轮（_待分析的Part）直接跳过它们，跑完这个 Part 还是失败的。
+    const 没结果 = p.ai_status !== 'failed' &&
+      ((PROJ_KIND === 'segments' || PROJ_KIND === 'hot')
+        ? !(p.seg_count || 0) : !partHasMarks(p));
+    toast(没结果 && _aiBatchAuto
+      ? `${partLabel(p)} 会排在这批后面自动跑，不用再点`
+      : 'AI 分析已在进行中，完成后再重析', 'info');
+    return;
+  }
   showAiModal(
     `重新分析 ${partLabel(p)}`,
     `只重新分析这一个 Part，不影响其它 Part。`
@@ -2591,6 +2937,7 @@ async function reanalyzePart(partId, ev) {
     async () => {
       openAiProgressModal(1);
       _aiRunning = true;
+      _aiBatchAuto = false;   // 单 Part 起的批次 全量=False，后端跑完不会再捡新的
       _aiPollFails = 0;
       renderAiBox();
       try {
@@ -3061,6 +3408,25 @@ function schedulePreflight() {
   _preflightTimer = setTimeout(runPreflight, 260);   // 防抖：数字输入框逐位敲不该每敲一下发一次
 }
 
+// 一共几条分给几个模板：平均分，到自己上限的不再拿，剩下的让给还有余量的。
+// 跟后端 分配条数 是同一套规则，两边对不上的话确认框里写的条数跟实际导出的对不上。
+function 分配条数(总量, 各自上限) {
+  const 份 = 各自上限.map(() => 0);
+  let 余 = Math.max(0, 总量);
+  while (余 > 0) {
+    let 这轮发了 = 0;
+    for (let i = 0; i < 各自上限.length; i++) {
+      if (余 <= 0) break;
+      if (份[i] < 各自上限[i]) { 份[i]++; 余--; 这轮发了++; }
+    }
+    if (!这轮发了) break;
+  }
+  return 份;
+}
+
+// 预检出参两种形状：只选一个模板时跟以前一样，选了几个才带「各模板」。
+const _各模板预检 = pf => (pf && pf['各模板']) ? pf['各模板'] : (pf ? [pf] : []);
+
 function renderSegCountNote(pf) {
   const chip = document.getElementById('count-suggest');
   const note = document.getElementById('count-note');
@@ -3069,6 +3435,36 @@ function renderSegCountNote(pf) {
   if (!chip || !note || !input) return;
   if (durNote) durNote.style.display = 'none';
   if (!pf) { chip.style.display = 'none'; note.style.display = 'none'; return; }
+
+  // 选了几个模板：不摆几张逐格表，一行一个模板说它分到几条。
+  // 想看某一个的逐格表，把别的取消掉只留它一个。
+  if (pf['各模板']) {
+    const 家 = pf['各模板'];
+    const 总 = Math.max(1, parseInt(input.value) || 1);
+    const 上限 = 家.map(d => d['推荐条数'] || 0);
+    const 份 = 分配条数(总, 上限);
+    const 实 = 份.reduce((a, b) => a + b, 0);
+    const 能出 = 上限.reduce((a, b) => a + b, 0);
+    chip.style.display = 能出 ? '' : 'none';
+    chip.textContent = `最多 ${能出} 条`;
+    input.classList.toggle('over', 总 > 能出);
+    note.className = 'exp-hint';
+    note.style.display = '';
+    const 行 = 家.map((d, i) => {
+      const 挂 = d['拦住了吗'];
+      const 右 = 挂 ? '挑不出段' : (份[i] ? `${份[i]} 条` : '分不到');
+      return `<div class="tplrow${挂 ? ' bad' : ''}">`
+        + `<span class="t" title="${esc(d['模板'] || '')}">${esc(d['模板'] || '')}</span>`
+        + `<span class="n">${右}</span>`
+        + `<span class="c">${挂 ? '' : '最多 ' + 上限[i]}</span></div>`;
+    }).join('');
+    const 空 = 份.filter((n, i) => !n && !家[i]['拦住了吗']).length;
+    let 尾 = '';
+    if (实 < 总) 尾 = `<div class="slot-over">只能出 ${实} 条，按 ${实} 条导</div>`;
+    else if (空) 尾 = `<div class="slot-over">有 ${空} 个模板分不到条数，把总量加到 ${家.length} 以上</div>`;
+    note.innerHTML = 行 + `<div class="tplsum">一共 ${实} 条</div>` + 尾;
+    return;
+  }
 
   if (pf['拦住了吗']) {
     chip.style.display = 'none';
@@ -3185,10 +3581,12 @@ async function runPreflight() {
   if (tpl && tpl.value) q.set('template_id', tpl.value);
   // 段模式走另一个接口：它按剪辑模板逐格算候选，返回体形状也不一样
   if (PROJ_KIND === 'segments') {
-    const cid = getCutTemplateId();
-    if (!cid) { _lastPreflight = null; renderSegCountNote(null); return; }
-    q.set('cut_template_id', String(cid));
-    q.set('count', String(Math.max(1, parseInt(document.getElementById('clip-count')?.value) || 1)));
+    const cids = getCutTemplateIds();
+    if (!cids.length) { _lastPreflight = null; renderSegCountNote(null); return; }
+    // 一次把几个模板一起问。段库读一次就够，逐个发请求会把它读几遍，
+    // 而且要给每个请求各发一个号，回来时只有最后一个能通过「还是最新的」那道判断，
+    // 前面几个模板的结果全被丢掉。
+    q.set('cut_template_ids', cids.join(','));
     let r = null;
     try { r = await apiFetch(`/admake/projects/${PROJ_ID}/segment-preflight?${q}`); }
     catch { r = null; }
@@ -3206,11 +3604,22 @@ async function runPreflight() {
 }
 
 function doExport() {
-  if (PROJ_KIND === 'segments' && !getCutTemplateId()) { toast('先选一个剪辑模板', 'info'); return; }
-  // 预检已经判定这个模板在这部剧上出不了片，就别让用户走完确认框再被后端拒。
-  if (PROJ_KIND === 'segments' && _lastPreflight && _lastPreflight['拦住了吗']) {
-    toast(_lastPreflight['拦住的原因'] || '这个模板在这部剧上挑不出段', 'error', 6000);
-    return;
+  if (PROJ_KIND === 'segments' && !getCutTemplateIds().length) {
+    toast('先选剪辑模板', 'info'); return;
+  }
+  // 预检已经判定挑不出段，就别让用户走完确认框再被后端拒。
+  // 选了几个模板时，全都挑不出段才拦住；个别挑不出的那几个后端会跳过。
+  if (PROJ_KIND === 'segments' && _lastPreflight) {
+    const 家 = _各模板预检(_lastPreflight);
+    const 活的 = 家.filter(d => !d['拦住了吗']);
+    if (!活的.length) {
+      toast(家[0]?.['拦住的原因'] || '这几个模板在这部剧上都挑不出段', 'error', 6000);
+      return;
+    }
+    const 挂的 = 家.filter(d => d['拦住了吗']);
+    if (挂的.length) {
+      toast(`「${挂的[0]['模板']}」挑不出段，这次跳过它`, 'info', 5000);
+    }
   }
   // 同步入口守卫：必须在弹确认框之前就拦住重入，
   // 否则网络请求耗时窗口内的二次点击（双击）不会被挡住。
@@ -3223,7 +3632,7 @@ function doExport() {
   const count  = Math.min(30, Math.max(1, parseInt(countEl.value) || 1));
   if (String(count) !== countEl.value) countEl.value = count;
   const durVal = String(getTargetSec());
-  const modeLabel = { highlight_shunjian: '高光顺剪', xuanyi_daozhi: '悬疑倒置', shuanggaoguang: '双高光顺剪' }[mode] || mode;
+  const modeLabel = EXPORT_MODE_LABEL[mode] || mode;
 
   const checked = _checkedPartsOrdered();
   if (!checked.length) {
@@ -3234,9 +3643,19 @@ function doExport() {
   // 模式、时长、取材范围都不再复述——上一屏刚填完就在眼前，读一遍不帮人做决定。
   // 这里只说会产出什么、放到哪儿，以及唯一需要犹豫的那件事：开始了就停不下来。
   const dir = (document.getElementById('export-dir-path') || {}).textContent || '应用默认目录';
+  // 选了几个模板时把分配写出来。只报总数的话，用户不知道 6 条是怎么分给 3 个模板的。
+  let 几条 = `<strong>${count} 个成片</strong>`;
+  if (PROJ_KIND === 'segments' && _lastPreflight && _lastPreflight['各模板']) {
+    const 家 = _lastPreflight['各模板'];
+    const 份 = 分配条数(count, 家.map(d => d['推荐条数'] || 0));
+    const 实 = 份.reduce((a, b) => a + b, 0);
+    const 说 = 家.map((d, i) => 份[i] ? `${esc(d['模板'])} ${份[i]} 条` : null)
+                 .filter(Boolean).join('、');
+    几条 = `<strong>${实} 个成片</strong>（${说}）`;
+  }
   showAiModal(
     '确认导出',
-    `生成 <strong>${count} 个成片</strong>，保存到「<strong>${esc(dir)}</strong>」。`
+    `生成 ${几条}，保存到「<strong>${esc(dir)}</strong>」。`
       + `<div class="ai-modal-note">开始后<b>不能中途取消</b>。</div>`,
     () => _runExport(mode, count, durVal),
     '440px'
@@ -3273,7 +3692,7 @@ async function _runExport(mode, count, durVal) {
                              // 而勾选集合里可能还有正在分析、出不了片的 Part。
                              part_ids: checked.map(p => p.id),
                              template_id: Number(document.getElementById('export-template')?.value) || null,
-                             cut_template_id: PROJ_KIND === 'segments' ? getCutTemplateId() : null }),
+                             cut_template_ids: PROJ_KIND === 'segments' ? getCutTemplateIds() : null }),
     });
     const batchIds = new Set(exports.map(e => e.id));
     _exportRunning = true;
@@ -3348,7 +3767,8 @@ function renderExports(list) {
   if (!el) return;  // 列表 UI 已并入「导出历史」弹窗，这里只维护轮询
 
   el.innerHTML = list.map((e, i) => {
-    const modeLabel = { highlight_shunjian:'顺剪', xuanyi_daozhi:'倒置', shuanggaoguang:'双高光' }[e.mode] || e.mode;
+    const modeLabel = { highlight_shunjian:'顺剪', xuanyi_daozhi:'倒置',
+                        shuanggaoguang:'双高光', by_template:'按模板剪' }[e.mode] || e.mode;
     const badgeCls  = { ready:'badge-green', failed:'badge-red', pending:'badge-gray', processing:'badge-blue pulse' }[e.status] || 'badge-gray';
     const statusLabel = { ready:'就绪', failed:'失败', pending:'等待', processing:'合成中' }[e.status] || e.status;
     return `
@@ -3419,7 +3839,8 @@ async function refreshHistoryModal() {
   }
 }
 
-const EXPORT_MODE_LABEL = { highlight_shunjian:'高光顺剪', xuanyi_daozhi:'悬疑倒置', shuanggaoguang:'双高光顺剪' };
+const EXPORT_MODE_LABEL = { highlight_shunjian:'高光顺剪', xuanyi_daozhi:'悬疑倒置',
+                            shuanggaoguang:'双高光顺剪', by_template:'按模板剪' };
 const EXPORT_STATUS_LABEL = { ready:'就绪', failed:'失败', pending:'等待', processing:'合成中' };
 const EXPORT_STATUS_BADGE = { ready:'badge-green', failed:'badge-red', pending:'badge-gray', processing:'badge-blue pulse' };
 

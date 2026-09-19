@@ -1240,6 +1240,21 @@ body.firstrun .wrap{height:calc(100vh - 52px - var(--fbar-h, 58px));}
   </div>
 </div>
 
+<!-- 批量分析的二次确认。一条素材要跑好几分钟，一批下去就没有退路，
+     点下去之前要有一次刹车。单条分析不走这里，它本来就是一条一条点的。 -->
+<div id="cf-modal" class="ai-modal-backdrop" onclick="if(event.target===this)关确认()">
+  <div class="ai-modal-glass">
+    <div class="ai-modal-box">
+      <div class="ai-modal-title" id="cf-title"></div>
+      <div class="ai-modal-msg" id="cf-msg"></div>
+      <div class="ai-modal-footer">
+        <button class="btn btn-secondary" onclick="关确认()">取消</button>
+        <button class="btn btn-primary" id="cf-ok">开始分析</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="tf" class="tf hide">
   <div class="tf-tab" id="tf-tab" onclick="收放浮窗()"><span class="tf-ring"><i id="tf-n">0</i></span></div>
   <div class="tf-card" id="tf-card">
@@ -1629,11 +1644,25 @@ function 盯着(id){
     if(当前.编号 === id) 画全部();
   }, 3000);
 }
+function 关确认(){ $('cf-modal').classList.remove('visible'); }
+/* 问一句再做。正文只说一件事：点下去就停不了。传到哪、花多少钱跟这个决定无关。 */
+function 问一句(标题, 正文, 按钮字, 干活){
+  $('cf-title').textContent = 标题;
+  $('cf-msg').textContent = 正文;
+  var b = $('cf-ok');
+  b.textContent = 按钮字;
+  b.onclick = function(){ 关确认(); 干活(); };
+  $('cf-modal').classList.add('visible');
+}
 function 分析全部待的(){
   var 列 = 待的();
   if(!列.length) return;
-  列.forEach(开分析);
-  提示('已提交 ' + 列.length + ' 条，进度见右侧');
+  问一句('分析 ' + 列.length + ' 条素材',
+        '开始之后不能取消，要等 ' + 列.length + ' 条全部跑完。',
+        '开始分析', function(){
+    列.forEach(开分析);
+    提示('已提交 ' + 列.length + ' 条，进度见右侧');
+  });
 }
 var 浮窗收着 = false;
 function 收放浮窗(){ 浮窗收着 = !浮窗收着; 画浮窗(); }
@@ -2244,8 +2273,12 @@ async function 收进列表(){
       var r = await fetch(API + '/admake/projects/' + proj.id + '/sources',
         {method:'POST', headers:{Authorization:'Bearer ' + TOKEN}, body:fd});
       if(!r.ok) throw new Error('上传失败 ' + r.status);
-      // 爆款素材直接拿上传的原文件当片源，这一步只登记时长和路径，不转码
+      // 爆款素材直接拿上传的原文件当片源，这一步只登记时长和路径，不转码。
+      // 这个接口立刻返回，登记是后台做的，所以要等它真的把 Part 建出来——
+      // 不等的话，下面装数据时这条素材还没有 Part，会被整条跳过，
+      // 用户看到的是「传完了但列表里没有」，回头又传一遍。
       await api('/admake/projects/' + proj.id + '/build-parts', {method:'POST'});
+      await 等Part建好(proj.id);
     } catch(e){ 失败.push(f.名 + '：' + e.message); }
   }
   待传 = [];
@@ -2259,6 +2292,21 @@ async function 收进列表(){
   if(失败.length) 提示('有 ' + 失败.length + ' 条没传上：' + 失败[0]);
   return 新;
 }
+// 最多等 60 秒。登记一条素材只是读时长、写一行库，正常一秒内完成；
+// 等超了就照常往下走，那条素材这一轮不显示，重开这一页能看到。
+async function 等Part建好(项目id){
+  for(var i = 0; i < 60; i++){
+    try {
+      var ps = await api('/admake/projects/' + 项目id + '/parts');
+      if(ps && ps.length) return true;
+      var st = await api('/admake/projects/' + 项目id + '/prepare-status');
+      if(st && st.state === 'failed') return false;
+    } catch(e){ /* 某一轮取不到就下一轮再试 */ }
+    await new Promise(function(r){ setTimeout(r, 1000); });
+  }
+  return false;
+}
+
 async function 跑分析(){
   var 得 = await 收进列表();
   if(!得.length) return;

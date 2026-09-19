@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUploadDir:     ()  => ipcRenderer.invoke('get-upload-dir'),
   selectFolder:     ()  => ipcRenderer.invoke('select-folder'),
   openPath:         (p) => ipcRenderer.invoke('open-path', p),
+  selectBackgroundImage: () => ipcRenderer.invoke('select-background-image'),
+  clearBackgroundImage:  () => ipcRenderer.invoke('clear-background-image'),
   // 配置管理
   getConfig:       ()    => ipcRenderer.invoke('get-config'),
   saveConfig:      (cfg) => ipcRenderer.invoke('save-config', cfg),

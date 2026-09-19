@@ -139,6 +139,44 @@ textarea.input{resize:vertical;min-height:68px;}
 .project-card-header.done .three-dots-btn{color:rgba(255,255,255,.85);}
 .project-card-header.done .three-dots-btn:hover{color:#fff;background:rgba(255,255,255,.18);}
 .project-card-menu{position:absolute;top:10px;right:10px;}
+/* 有任务挂了才出现：合成失败、分析失败、疑似卡住三种，颜色分开。
+   角标贴在头图左上角，不跟右上角的「⋯」菜单打架。 */
+.card-flags{position:absolute;top:10px;left:10px;display:flex;gap:6px;flex-wrap:wrap;max-width:70%;}
+.card-flag{display:flex;align-items:center;gap:4px;font-size:11px;line-height:1.5;
+  border-radius:999px;padding:2px 8px;background:rgba(255,255,255,.94);
+  box-shadow:0 1px 3px rgba(24,28,36,.18);white-space:nowrap;}
+.card-flag i{width:5px;height:5px;border-radius:50%;background:currentColor;display:block;flex:none;}
+.card-flag.bad{color:#c2410c;}
+.card-flag.stuck{color:#b45309;}
+/* 导出状态也走这排角标。出过片和没出过片，卡片外观上要分得开，
+   不然十几个项目排在一起，隔一天回来只能逐个点进去看导出历史。 */
+.card-flag.exporting{color:#c2410c;}
+.card-flag.exporting i{animation:cf-blink 1.1s ease-in-out infinite;}
+@keyframes cf-blink{0%,100%{opacity:1;}50%{opacity:.25;}}
+.card-flag.exported{color:#15803d;}
+/* 卡身上的两条进度：合成和分析各一条，分母都是 Part 总数。
+   在跑那条带一道扫光，跑完转绿。两条都满就不画了，换成一行「全部完成」。 */
+.card-prog{display:flex;flex-direction:column;gap:7px;margin-bottom:12px;}
+.cp-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2);}
+.cp-row .lb{width:52px;flex:none;}
+.cp-bar{flex:1;height:4px;border-radius:999px;background:rgba(24,28,36,.08);overflow:hidden;}
+.cp-bar i{display:block;height:100%;border-radius:999px;background:var(--accent);}
+.cp-bar i.ok{background:#16a34a;}
+.cp-row .nu{width:46px;flex:none;text-align:right;font-variant-numeric:tabular-nums;color:var(--text3);}
+.cp-bar i.run{background-image:linear-gradient(90deg,rgba(255,255,255,0) 0%,rgba(255,255,255,.65) 50%,rgba(255,255,255,0) 100%);
+  background-size:70px 100%;background-repeat:no-repeat;animation:cp-sweep 1.3s linear infinite;}
+@keyframes cp-sweep{from{background-position:-70px 0;}to{background-position:calc(100% + 70px) 0;}}
+.cp-all{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#15803d;margin-bottom:12px;}
+.cp-all i{width:6px;height:6px;border-radius:50%;background:#16a34a;display:block;}
+.cp-prep{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text2);margin-bottom:12px;}
+.cp-spin{width:11px;height:11px;border-radius:50%;border:2px solid rgba(249,115,22,.25);
+  border-top-color:var(--accent);animation:cp-rot .8s linear infinite;flex:none;}
+@keyframes cp-rot{to{transform:rotate(360deg);}}
+.card-retry{margin-top:10px;display:flex;gap:6px;}
+.card-retry button{border:1px solid rgba(234,88,12,.35);background:rgba(234,88,12,.08);
+  color:#c2410c;border-radius:6px;padding:3px 10px;font-size:11px;cursor:pointer;}
+.card-retry button:hover{background:rgba(234,88,12,.16);}
+.card-retry button:disabled{opacity:.5;cursor:default;}
 .three-dots-btn{background:transparent;border:none;color:var(--text2);border-radius:4px;padding:4px 8px;cursor:pointer;font-size:16px;position:relative;}
 .three-dots-btn:hover{color:var(--text);background:var(--bg4);}
 .three-dots-btn:hover{background:var(--bg4);color:var(--text);}
@@ -160,7 +198,12 @@ textarea.input{resize:vertical;min-height:68px;}
 .dropdown-menu a{display:block;padding:4px 14px;font-size:12px;line-height:16px;color:var(--text);cursor:pointer;}
 .dropdown-menu a:hover{background:var(--bg4);}
 .dropdown-menu a.danger{color:var(--red);}
-.project-card-title{color:var(--text);font-size:15px;font-weight:600;position:relative;}
+/* 标题上限 100 个字符。带空格的英文和中文都能正常折行，但粘一串没有空格的
+   文件名或 ID 进来，浏览器不会断行，标题会横着冲出卡片，还把整页撑出横向滚动条。
+   所以强制断行，并且最多两行，超出打省略号，全名挂在 title 上悬停可见。 */
+.project-card-title{color:var(--text);font-size:15px;font-weight:600;position:relative;
+  overflow-wrap:anywhere;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;
+  -webkit-box-orient:vertical;overflow:hidden;}
 .project-card-body{padding:16px;position:relative;z-index:1;}
 .project-card-meta{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;}
 .project-card-footer{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text3);}
@@ -629,18 +672,44 @@ async function apiFetch(path, opts = {}) {
   return res.json();
 }
 
-async function apiUpload(path, formData) {
-  const res = await fetch(API + path, {
-    method: 'POST',
-    headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
-    body: formData,
+// fetch 没有上传进度事件，传 1 GB 时界面只能干等。这里用 XMLHttpRequest，
+// 它的 upload.onprogress 能报已传字节数，据此算百分比、速度和剩余时间。
+function apiUpload(path, formData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', API + path);
+    if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+    if (onProgress) {
+      const 起 = Date.now();
+      xhr.upload.onprogress = e => {
+        if (!e.lengthComputable) return;
+        const 秒 = Math.max(0.001, (Date.now() - 起) / 1000);
+        const 速度 = e.loaded / 秒;                       // 字节/秒
+        onProgress({
+          loaded: e.loaded, total: e.total,
+          percent: e.total ? e.loaded / e.total * 100 : 0,
+          speed: 速度,
+          eta: 速度 > 0 ? (e.total - e.loaded) / 速度 : null,
+        });
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status === 401) { clearAuth(); reject(new Error('未授权')); return; }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(_errText(xhr.responseText) || xhr.statusText)); return;
+      }
+      try { resolve(JSON.parse(xhr.responseText || '{}')); }
+      catch { resolve({}); }
+    };
+    xhr.onerror = () => reject(new Error('上传中断，检查后端是否还在运行'));
+    xhr.send(formData);
   });
-  if (res.status === 401) { clearAuth(); throw new Error('未授权'); }
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(_errText(txt) || res.statusText);
-  }
-  return res.json();
+}
+
+function 好读的大小(n) {
+  if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(2) + ' GB';
+  if (n >= 1024 ** 2) return (n / 1024 ** 2).toFixed(0) + ' MB';
+  return (n / 1024).toFixed(0) + ' KB';
 }
 
 // FastAPI 的报错体是 {"detail":"…"}，直接 toast 出去用户看到的是一串 JSON。
@@ -663,6 +732,9 @@ function clearAuth() {
 async function init() {
   if (!authToken) { clearAuth(); return; }
   try {
+    // 两个请求一起发。项目列表不依赖登录信息，原来排在 /auth/me 后面串着走，
+    // 进页面要等两趟往返才看得到卡片。
+    const 项目到了 = loadProjects();
     const me = await apiFetch('/auth/me');
     currentUser = me.username;
     currentRole = me.role || 'admin';
@@ -672,7 +744,7 @@ async function init() {
       document.getElementById('drama-link-group').style.display = 'block';
       loadDramaProjects();
     }
-    await loadProjects();
+    await 项目到了;
     // 从模板编辑器返回时带 ?view=templates：落到成片模板 tab，而不是我的项目
     if (new URLSearchParams(location.search).get('view') === 'templates') switchView('templates');
   } catch (e) {
@@ -714,9 +786,82 @@ async function loadProjects() {
   try {
     const 全部 = await apiFetch('/admake/projects');
     allProjects = 全部.filter(p => (p.project_kind || 'marks') === PAGE_KIND);
+    _projSig = 项目签名(allProjects);
     renderProjects();
   } catch (e) { toast(e.message, 'error'); }
 }
+
+// 卡片上那两条进度原来只在进页面时拉一次，之后一直冻在那一刻。右边的任务浮窗
+// 每 4 秒拉一次任务中心，两边对不上：浮窗数字在动，卡片不动。
+// 这里跟着浮窗同一个节奏刷新，但先问便宜的 /admake/tasks（几毫秒），
+// 没任务在跑就不去拉那个要几十到两百毫秒的项目列表。
+let _projSig = '';
+let _任务签名 = '';
+let _轮询中 = false;
+let _白跑了几轮 = 0;
+// 轮询专用的拉取：撞 401 不跳转。apiFetch 遇到 401 会直接 clearAuth()，
+// 那会把人弹回首页——用户手动操作时这样是对的，但下面这个是每 4 秒自己跑的，
+// token 在页面放着的时候过期，用户什么都没碰就被弹走了。
+// 401 这一轮直接放弃，但不停掉轮询：跟右边任务浮窗一个口径（task-float.js 里
+// 专门写过为什么不停——停了之后重新登录也不会自己恢复，非得刷新页面）。
+async function 静默拉(path) {
+  if (!authToken) return null;
+  let res;
+  try { res = await fetch(API + path, { headers: { Authorization: `Bearer ${authToken}` } }); }
+  catch { return null; }                       // 后端抖一下，下一轮再说
+  if (!res.ok) return null;                    // 含 401：这一轮不要，下一轮再试
+  return res.json().catch(() => null);
+}
+function 项目签名(list) {
+  // source_count 和 title 也要进来：给项目加源视频写的是 source 表，项目行的
+  // updated_at 不动，只看它的话卡片上的「源视频 N」会一直停在旧数字。
+  return list.map(p => [p.id, p.title, p.part_count, p.source_count,
+                        p.ready_parts, p.analyzed_parts, p.all_done ? 1 : 0,
+                        p.failed_parts, p.failed_ai, p.stuck_parts,
+                        p.exported_count, p.exporting_count, p.updated_at].join('/')).join(',');
+}
+async function 安静刷新项目() {
+  // 不在「我的项目」这个 tab 就绝对不能重画。卡片藏着的时候量出来宽高是 0，
+  // liquid-lens 的 paint() 在那一步直接 return，滤镜节点没建出来（rec.dm 是 undefined），
+  // 而这条记录已经进了它的列表。切回来点卡片时 setScale 读 rec.dm.R 就抛 TypeError，
+  // 形变停在按下去那一帧不复位，看着就是卡片被压扁了还点不动。
+  if (currentView !== 'projects') return;
+  // 这几种时候重画会把用户正在做的事打断：菜单收起来、勾选清空、弹窗里的输入没了
+  if (document.hidden) return;
+  if (document.body.classList.contains('selecting')) return;
+  if (document.querySelector('.dropdown-menu:not(.hidden)')) return;
+  if (document.querySelector('.modal-overlay:not(.hidden)')) return;
+  const 全部 = await 静默拉('/admake/projects');
+  if (!全部) return;
+  const 本类 = 全部.filter(p => (p.project_kind || 'marks') === PAGE_KIND);
+  const sig = 项目签名(本类);
+  if (sig === _projSig) return;   // 没变就不重画，重画会打断 hover 和滚动位置
+  _projSig = sig;
+  allProjects = 本类;
+  renderProjects();
+}
+// 签名一直不变也要隔一阵子全量拉一次。「可能卡住」那个角标是后端按
+// 「processing 超过半小时没动静」算的，Part 状态不变，任务中心那一行的 count
+// 也不变，光看签名的话这个角标永远不会自己出现——而它正是为这个场景做的。
+const 白跑几轮也要刷 = 15;                     // 15 × 4 秒 = 一分钟
+async function 跟着任务刷新() {
+  if (_轮询中) return;                         // 后端被 ffmpeg 压满时请求会叠起来
+  if (document.hidden || !document.hasFocus()) return;   // 窗口没在用，别打扰后端
+  _轮询中 = true;
+  try {
+    const tasks = await 静默拉('/admake/tasks');
+    if (!tasks) return;
+    // 任务中心这一轮跟上一轮完全一样，就说明没有 Part 合成完、没有导出出片，
+    // 项目列表也不会有变化，那个几十到两百毫秒的查询就不必发了。
+    // 最后一个任务跑完时签名从「有」变成「空」，照样触发一次收尾刷新。
+    const sig = tasks.map(t => `${t.project_id}:${t.type}:${t.count}`).join(',');
+    if (sig === _任务签名 && _白跑了几轮 < 白跑几轮也要刷) { _白跑了几轮++; return; }
+    _任务签名 = sig;
+    _白跑了几轮 = 0;
+    await 安静刷新项目();
+  } finally { _轮询中 = false; }
+}
+setInterval(跟着任务刷新, 4000);
 
 function filterProjects(q) {
   projFilter = q || '';
@@ -781,6 +926,44 @@ function renderProjects() {
   }
   grid.classList.remove('is-empty');
   const projects = paginate(filtered, projPage, 'projects-pagination', 'gotoProjPage', n => { projPage = n; });
+  // 卡片上的红字。不点进项目就知道哪个挂了；合成失败和分析失败分开标，
+  // 因为处理方式不一样。「可能卡住」指真的在跑却半小时没有动静，多半是执行它的
+  // 进程已经不在了，跟正常排队要区分开。
+  function 卡片角标(p) {
+    const 项 = [];
+    if (p.failed_parts) 项.push(`<span class="card-flag bad"><i></i>合成失败 ${p.failed_parts}</span>`);
+    if (p.failed_ai)    项.push(`<span class="card-flag bad"><i></i>分析失败 ${p.failed_ai}</span>`);
+    if (p.stuck_parts)  项.push(`<span class="card-flag stuck"><i></i>可能卡住 ${p.stuck_parts}</span>`);
+    if (p.exporting_count) 项.push(`<span class="card-flag exporting"><i></i>导出中 ${p.exporting_count}</span>`);
+    else if (p.exported_count) 项.push(`<span class="card-flag exported"><i></i>已导出 ${p.exported_count} 条</span>`);
+    return 项.length ? `<div class="card-flags">${项.join('')}</div>` : '';
+  }
+  function 卡片重试(p) {
+    const n = (p.failed_parts || 0) + (p.failed_ai || 0);
+    if (!n) return '';
+    const 字 = p.failed_parts && p.failed_ai ? `重试 ${n} 条`
+             : p.failed_parts ? `重试 ${p.failed_parts} 条` : `重新分析 ${p.failed_ai} 条`;
+    return `<div class="card-retry"><button onclick="retryProject(event, ${p.id})">${字}</button></div>`;
+  }
+
+  // 两条进度。跑完的项目不画空转的条，Part 还没建出来的显示「正在准备」。
+  function 卡片进度(p) {
+    const 总 = p.part_count || 0;
+    if (!总) return '<div class="cp-prep"><span class="cp-spin"></span>正在准备 Part…</div>';
+    if (p.all_done) return `<div class="cp-all"><i></i>全部完成 · ${总} 个 Part</div>`;
+    const 条 = (名, 完, 在跑) => {
+      const pct = Math.round(完 / 总 * 100);
+      const 类 = 完 >= 总 ? 'ok' : (在跑 ? 'run' : '');
+      return `<div class="cp-row"><span class="lb">${名}</span>` +
+             `<span class="cp-bar"><i class="${类}" style="width:${pct}%"></i></span>` +
+             `<span class="nu">${完}/${总}</span></div>`;
+    };
+    const 合成完 = p.ready_parts || 0, 分析完 = p.analyzed_parts || 0;
+    return '<div class="card-prog">' +
+      条('合成', 合成完, 合成完 < 总) +
+      条('分析', 分析完, 合成完 >= 总 && 分析完 < 总) + '</div>';
+  }
+
   grid.innerHTML = projects.map((p, idx) => {
     const desc = (p.description || '暂无描述').slice(0, 32);
     const busy = selBusyIds.has(p.id);
@@ -789,7 +972,8 @@ function renderProjects() {
       <span class="sel-tick"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span>
       <span class="busy-tag">任务进行中</span>
       <div class="project-card-header${p.all_done ? ' done' : ''}">
-        <div class="project-card-title">${esc(p.title)}</div>
+        ${卡片角标(p)}
+        <div class="project-card-title" title="${esc(p.title)}">${esc(p.title)}</div>
         <div class="project-card-menu" onclick="event.stopPropagation()">
           <button class="three-dots-btn" onclick="toggleDropdown(event,${p.id})">⋯</button>
           <div class="dropdown-menu hidden" id="dd-${p.id}">
@@ -804,10 +988,12 @@ function renderProjects() {
           <span class="chip">源视频 ${p.source_count}</span>
           <span class="chip">Part ${p.part_count}</span>
         </div>
+        ${卡片进度(p)}
         <div class="project-card-footer">
           <span style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(desc)}</span>
           <span>${fmtDate(p.updated_at)}</span>
         </div>
+        ${卡片重试(p)}
       </div>
     </div>`;
   }).join('');
@@ -817,6 +1003,32 @@ function renderProjects() {
 // 菜单一开就把所在卡片抬到最上层。卡片自己带 backdrop-filter，那会生成层叠上下文，
 // 菜单里的 z-index:50 只在这张卡内部有效——同一列下面那张卡在 DOM 里靠后，会盖住
 // 菜单溢出卡底的那一截。模板卡的菜单有五项、180px 高，正好溢出十几像素。
+async function retryProject(ev, pid) {
+  ev.stopPropagation();
+  const 按钮 = ev.currentTarget;
+  按钮.disabled = true; 按钮.textContent = '重试中…';
+  try {
+    const r = await apiFetch(`/admake/projects/${pid}/retry-failed`, { method: 'POST' });
+    // 合成重建是后台任务，分析要单独起：那条路要先探一次密钥连通，复用原来的接口
+    if ((r.analyze_part_ids || []).length) {
+      try {
+        await apiFetch(`/admake/projects/${pid}/ai-analyze?part_ids=` + r.analyze_part_ids.join(','),
+                       { method: 'POST' });
+      } catch (e) {
+        alert('合成已重新排队，但分析没起来：' + (e.message || '未知原因'));
+      }
+    }
+    if (r.skipped) {
+      alert(`${r.rebuilt} 条已重新排队。另有 ${r.skipped} 条的源视频变过了，` +
+            '按原计划重建会让编号和内容对不上，要重新分 Part。');
+    }
+    await loadProjects();
+  } catch (e) {
+    alert('重试失败：' + (e.message || '未知原因'));
+    按钮.disabled = false; 按钮.textContent = '重试';
+  }
+}
+
 function _liftCardFor(menu, on) {
   const card = menu && menu.closest('.project-card');
   if (card) card.classList.toggle('menu-open', !!on);
@@ -971,6 +1183,19 @@ wireNamingValidation('c-alias', 'c-alias-error', '导出文件命名', 20, false
 wireNamingValidation('e-title', 'e-title-error', '项目标题', TITLE_MAX_LEN, true);
 wireNamingValidation('e-alias', 'e-alias-error', '导出文件命名', 20, false);
 
+// 署名在同一个人手里基本不变，每建一个项目重填一遍纯属白干。存在本机，
+// 新建弹窗打开时预填，用户改了就以改后的为准，下一次按新的带。
+const 署名存档键 = 'skyart_editor_alias';
+function 读上次署名() {
+  try { return localStorage.getItem(署名存档键) || ''; } catch (e) { return ''; }
+}
+function 记下署名(alias) {
+  try {
+    if (alias) localStorage.setItem(署名存档键, alias);
+    else localStorage.removeItem(署名存档键);
+  } catch (e) { /* 隐私模式下写不了，下次照样手填 */ }
+}
+
 // 选导出目录：优先原生文件夹选择器；浏览器预览态(无 electronAPI)退回手动输入
 async function pickExportPath(inputId) {
   const inp = document.getElementById(inputId);
@@ -1080,6 +1305,7 @@ async function saveEditProject() {
       method: 'PUT',
       body: JSON.stringify(body),
     });
+    记下署名(alias);
     closeEditModal();
     toast('已保存', 'success');
     await loadProjects();
@@ -1102,7 +1328,7 @@ function openCreateModal() {
   document.getElementById('c-brand').textContent = PAGE_KIND === 'segments' ? 'Sky' : 'SkyArt';
   document.getElementById('c-title').value = '';
   document.getElementById('c-desc').value  = '';
-  document.getElementById('c-alias').value = '';
+  document.getElementById('c-alias').value = 读上次署名();
   document.getElementById('c-export-path').value = '';
   document.getElementById('c-title-error').textContent = '';
   document.getElementById('c-alias-error').textContent = '';
@@ -1173,6 +1399,43 @@ async function loadDramaProjects() {
 // 接着已建的项目继续传——否则每点一次"创建"就多出一个重名空项目
 let _pendingCreatedPid = null;
 
+// 上传进度弹窗。原来只把「创建项目」按钮的字改成「上传视频 (25 个)…」，
+// 25 集约 1 GB 传几十秒，那行字一动不动，看不出传到哪了、还要多久。
+function 显示上传进度(开, 个数, 总量) {
+  let box = document.getElementById('up-mask');
+  if (!开) { if (box) box.remove(); return; }
+  box = document.createElement('div');
+  box.id = 'up-mask';
+  box.style.cssText = 'position:fixed;inset:0;background:rgba(25,27,31,.3);z-index:9999;' +
+    'display:flex;align-items:center;justify-content:center;';
+  box.innerHTML = `
+    <div style="width:340px;background:var(--bg2);border-radius:14px;padding:18px;
+                box-shadow:0 12px 36px rgba(25,27,31,.24);">
+      <div style="font-size:14px;font-weight:600;margin-bottom:12px;">正在上传素材</div>
+      <div style="height:6px;border-radius:99px;background:var(--bg3);overflow:hidden;">
+        <i id="up-bar" style="display:block;height:100%;width:0;background:var(--accent);
+                              border-radius:99px;transition:width .2s linear;"></i>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-top:6px;display:flex;
+                  justify-content:space-between;">
+        <span id="up-size">0 / ${好读的大小(总量)}</span><span id="up-eta"></span>
+      </div>
+      <div id="up-n" style="font-size:10.5px;color:var(--text3);margin-top:10px;">${个数} 个文件</div>
+    </div>`;
+  document.body.appendChild(box);
+}
+
+function 刷新上传进度(x) {
+  const bar = document.getElementById('up-bar');
+  if (!bar) return;
+  bar.style.width = x.percent.toFixed(1) + '%';
+  document.getElementById('up-size').textContent =
+    好读的大小(x.loaded) + ' / ' + 好读的大小(x.total);
+  document.getElementById('up-eta').textContent =
+    (x.eta != null ? '约还需 ' + Math.max(1, Math.round(x.eta)) + ' 秒 · ' : '') +
+    好读的大小(x.speed) + '/s';
+}
+
 async function createProject() {
   const title = document.getElementById('c-title').value.trim();
   const alias = document.getElementById('c-alias').value.trim();
@@ -1215,19 +1478,22 @@ async function createProject() {
       p = await apiFetch('/admake/projects', { method: 'POST', body: JSON.stringify(body) });
       _pendingCreatedPid = p.id;
     }
+    记下署名(alias);
 
     // Step 2: upload files
     if (pendingFiles.length) {
-      btn.textContent = `上传视频 (${pendingFiles.length} 个)…`;
+      const 总量 = pendingFiles.reduce((n, f) => n + f.size, 0);
+      显示上传进度(true, pendingFiles.length, 总量);
       const fd = new FormData();
       pendingFiles.forEach(f => fd.append('files', f));
-      await apiUpload(`/admake/projects/${p.id}/sources`, fd);
+      try {
+        await apiUpload(`/admake/projects/${p.id}/sources`, fd, 刷新上传进度);
+      } finally {
+        显示上传进度(false);
+      }
 
-      // Step 3: auto build-parts
-      btn.textContent = '合成 Part 中…';
-      // 合成失败不能吞：后端会明确告诉你是没上传源视频还是文件损坏，吞掉之后
-      // 用户看到的是"合成中"加一个永远空着的 Part 列表。项目已经建好，
-      // 这里只报错不回滚，用户改完素材点"创建项目"会继续用同一个项目续传。
+      // Step 3: 建 Part。这个接口现在立刻返回，读素材信息、切分集尾、按时长分组
+      // 都在后台跑，进度在项目页的 Part 面板里看。这里只需要确认它接住了这个请求。
       try {
         await apiFetch(`/admake/projects/${p.id}/build-parts`, { method: 'POST' });
       } catch (e) {
@@ -1242,7 +1508,6 @@ async function createProject() {
 
     _pendingCreatedPid = null;  // 全流程成功才清，失败保留供重试续传
     closeCreateModal();
-    toast('项目已创建' + (pendingFiles.length ? '，Part 视频合成中…' : ''), 'success');
     enterProject(p.id);
   } catch (e) {
     toast(e.message + (_pendingCreatedPid ? '（项目已建好，点"创建项目"重试会继续上传，不会重复建）' : ''), 'error', 6000);

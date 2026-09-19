@@ -59,25 +59,86 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 .avatar-menu-divider { height: 1px; background: var(--border); margin: 4px 0; }
 .user-name { font-size: 13px; color: var(--text2); }
 
-/* ── 玻璃调参面板（⌥G 开关，调试用，不常驻） ───────────────── */
-.gl-panel { position:fixed; right:20px; bottom:20px; width:290px; z-index:600; display:none;
-  background:var(--bg2); border-radius:12px; padding:12px 14px 10px;
-  box-shadow:0 0 0 1px rgba(24,28,36,.13), 0 4px 10px rgba(24,28,36,.10), 0 18px 40px rgba(24,28,36,.22);
-  font-size:12px; color:var(--text); }
-.gl-panel.show { display:block; }
-.gl-panel h4 { font-size:12px; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
-.gl-panel h4 span { font-weight:400; color:var(--text3); font-size:10px;
-  font-family:ui-monospace,Menlo,monospace; }
-.gl-row { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
-.gl-row label { width:62px; flex-shrink:0; color:var(--text2); }
-.gl-row input[type=range] { flex:1; min-width:0; accent-color:var(--accent); height:16px; }
-.gl-row b { width:44px; text-align:right; font-weight:600;
-  font-family:ui-monospace,Menlo,monospace; font-size:11px; font-variant-numeric:tabular-nums; }
-.gl-acts { display:flex; gap:6px; margin-top:9px; }
-.gl-acts button { flex:1; border:none; border-radius:6px; padding:5px 0; font-size:11px; cursor:pointer;
-  background:var(--bg3); color:var(--text2); }
-.gl-acts button:hover { background:var(--bg4); color:var(--text); }
-.gl-acts button.k { background:var(--btn); color:#fff; }
+
+/* ── 左下角「外观」面板 ──────────────────────────────────────
+   背景选默认底纹还是自定义图片，动效单独一个开关，两种背景都管。
+   原来 ⌥G 那个调参面板收进「界面质感」折叠区，快捷键保留但界面上不标。 */
+.bgfab{position:fixed;left:20px;bottom:20px;z-index:620;}
+.bg-chip{display:flex;align-items:center;gap:6px;height:28px;padding:0 11px;
+  border:none;border-radius:999px;cursor:pointer;font-size:12px;color:var(--text2);
+  background:rgba(255,255,255,.55);
+  box-shadow:0 0 0 1px rgba(24,28,36,calc(.09*var(--sh))),0 1px 2px rgba(24,28,36,calc(.08*var(--sh)));}
+.bg-chip:hover{background:rgba(255,255,255,.85);color:var(--text);}
+.bg-pop{position:absolute;left:0;bottom:36px;width:246px;display:none;
+  background:var(--bg2);border-radius:12px;padding:10px;
+  box-shadow:0 0 0 1px rgba(24,28,36,.13),0 4px 10px rgba(24,28,36,.10),0 18px 40px rgba(24,28,36,.22);}
+.bg-pop.show{display:block;}
+.bg-pop, .bg-pop button, .bg-pop label, .bg-pop input{font-size:12px;
+  font-family:system-ui,"PingFang SC",sans-serif;color:var(--text);}
+.bg-pop h4{font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;}
+/* 分段按钮。名字带 ap- 前缀：首页卡片图标里已经有一个 .seg，那是橙色渐变的小方块，
+   定义在本段之后，重名会把这里整个盖掉。 */
+.ap-seg{display:flex;background:var(--bg3);border-radius:7px;padding:2px;gap:2px;}
+.ap-seg button{flex:1;border:none;background:none;color:var(--text2);border-radius:5px;
+  padding:5px 0;font-size:11.5px;line-height:1.5;cursor:pointer;font-family:inherit;}
+.ap-seg button.on{background:var(--bg2);color:var(--text);font-weight:600;
+  box-shadow:0 1px 2px rgba(24,28,36,.12);}
+.bg-file{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text2);}
+.bg-file span{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.bg-file button{border:none;background:var(--bg3);color:var(--text2);border-radius:5px;
+  padding:3px 8px;font-size:11px;cursor:pointer;flex:none;}
+.bg-file button:hover{background:var(--bg4);color:var(--text);}
+.bg-warn{font-size:11px;line-height:1.55;color:#9a3412;margin-top:6px;display:none;}
+.bg-warn.on{display:block;}
+.bg-sub{font-size:11px;color:var(--text3);margin:8px 0 4px;}
+.bg-mix{display:flex;align-items:center;gap:8px;margin-top:8px;}
+.bg-mix .ap-seg{width:104px;flex:none;}
+.bg-mix label{font-size:11px;color:var(--text2);flex:none;}
+.bg-mix input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:16px;}
+.sw-row{display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--text);}
+.sw-row .d{font-size:11px;color:var(--text3);margin-left:auto;}
+.sw{width:34px;height:19px;border-radius:999px;background:var(--bg4);position:relative;
+  cursor:pointer;flex:none;transition:background .18s;}
+.sw.on{background:var(--accent);}
+.sw i{position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;
+  box-shadow:0 1px 2px rgba(24,28,36,.28);transition:transform .18s;}
+.sw.on i{transform:translateX(15px);}
+.gl-fold{margin-top:10px;border-top:1px solid var(--border);padding-top:6px;}
+.gl-fold summary{cursor:pointer;font-size:12px;color:var(--text);list-style:none;
+  display:flex;align-items:center;padding:6px 8px;border-radius:6px;margin-bottom:2px;}
+.gl-fold summary::-webkit-details-marker{display:none;}
+.gl-fold summary:hover{background:var(--bg3);}
+.gl-fold summary svg{margin-left:auto;color:var(--text3);transition:transform .15s;}
+.gl-fold[open] summary svg{transform:rotate(180deg);}
+/* 十个参数滑杆。面板只有 246px 宽，标签压到 44px，数值右对齐用等宽数字 */
+.gl-row{display:flex;align-items:center;gap:8px;margin-bottom:5px;}
+.gl-row label{width:44px;flex:none;color:var(--text2);font-size:11px;}
+.gl-row input[type=range]{flex:1;min-width:0;accent-color:var(--accent);height:16px;}
+.gl-row b{width:38px;flex:none;text-align:right;font-weight:600;font-size:11px;
+  font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums;color:var(--text);}
+.bg-reset{width:100%;margin-top:10px;border:none;border-radius:6px;padding:6px 0;
+  font-size:11.5px;cursor:pointer;background:var(--bg3);color:var(--text2);}
+.bg-reset:hover{background:var(--bg4);color:var(--text);}
+/* 自定义背景图铺满窗口。压一层白纱，深色或花哨的图上卡片的字才读得清。 */
+.bg-photo{position:fixed;inset:0;z-index:-2;background-size:cover;background-position:center;
+  background-repeat:no-repeat;display:none;}
+.bg-photo.contain{background-size:contain;background-color:#e7e3dd;}
+.bg-photo::after{content:'';position:absolute;inset:0;
+  background:rgba(244,245,247,var(--scrim,.55));}
+body.custom-bg .bg-photo{display:block;}
+body.custom-bg .ll-bgfx{display:none;}
+/* 动效关掉：底纹和自定义图一起停。跟 liquid-lens 自己的 paused 分开，互不覆盖 */
+body.no-anim .ll-bgfx .ll-drift,
+body.no-anim .ll-bgfx .ll-paper,
+body.no-anim .bg-photo{animation:none !important;}
+
+/* 自定义图的动效：缓慢平移放大，来回走。静止的照片没有可漂移的母版，
+   业界通行做法就是这个，48 秒一个来回，幅度压到只觉得画面是活的。 */
+body.bg-anim .bg-photo{animation:kenburns 48s ease-in-out infinite alternate;}
+@keyframes kenburns{
+  from{transform:scale(1.06) translate(-1.1%,-0.7%);}
+  to  {transform:scale(1.14) translate(1.1%,0.7%);}}
+@media (prefers-reduced-motion: reduce){ body.bg-anim .bg-photo{animation:none;} }
 
 /* ── 系统自检 ────────────────────────────────────────────── */
 .sc-chip { display:flex; align-items:center; gap:6px; height:26px; padding:0 10px;
@@ -270,9 +331,11 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 .brand h1{font-size:40px;line-height:1.15;font-weight:800;letter-spacing:-.01em;color:var(--text);margin-top:12px;}
 .brand p{margin-top:14px;font-size:14px;line-height:1.75;color:var(--text2);max-width:320px;}
 /* 今天的数字：打开首页取一次，不轮询。首页不是等任务的地方 */
+/* max-content 是按内容的完整宽度撑开的，剧名一长整张卡就跟着变宽，
+   里面的重试按钮被推出去。所以必须给一个上限，超出的部分由各行自己截断。 */
 .status{display:flex;flex-direction:column;gap:10px;padding:14px 16px;border-radius:12px;
   background:rgba(255,255,255,.5);box-shadow:inset 0 1px 0 rgba(255,255,255,.9),0 0 0 1px rgba(24,28,36,calc(.07*var(--sh)));
-  width:max-content;min-width:260px;}
+  width:max-content;min-width:260px;max-width:360px;}
 .status[hidden]{display:none;}
 .st-h{font-size:11px;font-weight:700;letter-spacing:.12em;color:var(--text3);}
 .st-nums{display:flex;gap:22px;}
@@ -281,11 +344,35 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 .st-n b.on{color:var(--accent2);}
 .st-n span{font-size:11.5px;color:var(--text2);}
 .st-run{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);padding-top:8px;
-  border-top:1px solid rgba(24,28,36,.06);cursor:pointer;max-width:300px;}
+  border-top:1px solid rgba(24,28,36,.06);cursor:pointer;max-width:100%;min-width:0;}
 .st-run[hidden]{display:none;}
+/* 在跑的任务一类一行。第二行起不再重画分隔线，行距收紧 */
+.st-run + .st-run{border-top:none;padding-top:3px;}
+/* 六行以内全部铺开，再多就在这一小块里滚。原来只画三行、其余压成「还有 N 个在跑」，
+   十几个 Part 排队合成时首页什么都看不出来。滚动条压到 5px、轨道透明，
+   不滚的时候看不见它，鼠标进来才浮出一道灰。 */
+#t-lines{max-height:134px;overflow-y:auto;overscroll-behavior:contain;padding-right:6px;
+  scrollbar-width:thin;scrollbar-color:rgba(24,28,36,.10) transparent;}
+#t-lines:hover{scrollbar-color:rgba(24,28,36,.24) transparent;}
+#t-lines::-webkit-scrollbar{width:5px;}
+#t-lines::-webkit-scrollbar-track{background:transparent;}
+/* 常驻一道很淡的灰：全透明的话，行数超过六行时不把鼠标移上去根本看不出下面还有内容 */
+#t-lines::-webkit-scrollbar-thumb{background:rgba(24,28,36,.10);border-radius:999px;}
+#t-lines:hover::-webkit-scrollbar-thumb{background:rgba(24,28,36,.24);}
+#t-lines:hover::-webkit-scrollbar-thumb:hover{background:rgba(24,28,36,.34);}
+/* 失败行。跟「在跑」那行同一套骨架，只换颜色，并在行尾挂一个重试按钮。 */
+.st-bad{display:flex;align-items:center;gap:8px;font-size:12px;color:#c2410c;padding-top:6px;
+  max-width:100%;min-width:0;}
+.st-bad[hidden]{display:none;}
+.st-bad .dot{width:6px;height:6px;border-radius:50%;background:#ea580c;flex:none;}
+.st-bad span.t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+.st-bad button{flex:none;border:1px solid rgba(234,88,12,.35);background:rgba(234,88,12,.08);
+  color:#c2410c;border-radius:6px;padding:2px 8px;font-size:11px;cursor:pointer;}
+.st-bad button:hover{background:rgba(234,88,12,.16);}
+.st-bad button:disabled{opacity:.5;cursor:default;}
 .st-run:hover{color:var(--text);}
 .st-run .sc-dot{box-shadow:none;background:var(--accent);animation:sc-pulse 1.6s ease-in-out infinite;}
-.st-run span.t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.st-run span.t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
 /* 工具清单：两档高度，大行带说明和标签，矮行只有一句话 */
 .ed-right{display:flex;flex-direction:column;gap:12px;}
 .rc{display:flex;align-items:center;gap:18px;padding:16px 20px 16px 16px;border-radius:14px;cursor:pointer;
@@ -518,7 +605,8 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
           <div class="st-n"><b id="t-done">0</b><span>分析完（Part）</span></div>
           <div class="st-n"><b id="t-exp">0</b><span>出片（条）</span></div>
         </div>
-        <div class="st-run" id="t-line" hidden><span class="sc-dot"></span><span class="t" id="t-line-text"></span></div>
+        <div id="t-lines"></div>
+        <div class="st-bad" id="t-bad" hidden><span class="dot"></span><span class="t" id="t-bad-text"></span><button id="t-bad-btn" onclick="retryFailed(event)">重试</button></div>
       </div>
     </div>
     <div class="ed-right">
@@ -573,7 +661,16 @@ body { background: var(--bg); color: var(--text); font-family: system-ui, "PingF
 <script>
 if (window.LiquidLens) {                                   // 组件没加载上也不能让页面塌掉
   LiquidLens.setJellyGain(2);
+  // 漂移层一律建出来，动不动由 body 上的 no-anim 决定。
+  // 不能按设置决定建不建：mountBackdrop 不建的话整个 .ll-drift 元素都不存在，
+  // 之后在界面上把动效打开也没有层可动，只能刷新页面才回得来。
+  // 暂停状态的动画不占 GPU，白建几个节点的代价可以忽略。
   LiquidLens.mountBackdrop({ drift: true });               // 工作台定位线 + 横向漂移的制图母版
+  // 先按存下来的设置定住，免得开着动效的那一帧先跑起来
+  try {
+    const _v = JSON.parse(localStorage.getItem('skyart_appearance_v1') || 'null');
+    if (_v && _v.动效 === false) document.body.classList.add('no-anim');
+  } catch {}
   LiquidLens.glass('.topbar');                             // 参数走 liquid-lens 的 DEFAULTS
   LiquidLens.glass('.rc:not(.locked)', { jelly: true });
   // 鼠标划过大卡片也弹一下，幅度比点击小
@@ -599,7 +696,15 @@ async function apiFetch(path, opts = {}) {
   if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
   const res = await fetch(API + path, { ...opts, headers: { ...headers, ...(opts.headers || {}) } });
   if (res.status === 401) { showLoginOverlay(true); return null; }
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    // 后端的错误体是 {"detail":"…"}，整段贴给用户就成了一行 JSON。只取那句话。
+    const 原文 = await res.text();
+    let 话 = 原文;
+    try { const j = JSON.parse(原文); 话 = j.detail || j.message || 原文; } catch {}
+    const err = new Error(话);
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -746,13 +851,113 @@ function glCopy() {
   navigator.clipboard.writeText(t).then(() => toast && toast('参数已复制', 'success'), () => {});
 }
 function glToggle() {
-  const p = document.getElementById('gl-panel');
+  const p = document.getElementById('bg-pop');
   if (!p.dataset.init) { p.dataset.init = '1'; glRender(); }
   p.classList.toggle('show');
 }
 document.addEventListener('keydown', e => {
   if (e.altKey && (e.key === 'g' || e.key === 'G' || e.code === 'KeyG')) { e.preventDefault(); glToggle(); }
 });
+
+// ── 外观：背景源、动效、自定义图 ────────────────────────────
+// 背景源和动效是两件事：默认底纹和自定义图都能动，也都能停。
+const 外观键 = 'skyart_appearance_v1';
+let 外观 = { 源: 'grid', 动效: true, 显示方式: 'cover', 变淡: 0.55, 图: '', 图名: '' };
+try {
+  const v = JSON.parse(localStorage.getItem(外观键) || 'null');
+  if (v) 外观 = Object.assign(外观, v);
+} catch {}
+
+function 存外观() {
+  try { localStorage.setItem(外观键, JSON.stringify(外观)); } catch {}
+}
+
+function 应用外观() {
+  const 用图 = 外观.源 === 'photo' && !!外观.图;
+  document.body.classList.toggle('custom-bg', 用图);
+  document.body.classList.toggle('bg-anim', 用图 && 外观.动效);
+  const 层 = document.getElementById('bg-photo');
+  if (层) {
+    层.style.backgroundImage = 外观.图 ? `url("file://${encodeURI(外观.图)}")` : '';
+    层.classList.toggle('contain', 外观.显示方式 === 'contain');
+  }
+  document.documentElement.style.setProperty('--scrim', 外观.变淡);
+  // 用 no-anim 而不是 paused：paused 是 liquid-lens 自己在用的——窗口失焦时它加上、
+  // 回到前台时去掉。两边抢同一个类的话，关掉动效后切出去再切回来，动效会自己又开起来。
+  document.body.classList.toggle('no-anim', !外观.动效);
+  // 面板自身的显示状态
+  const q = id => document.getElementById(id);
+  if (q('src-grid')) {
+    q('src-grid').classList.toggle('on', 外观.源 !== 'photo');
+    q('src-photo').classList.toggle('on', 外观.源 === 'photo');
+    q('photo-row').style.display = 外观.源 === 'photo' ? '' : 'none';
+    q('photo-name').textContent = 外观.图名 || '未选择图片';
+    q('mo-sub').textContent = 用图 ? '画面缓慢平移' : '底纹横向移动';
+    q('mo-sw').classList.toggle('on', 外观.动效);
+    q('fit-cover').classList.toggle('on', 外观.显示方式 === 'cover');
+    q('fit-contain').classList.toggle('on', 外观.显示方式 === 'contain');
+    q('scrim-in').value = 外观.变淡;
+  }
+}
+
+function toggleAppearance(e) { e.stopPropagation(); glToggle(); }
+document.addEventListener('DOMContentLoaded', () => {
+  const p = document.getElementById('bg-pop');
+  if (p) p.addEventListener('click', e => e.stopPropagation());
+  应用外观();
+});
+document.addEventListener('click', () => {
+  const p = document.getElementById('bg-pop');
+  if (p) p.classList.remove('show');
+});
+
+function setSrc(v)   { 外观.源 = v; 存外观(); 应用外观(); }
+function setMotion() { 外观.动效 = !外观.动效; 存外观(); 应用外观(); }
+function setFit(e, f) { if (e) e.stopPropagation(); 外观.显示方式 = f; 存外观(); 应用外观(); }
+function setScrim(v) {
+  外观.变淡 = parseFloat(v);
+  document.documentElement.style.setProperty('--scrim', 外观.变淡);
+  存外观();
+}
+
+async function pickBgPhoto(e) {
+  e.stopPropagation();
+  if (!(window.electronAPI && window.electronAPI.selectBackgroundImage)) {
+    toast('这个版本不支持选图片', 'error'); return;
+  }
+  const r = await window.electronAPI.selectBackgroundImage();
+  if (!r) return;
+  外观.图 = r.path; 外观.图名 = r.name; 外观.源 = 'photo';
+  存外观(); 应用外观();
+  // 比窗口小的图放大后发虚，提示一句但不拦着用
+  const 警 = document.getElementById('photo-warn');
+  if (r.width && r.height && Math.min(r.width, r.height) < 1200) {
+    警.textContent = `这张图 ${r.width}×${r.height}，比窗口小，放大后会发虚。`;
+    警.classList.add('on');
+  } else {
+    警.classList.remove('on');
+  }
+}
+
+async function clearBgPhoto(e) {
+  if (e) e.stopPropagation();
+  if (window.electronAPI && window.electronAPI.clearBackgroundImage) {
+    try { await window.electronAPI.clearBackgroundImage(); } catch {}
+  }
+  外观.图 = ''; 外观.图名 = '';
+  存外观(); 应用外观();
+  const 警 = document.getElementById('photo-warn');
+  if (警) 警.classList.remove('on');
+}
+
+// 恢复默认：背景回默认底纹、动效打开、清掉自定义图、十个参数拨回出厂值
+async function resetAppearance(e) {
+  e.stopPropagation();
+  await clearBgPhoto(null);
+  外观 = { 源: 'grid', 动效: true, 显示方式: 'cover', 变淡: 0.55, 图: '', 图名: '' };
+  存外观(); 应用外观();
+  glPreset('factory');
+}
 // 隐藏入口：顶栏 logo 两秒内连点五下。不放常驻按钮——调参是给我们自己用的，
 // 摆在界面上运营会点开、拖两下，然后整个应用的观感就跟别人不一样了，还查不出原因。
 // 键盘那条留着（⌥G），远程协助时说得清楚；连点这条是给没有外接键盘的场景。
@@ -882,26 +1087,104 @@ async function loadTodaySummary() {
   document.getElementById('t-run').textContent  = d.running;
   document.getElementById('t-done').textContent = d.parts_done_today;
   document.getElementById('t-exp').textContent  = d.exports_today;
-  const line = document.getElementById('t-line');
-  const first = (d.running_items || [])[0];
-  if (first) {
+  // 在跑的任务按类各占一行。原来只画第一条，其余压成「还有 N 个」，而排序写死
+  // AI 分析在前、合成 Part 最后——只要手上有一条分析在跑，十几个待合成的 Part
+  // 一个字都不会出现在首页上。
+  const 跑着的 = d.running_items || [];
+  const 容器 = document.getElementById('t-lines');
+  容器.innerHTML = '';
+  跑着的.forEach(it => {
     let 进度 = '';
-    if (first.type === 'ai' && d.total) 进度 = ` · ${d.progress}/${d.total}`;
-    else if (first.type === 'export')   进度 = ` · ${first.count} 条`;
-    else                                进度 = ` · ${first.count} 个 Part`;
-    const 还有 = d.running > 1 ? `，还有 ${d.running - 1} 个` : '';
-    document.getElementById('t-line-text').textContent =
-      `${类型名[first.project_kind] || ''} ${任务名[first.type]} · ${first.title}${进度}${还有}`;
-    line.onclick = () => {
-      if (first.project_kind === 'hot') _navAfterJelly('tools/hot-analysis/index.html');
-      else _navAfterJelly(`tools/ad-make/editor.html?projectId=${first.project_id}` +
-                          (first.project_kind === 'segments' ? '&kind=segments' : ''));
+    // 每行只说自己项目的数。原来 AI 分析那行取的是 d.progress/d.total，而后端那两个
+    // 数只属于列表里第一条 ai 任务的项目——以前只画三行还不容易撞上，现在一次能画
+    // 十几行，几个项目同时分析时后面几行会挂着别人的进度。
+    if (it.type === 'export') 进度 = ` · ${it.count} 条`;
+    else                      进度 = ` · ${it.count} 个 Part`;
+    const 行 = document.createElement('div');
+    行.className = 'st-run';
+    行.innerHTML = '<span class="sc-dot"></span><span class="t"></span>';
+    const 文案 = `${类型名[it.project_kind] || ''} ${任务名[it.type]} · ${it.title}${进度}`;
+    const t = 行.querySelector('.t');
+    t.textContent = 文案;
+    t.title = 文案;
+    行.onclick = () => {
+      if (it.project_kind === 'hot') _navAfterJelly('tools/hot-analysis/index.html');
+      else _navAfterJelly(`tools/ad-make/editor.html?projectId=${it.project_id}` +
+                          (it.project_kind === 'segments' ? '&kind=segments' : ''));
     };
-    line.hidden = false;
-  } else {
-    line.hidden = true;
-  }
+    容器.appendChild(行);
+  });
+
+
+  渲染失败行(d);
   document.getElementById('today-box').hidden = false;
+}
+
+// 首页那条红字：哪个项目挂了几条，点右边「重试」一次全重来。
+// 一个项目可能三类任务都有挂的（合成／分析／导出），这里只显示最要紧的一条，
+// 其余的进项目里能看到——首页的位置不够排三行，排了也读不完。
+let _挂了的 = null;
+function 渲染失败行(d) {
+  const 行 = document.getElementById('t-bad');
+  const 全部 = d.failed_items || [];
+  // 合成失败排最前：它挡住后面所有步骤，分析和导出都得等它
+  const 序 = { parts: 0, ai: 1, export: 2 };
+  全部.sort((a, b) => (序[a.type] ?? 9) - (序[b.type] ?? 9));
+  const 第一条 = 全部[0];
+  if (!第一条 || !d.failed) { 行.hidden = true; _挂了的 = null; return; }
+  _挂了的 = 第一条;
+  const 说法 = { parts: '合成失败', ai: '分析失败', export: '导出失败' };
+  const 单位 = 第一条.type === 'export' ? '条' : '个 Part';
+  const 还有 = d.failed > 第一条.count ? `，共 ${d.failed} 条` : '';
+  const 失败文案 = `${第一条.title} · ${说法[第一条.type]} ${第一条.count} ${单位}${还有}`;
+  const 失败行 = document.getElementById('t-bad-text');
+  失败行.textContent = 失败文案;
+  失败行.title = 失败文案;   // 剧名长会被省略号截断，悬停看全名
+  // 导出失败要挑模板、选 Part，重试不了，点进去处理
+  const 按钮 = document.getElementById('t-bad-btn');
+  按钮.textContent = 第一条.type === 'export' ? '查看' : '重试';
+  按钮.disabled = false;
+  行.hidden = false;
+}
+
+async function retryFailed(ev) {
+  ev.stopPropagation();
+  const 它 = _挂了的;
+  if (!它) return;
+  const 按钮 = document.getElementById('t-bad-btn');
+  if (它.type === 'export') {
+    _navAfterJelly(`tools/ad-make/editor.html?projectId=${它.project_id}&history=1` +
+                   (它.project_kind === 'segments' ? '&kind=segments' : ''));
+    return;
+  }
+  按钮.disabled = true; 按钮.textContent = '重试中…';
+  try {
+    const r = await apiFetch(`/admake/projects/${它.project_id}/retry-failed`, { method: 'POST' });
+    if (!r) return;   // 登录过期时 apiFetch 返回 null，再往下读属性会抛 TypeError
+    // 合成重建是后台任务，分析要单独起：那条路要先探密钥连通，复用原来的接口
+    if ((r.analyze_part_ids || []).length) {
+      try {
+        await apiFetch(`/admake/projects/${它.project_id}/ai-analyze?part_ids=` +
+                       r.analyze_part_ids.join(','), { method: 'POST' });
+      } catch (e) {
+        // 409 = 这个项目已经有一个分析批次在跑。后端不允许同一项目并发两批，
+        // 这不是出错，是现在还轮不到，说清楚就行。
+        if (e.status === 409) {
+          alert('合成已重新排队。分析要等这个项目当前这批跑完，再点一次重试。');
+        } else {
+          alert('合成已重新排队，但分析没能开始：' + (e.message || '未知原因'));
+        }
+      }
+    }
+    if (r.skipped) {
+      alert(`${r.rebuilt} 条已重新排队。另有 ${r.skipped} 条的源视频变过了，` +
+            '按原计划重建会让编号和内容对不上，要进项目里重新分 Part。');
+    }
+    await loadTodaySummary();
+  } catch (e) {
+    alert('重试失败：' + (e.message || '未知原因'));
+    按钮.disabled = false; 按钮.textContent = '重试';
+  }
 }
 
 // ── Login ─────────────────────────────────────────────────────
@@ -980,11 +1263,10 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Navigation ───────────────────────────────────────────────
-// 「进入」按钮的 Q 弹是 540ms，原来点完立刻跳，动画第一帧还没画完页面就换了，
-// 等于白做。等它弹完再跳：420ms 是过冲最大的那一下弹回来、曲线基本收平的位置，
-// 等满 540 会多出一段静止的停顿，读起来像卡住了。
 // _navLock 防连点：两下点击会排两个跳转，第二个在新页面加载途中触发。
-const NAV_DELAY = 420;
+// 点了卡片立刻跳。这里原来等 420 毫秒，等的是卡片那下按压形变演完——
+// 代价是每次进工具页都先白等将近半秒，比形变本身显眼得多。
+const NAV_DELAY = 0;
 let _navLock = false;
 function _navAfterJelly(href) {
   if (_navLock) return;
@@ -1172,14 +1454,57 @@ init();
   </div>
   <div class="sc-body" id="sc-body"></div>
 </div>
-<!-- 玻璃调参：⌥G 开关 -->
-<div class="gl-panel" id="gl-panel">
-  <h4>液态镜片调参 <span>⌥G 开关</span></h4>
-  <div id="gl-rows"></div>
-  <div class="gl-acts">
-    <button class="k" onclick="glPreset('factory')">恢复默认</button>
-    <button onclick="glCopy()">复制参数</button>
+<!-- 自定义背景图层 -->
+<div class="bg-photo" id="bg-photo"></div>
+
+<!-- 左下角「外观」：背景、动效、界面质感 -->
+<div class="bgfab">
+  <div class="bg-pop" id="bg-pop">
+    <h4>外观</h4>
+
+    <div class="ap-seg">
+      <button class="on" id="src-grid" onclick="setSrc('grid')">默认底纹</button>
+      <button id="src-photo" onclick="setSrc('photo')">自定义图片</button>
+    </div>
+
+    <div id="photo-row" style="display:none">
+      <div class="bg-file">
+        <span id="photo-name">未选择图片</span>
+        <button onclick="pickBgPhoto(event)">选择…</button>
+        <button onclick="clearBgPhoto(event)">移除</button>
+      </div>
+      <div class="bg-warn" id="photo-warn"></div>
+      <div class="bg-sub">显示方式</div>
+      <div class="bg-mix">
+        <div class="ap-seg">
+          <button class="on" id="fit-cover" onclick="setFit(event,'cover')">填充</button>
+          <button id="fit-contain" onclick="setFit(event,'contain')">适应</button>
+        </div>
+        <label>变淡</label>
+        <input type="range" id="scrim-in" min="0" max="0.85" step="0.05" value="0.55"
+               oninput="setScrim(this.value)">
+      </div>
+      <div class="bg-sub">图案太花时往右调，卡片上的字更清楚。</div>
+    </div>
+
+    <div class="sw-row">动效
+      <span class="d" id="mo-sub">底纹横向移动</span>
+      <span class="sw on" id="mo-sw" onclick="setMotion()"><i></i></span>
+    </div>
+
+    <details class="gl-fold">
+      <summary>界面质感
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" width="13" height="13"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
+      <div id="gl-rows"></div>
+    </details>
+
+    <button class="bg-reset" onclick="resetAppearance(event)">恢复默认</button>
   </div>
+  <button class="bg-chip" onclick="toggleAppearance(event)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+    外观
+  </button>
 </div>
 </body>
 </html>

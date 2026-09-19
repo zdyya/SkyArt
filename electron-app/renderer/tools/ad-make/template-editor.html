@@ -513,13 +513,18 @@ async function init() {
     toast('载入模板失败：' + e.message + '。已禁用保存，请返回后重进', 'error', 8000);
   }
   try {
-    sampleProjects = await apiFetch('/admake/projects');
+    // 爆款素材不在这个列表里。那一类的每个项目是一条已经投放过的广告片，
+    // 传进来只为拆段分析，不会经过出片这一步，成片模板对它没有落脚的地方。
+    // 留在列表里的话，旁边那颗「用于该项目」能把模板绑上去，绑完永远不生效，
+    // 界面上也不会说它没生效。
+    const 全部 = await apiFetch('/admake/projects');
+    sampleProjects = (全部 || []).filter(p => p.project_kind !== 'hot');
   } catch (e) { sampleProjects = []; }
   try { sampleTemplates = await apiFetch('/admake/templates'); } catch { sampleTemplates = []; }
   const sel = document.getElementById('sample-sel');
   sel.innerHTML = sampleProjects.length
     ? sampleProjects.map(p => `<option value="${p.id}">${esc(p.title)}</option>`).join('')
-    : '<option value="">（无样例项目）</option>';
+    : '<option value="">（还没有能出片的项目）</option>';
   renderBindBtn();
   renderAll();
   // 载入完成后建立历史基线：撤销到不了比初始更早，未保存判断以此为准

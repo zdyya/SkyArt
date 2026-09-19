@@ -12,7 +12,7 @@
 
 三个输入分别在哪：
 
-- 素材：装好的 app 的导出目录，`~/Library/Application Support/SkyArtDemo/skyart-data/AdMake/Export/<项目>/<批次>/`
+- 素材：装好的 app 的导出目录，`~/Library/Application Support/SkyArt/skyart-data/AdMake/Export/<项目>/<批次>/`
 - 结尾板、标题图：自己准备，放哪都行，按下面的命令传绝对路径
 
 ## 2. 输出
