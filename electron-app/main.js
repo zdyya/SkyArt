@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, ipcMain, shell, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, clipboard, dialog, nativeImage } = require('electron');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
 const http = require('http');
@@ -17,13 +17,73 @@ const BUNDLED_BACKEND = path.join(
   'skyart-backend'
 );
 
-// 数据目录固定用 SkyArtDemo，与 app 包名解耦，避免改名后已有数据丢失
-const SKYART_USER_DATA = path.join(app.getPath('appData'), 'SkyArtDemo');
+// 数据目录。名字与 app 包名解耦，改产品名不会让已有数据失联。
+//
+// 历史上叫 SkyArtDemo，「Demo」让人以为是试用版，改成 SkyArt。老用户升级时把
+// 老目录原地改名过来——同一个卷上改名只动目录项，116 G 也是瞬间完成，不搬数据。
+// 库里存的是相对路径（AdMake/Source/...），成片和导出目录是用户自己选的绝对路径，
+// 都在数据目录之外，所以改名不需要动数据库。
+const 数据目录名 = 'SkyArt';
+const 老数据目录名 = 'SkyArtDemo';
 
-// Chromium 运行文件(缓存/cookie/localStorage/登录态)默认按 app.name 落在单独的
-// Application Support/SkyArt 顶层目录，与业务数据的 SkyArtDemo 分家。这里把它收进
-// SkyArtDemo/chromium 子目录：顶层只剩一个数据家，运行文件与业务数据/配置仍按子目录分开，
-// 后续导入导出只操作 skyart-data，碰不到引擎数据。必须在 app ready 前调用才生效。
+/** 这个目录是不是一个真的数据家：装着业务数据或配置，而不是空壳。 */
+function 是数据家(目录) {
+  return fs.existsSync(path.join(目录, 'skyart-data')) ||
+         fs.existsSync(path.join(目录, 'skyart-config.json'));
+}
+
+function 迁移老数据目录(appData) {
+  const 新家 = path.join(appData, 数据目录名);
+  const 老家 = path.join(appData, 老数据目录名);
+  try {
+    if (!fs.existsSync(老家)) return 新家;          // 全新安装，或早就迁过了
+    // 老名字不是一个实打实的目录就别碰它。两种情况：一种是软链——数据已经迁过了，
+    // 这条链是留给老版本的兼容入口，真去改名会得到一条指向自己的死链；另一种是有人
+    // 在这儿留了个同名文件，改名过去之后 SkyArt 会变成一个文件，userData 建不出来，
+    // 主进程直接崩。
+    if (!fs.lstatSync(老家).isDirectory()) return 新家;
+    if (fs.existsSync(新家)) {
+      // 新名字是软链（有人手工建过反向链）：同理不碰
+      if (!fs.lstatSync(新家).isDirectory()) return 新家;
+      if (是数据家(新家)) {
+        // 两个都是真数据家：该保哪一份要人来判断，程序不该猜。用新的，老的留在原地。
+        console.warn(`[数据目录] ${老家} 和 ${新家} 都装着数据，本次用新的，老目录原样留着`);
+        return 新家;
+      }
+      // 走到这里说明 SkyArt 目录存在但里面没有业务数据。这是 1.0 时代 Electron 按
+      // app.name 自动建的引擎目录（Cache / Cookies / GPUCache），后来 chromium 被收进
+      // 数据目录下，它就成了没人再写的残留。挪开而不是删掉：万一里面还有 Cookies
+      // 这类能让人少登录一次的东西，留一份在旁边总比删干净强。
+      const 挪到 = `${新家}-旧引擎缓存-${Date.now()}`;
+      fs.renameSync(新家, 挪到);
+      console.log(`[数据目录] ${新家} 里没有业务数据，是旧引擎缓存，挪到 ${挪到}`);
+    }
+    fs.renameSync(老家, 新家);
+    // 老名字留一条软链指过来。装了这一版、迁移跑完之后，万一又打开旧版本的包
+    // （回滚验证、DMG 没删干净），旧版本按老名字照样找得到数据；没有这条链的话
+    // 它会当成全新安装，建一个空目录、空库，界面上一个项目都没有。
+    try { fs.symlinkSync(数据目录名, 老家); }
+    catch (e) { console.warn('[数据目录] 兼容软链没建上（不影响使用）:', e.message); }
+    console.log(`[数据目录] 已从 ${老家} 改名为 ${新家}`);
+    return 新家;
+  } catch (e) {
+    // 跨卷、权限不足、目录被别的进程占着——改名失败就接着用老目录。
+    // 宁可名字难看，也不能因为改名失败让用户打不开应用、看不到自己的素材。
+    console.warn('[数据目录] 改名失败:', e.message);
+    // 先看新家。双开时另一个实例可能已经把迁移做完了，这一份的 rename 才会报错；
+    // 这时候退回老目录的话，后面 buildBackendEnv 会在老名字下重新建出空的
+    // skyart-data 和空库，用户看到零个项目。新家已经装着数据就用新家。
+    if (是数据家(新家)) return 新家;
+    return fs.existsSync(老家) ? 老家 : 新家;
+  }
+}
+
+const SKYART_USER_DATA = 迁移老数据目录(app.getPath('appData'));
+
+// Chromium 运行文件(缓存/cookie/localStorage/登录态)默认按 app.name 单独落一个顶层
+// 目录，跟业务数据分家。这里把它收进数据目录下的 chromium 子目录：顶层只剩一个数据家，
+// 运行文件与业务数据/配置仍按子目录分开，后续导入导出只操作 skyart-data，碰不到引擎
+// 数据。必须在 app ready 前调用才生效。
 app.setPath('userData', path.join(SKYART_USER_DATA, 'chromium'));
 
 /** 用户配置文件路径 */
@@ -189,7 +249,12 @@ function 端口占用者() {
   try {
     return execSync(`lsof -ti tcp:${BACKEND_PORT} -sTCP:LISTEN 2>/dev/null || true`)
       .toString().trim().split('\n').filter(Boolean);
-  } catch { return []; }
+  } catch (e) {
+    // 原来这里静默返回空数组，读起来跟「端口没人占」一模一样，于是照常起后端，
+    // 起完撞端口退出。查日志时看不出是查不到还是真没人占，写一行出来。
+    console.warn('[backend] lsof 查端口占用失败，按「无人占用」处理:', e.message);
+    return [];
+  }
 }
 
 // SIGKILL 是异步的，而且被杀的是上一轮残留的孤儿——它不是 Electron 的子进程，
@@ -218,6 +283,13 @@ function killPortOccupant() {
 // packaged：一律清场重起，杜绝强退残留的孤儿（KNOWLEDGE #7）。
 // dev：端口上已有健康后端就复用，不 SIGKILL —— 否则会杀掉开发者手起的 --reload 热重载实例。
 async function ensureBackend() {
+  // 自己起的那个后端还活着、还健康，就接着用。关窗口不再停后端（见下面
+  // window-all-closed），从 Dock 点回来时它多半还在跑着合成和分析，
+  // 这里再清场重起的话，那些任务会被拦腰打断、启动清扫再把它们全标成失败。
+  if (backendProcess && !backendProcess.killed) {
+    try { await waitForBackend(1500); console.log('[backend] 复用仍在跑的后端'); return; }
+    catch { /* 不健康或版本不对，照常清场重起 */ }
+  }
   if (!app.isPackaged) {
     try { await waitForBackend(1500); console.log('[backend] dev: 复用端口上已有的后端'); return; }
     catch { /* 没有或不健康，照常清场重起 */ }
@@ -344,7 +416,13 @@ function splashEval(js) {
 
 // 同时开两个 SkyArt，两边都会去清场、都去 bind 同一个端口，后起的那个必然
 // 报 EADDRINUSE 并弹崩溃框。第二个实例直接退出，把已经开着的那个窗口叫到前面。
-if (!app.requestSingleInstanceLock()) {
+// app.quit() 是异步的：请求退出之后，本次进程照样会跑完 whenReady 里的启动流程，
+// 也就照样会拉起一个后端。那个后端绑不上端口、几百毫秒后就退出，但它在绑端口
+// 之前已经跑完了启动清扫，把另一个实例正在合成的 Part 全标成 failed
+// （2026-09-18 上午 22 个 Part 合成、4 条分析就是这么没的）。
+// 所以拿不到锁时不能只喊退出，还要把启动流程整个跳过。
+const 是主实例 = app.requestSingleInstanceLock();
+if (!是主实例) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -356,7 +434,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 }
 
-app.whenReady().then(async () => {
+if (是主实例) app.whenReady().then(async () => {
   buildMenu();
   createSplash();
 
@@ -440,14 +518,22 @@ app.whenReady().then(async () => {
   }
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length) return;
-    // 窗口全关时后端已被 stopBackend 停掉；重开前清场再起（dev 复用健康实例）
+    // 后端多半还活着（关窗口不再停它），ensureBackend 会先试着复用
     await ensureBackend();
     try { await waitForBackend(30000); } catch (e) { console.warn('[backend] activate wait:', e.message); }
     createMainWindow();
   });
 });
 
-app.on('window-all-closed', () => { stopBackend(); if (process.platform !== 'darwin') app.quit(); });
+// macOS 上关窗口不等于退出——应用还在 Dock 里。这里以前顺手把后端也停了，
+// 于是正在跑的合成和分析全部中断，从 Dock 点回来时启动清扫再把它们标成失败：
+// 传了 38 集、关掉窗口去干别的，回来一看全挂了。macOS 上让后端接着跑，
+// 真正退出时由 will-quit 停它。其他平台关窗口就是退出，照旧停。
+app.on('window-all-closed', () => {
+  if (process.platform === 'darwin') return;
+  stopBackend();
+  app.quit();
+});
 // 停后端必须挂 will-quit，不能挂 before-quit。before-quit 在关窗口之前就触发，
 // 而编辑器页的 beforeunload 在导出/AI 分析进行中会否决退出——后端已经 SIGTERM 掉了，
 // 应用却还开着，之后每个请求都失败，用户只能强杀重开。will-quit 只在退出真的成立后触发。
@@ -470,6 +556,45 @@ ipcMain.handle('select-folder', async () => {
 
 // 打开某个文件夹（导出目录“打开文件夹”按钮）
 ipcMain.handle('open-path', (_, p) => shell.openPath(p));
+
+// 选一张图当首页背景：复制一份进应用数据目录再返回，原图被用户挪走或删掉也不受影响。
+// 顺带把尺寸带回去——比窗口小的图放大后发虚，界面要据此提示一句。
+ipcMain.handle('select-background-image', async () => {
+  const r = await dialog.showOpenDialog(mainWindow, {
+    title: '选择背景图片',
+    properties: ['openFile'],
+    filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  const src = r.filePaths[0];
+  const 目录 = path.join(SKYART_USER_DATA, 'skyart-data', 'background');
+  fs.mkdirSync(目录, { recursive: true });
+  // 固定文件名，换图直接覆盖，不会在目录里越堆越多。扩展名跟着源文件走。
+  const 目标 = path.join(目录, 'home-bg' + path.extname(src).toLowerCase());
+  // 换了格式时把上一张删掉，否则旧的那张一直占着盘
+  for (const ext of ['.jpg', '.jpeg', '.png', '.webp']) {
+    const 旧 = path.join(目录, 'home-bg' + ext);
+    if (旧 !== 目标 && fs.existsSync(旧)) { try { fs.unlinkSync(旧); } catch (e) {} }
+  }
+  fs.copyFileSync(src, 目标);
+  let width = 0, height = 0;
+  try {
+    const img = nativeImage.createFromPath(目标);
+    const sz = img.getSize();
+    width = sz.width; height = sz.height;
+  } catch (e) { /* 读不出尺寸就不提示，不拦着用 */ }
+  return { path: 目标, name: path.basename(src), width, height };
+});
+
+// 移除自定义背景图
+ipcMain.handle('clear-background-image', () => {
+  const 目录 = path.join(SKYART_USER_DATA, 'skyart-data', 'background');
+  for (const ext of ['.jpg', '.jpeg', '.png', '.webp']) {
+    const f = path.join(目录, 'home-bg' + ext);
+    if (fs.existsSync(f)) { try { fs.unlinkSync(f); } catch (e) {} }
+  }
+  return { ok: true };
+});
 
 ipcMain.handle('get-config', () => readConfig());
 

@@ -35,7 +35,7 @@ fi
 
 # API Key 直接用装好的 app 里那份配置，不让人再填一遍。
 # 字段映射跟 electron-app/main.js 的 buildBackendEnv 一致，改那边这里要跟着改。
-APP_CFG="$HOME/Library/Application Support/SkyArtDemo/skyart-config.json"
+APP_CFG="$HOME/Library/Application Support/SkyArt/skyart-config.json"
 if [ -f "$APP_CFG" ]; then
   eval "$("$BACKEND/.venv/bin/python" - "$APP_CFG" <<'PYEOF'
 import json, shlex, sys

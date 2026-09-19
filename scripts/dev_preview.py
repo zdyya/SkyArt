@@ -28,7 +28,7 @@ VENV_PYTHON = BACKEND_DIR / ".venv" / "bin" / "python"
 FFMPEG_DIR = REPO_DIR / "electron-app" / "bin" / "ffmpeg-arm64"
 BACKEND_LOG = REPO_DIR / "logs" / "dev-preview-backend.log"
 
-USER_DATA_DIR = Path.home() / "Library" / "Application Support" / "SkyArtDemo"
+USER_DATA_DIR = Path.home() / "Library" / "Application Support" / "SkyArt"
 APP_DATA_DIR = USER_DATA_DIR / "skyart-data"
 CONFIG_FILE = USER_DATA_DIR / "skyart-config.json"
 
